@@ -29,7 +29,7 @@ function SimWireEdge({
   });
 
   const strokeWidth = selected ? 2.5 : viewMode === 'aggregate' && isRunning ? 3 : 1.5;
-  const strokeColor = selected ? '#3B82F6' : '#3A3D4A';
+  const strokeColor = selected ? '#3B82F6' : '#14161F';
 
   return (
     <>

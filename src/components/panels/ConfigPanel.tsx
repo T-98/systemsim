@@ -27,12 +27,12 @@ export default function ConfigPanel() {
   if (selectedEdge) {
     const wireConfig = selectedEdge.data!.config;
     return (
-      <div className="w-72 bg-[#13151E] border-l border-[#1E2030] flex flex-col h-full overflow-y-auto">
-        <div className="flex items-center justify-between p-3 border-b border-[#1E2030]">
-          <span className="text-xs font-semibold text-gray-300">Wire Config</span>
-          <button onClick={close} className="text-gray-500 hover:text-gray-300 text-sm">&times;</button>
+      <div className="w-80 bg-[#0A0B12] border-l border-[#14161F] flex flex-col h-full overflow-y-auto">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#14161F]">
+          <span className="text-xs font-semibold tracking-wide text-[#8890A8]">Wire Config</span>
+          <button onClick={close} className="text-[#5A6078] hover:text-white text-sm transition-all duration-200">&times;</button>
         </div>
-        <div className="p-3 space-y-3">
+        <div className="p-5 space-y-5">
           <ConfigField label="Throughput (RPS)" type="number" value={wireConfig.throughputRps}
             onChange={(v) => updateWireConfig(selectedEdge.id, { throughputRps: Number(v) })} disabled={isRunning} />
           <ConfigField label="Latency (ms)" type="number" value={wireConfig.latencyMs}
@@ -55,12 +55,12 @@ export default function ConfigPanel() {
   };
 
   return (
-    <div className="w-72 bg-[#13151E] border-l border-[#1E2030] flex flex-col h-full overflow-y-auto">
-      <div className="flex items-center justify-between p-3 border-b border-[#1E2030]">
-        <span className="text-xs font-semibold text-gray-300">{def.label}</span>
-        <button onClick={close} className="text-gray-500 hover:text-gray-300 text-sm">&times;</button>
+    <div className="w-80 bg-[#0A0B12] border-l border-[#14161F] flex flex-col h-full overflow-y-auto">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-[#14161F]">
+        <span className="text-xs font-semibold tracking-wide text-[#8890A8]">{def.label}</span>
+        <button onClick={close} className="text-[#5A6078] hover:text-white text-sm transition-all duration-200">&times;</button>
       </div>
-      <div className="p-3 space-y-3">
+      <div className="p-5 space-y-5">
         <ConfigField label="Label" type="text" value={data.label}
           onChange={(v) => updateComponentLabel(selectedNode.id, String(v))} disabled={isRunning} />
 
@@ -93,8 +93,8 @@ export default function ConfigPanel() {
           }
           if (Array.isArray(value)) {
             return (
-              <div key={key} className="text-[10px] text-gray-500">
-                <span className="text-gray-400">{label}:</span> {value.length} items
+              <div key={key} className="text-[10px] text-[#5A6078]">
+                <span className="text-[#8890A8]">{label}:</span> {value.length} items
               </div>
             );
           }
@@ -104,7 +104,7 @@ export default function ConfigPanel() {
         {!isRunning && (
           <button
             onClick={() => removeComponent(selectedNode.id)}
-            className="w-full mt-4 px-3 py-2 text-xs text-red-400 border border-red-900 rounded-sm hover:bg-red-950 transition-colors"
+            className="w-full mt-4 px-4 py-2.5 text-xs text-red-400 border border-red-900/50 rounded-lg hover:bg-red-950/40 transition-all duration-200"
           >
             Delete Component
           </button>
@@ -119,13 +119,13 @@ function ConfigField({ label, type, value, onChange, disabled }: {
 }) {
   return (
     <div>
-      <label className="block text-[10px] text-gray-500 mb-1">{label}</label>
+      <label className="block text-[11px] text-[#5A6078] mb-1.5 font-medium">{label}</label>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="w-full bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none disabled:opacity-40"
+        className="w-full bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 disabled:opacity-40 transition-all duration-200 font-['Geist_Mono',monospace]"
       />
     </div>
   );
@@ -136,12 +136,12 @@ function ConfigToggle({ label, value, onChange, disabled }: {
 }) {
   return (
     <div className="flex items-center justify-between">
-      <label className="text-[10px] text-gray-500">{label}</label>
+      <label className="text-[11px] text-[#5A6078] font-medium">{label}</label>
       <button
         onClick={() => !disabled && onChange(!value)}
-        className={`w-8 h-4 rounded-full transition-colors ${value ? 'bg-blue-500' : 'bg-[#2A2D3A]'} ${disabled ? 'opacity-40' : ''}`}
+        className={`w-9 h-5 rounded-full transition-all duration-200 ${value ? 'bg-blue-600' : 'bg-[#14161F]'} ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
       >
-        <div className={`w-3 h-3 rounded-full bg-white transition-transform ${value ? 'translate-x-4' : 'translate-x-0.5'}`} />
+        <div className={`w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-all duration-200 ${value ? 'translate-x-[18px]' : 'translate-x-[3px]'}`} />
       </button>
     </div>
   );
@@ -152,12 +152,12 @@ function ConfigSelect({ label, value, options, onChange, disabled }: {
 }) {
   return (
     <div>
-      <label className="block text-[10px] text-gray-500 mb-1">{label}</label>
+      <label className="block text-[11px] text-[#5A6078] mb-1.5 font-medium">{label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="w-full bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none disabled:opacity-40"
+        className="w-full bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 disabled:opacity-40 transition-all duration-200"
       >
         {options.map((opt) => (
           <option key={opt} value={opt}>{opt}</option>

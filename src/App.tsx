@@ -26,7 +26,7 @@ export default function App() {
 
   return (
     <ReactFlowProvider>
-      <div className="h-screen flex flex-col bg-[#0F1117] text-white overflow-hidden">
+      <div className="h-screen flex flex-col bg-[#08090D] text-[#B8BCC8] overflow-hidden">
         <Toolbar />
         <div className="flex flex-1 overflow-hidden">
           <div className="flex flex-col">

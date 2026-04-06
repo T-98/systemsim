@@ -7,17 +7,17 @@ import { ComponentIcon } from './icons';
 import { useStore } from '../../store';
 
 const healthBorder: Record<HealthState, string> = {
-  healthy: 'border-[#2A2D3A]',
+  healthy: 'border-[#14161F]',
   warning: 'border-amber-500',
   critical: 'border-red-500',
   crashed: 'border-red-900',
 };
 
 const healthBg: Record<HealthState, string> = {
-  healthy: 'bg-[#1E2235]',
-  warning: 'bg-[#1E2235]',
-  critical: 'bg-[#1E2235]',
-  crashed: 'bg-[#15121A] opacity-60',
+  healthy: 'bg-[#0C0D14]',
+  warning: 'bg-[#0C0D14]',
+  critical: 'bg-[#0C0D14]',
+  crashed: 'bg-[#0A0910] opacity-60',
 };
 
 function SimComponentNode({ id, data, selected }: NodeProps & { data: SimComponentData }) {
@@ -33,9 +33,9 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
   return (
     <motion.div
       className={`
-        relative min-w-[160px] rounded-sm border-2 ${healthBorder[health]} ${healthBg[health]}
-        text-white shadow-lg cursor-pointer transition-colors
-        ${selected ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-[#0F1117]' : ''}
+        relative min-w-[200px] rounded-xl border ${healthBorder[health]} ${healthBg[health]}
+        text-white shadow-lg shadow-black/20 cursor-pointer transition-all duration-200
+        ${selected ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-[#08090D]' : ''}
         ${health === 'crashed' ? 'grayscale' : ''}
       `}
       animate={
@@ -46,32 +46,32 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           : {}
       }
     >
-      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-[#3B82F6] !border-[#0F1117] !border-2" />
-      <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-[#3B82F6] !border-[#0F1117] !border-2" />
+      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-[#3B82F6] !border-[#08090D] !border-2" />
+      <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-[#3B82F6] !border-[#08090D] !border-2" />
 
-      <div className="flex items-center gap-2 px-3 py-2" style={{ borderLeft: `3px solid ${def.categoryColor}` }}>
-        <div className="text-gray-300 shrink-0">
+      <div className="flex items-center gap-2.5 px-4 py-3" style={{ borderLeft: `3px solid ${def.categoryColor}` }}>
+        <div className="text-[#8890A8] shrink-0">
           <ComponentIcon type={data.type} />
         </div>
         <div className="min-w-0">
-          <div className="text-xs font-semibold truncate">{data.label}</div>
-          <div className="text-[10px] text-gray-500">{def.description}</div>
+          <div className="text-xs font-semibold truncate text-white">{data.label}</div>
+          <div className="text-[10px] text-[#5A6078]">{def.description}</div>
         </div>
         {health === 'crashed' && (
-          <div className="absolute top-1 right-1 text-red-500 text-lg font-bold">X</div>
+          <div className="absolute top-1.5 right-2 text-red-500 text-lg font-bold">X</div>
         )}
       </div>
 
       {isRunning && metrics && (
-        <div className="px-3 pb-2 text-[10px] text-gray-400 space-y-0.5 font-mono">
+        <div className="px-4 pb-3 text-[10px] text-[#5A6078] space-y-0.5 font-['Geist_Mono',monospace] tabular-nums">
           <div className="flex justify-between">
             <span>RPS</span>
-            <span className="text-gray-300">{Math.round(metrics.rps).toLocaleString()}</span>
+            <span className="text-[#B8BCC8]">{Math.round(metrics.rps).toLocaleString()}</span>
           </div>
           {metrics.p99 > 0 && (
             <div className="flex justify-between">
               <span>p99</span>
-              <span className={metrics.p99 > 500 ? 'text-red-400' : 'text-gray-300'}>{Math.round(metrics.p99)}ms</span>
+              <span className={metrics.p99 > 500 ? 'text-red-400' : 'text-[#B8BCC8]'}>{Math.round(metrics.p99)}ms</span>
             </div>
           )}
           {metrics.errorRate > 0 && (
@@ -83,7 +83,7 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           {metrics.cpuPercent > 0 && (
             <div className="flex justify-between">
               <span>CPU</span>
-              <span className={metrics.cpuPercent > 80 ? 'text-red-400' : metrics.cpuPercent > 50 ? 'text-amber-400' : 'text-gray-300'}>
+              <span className={metrics.cpuPercent > 80 ? 'text-red-400' : metrics.cpuPercent > 50 ? 'text-amber-400' : 'text-[#B8BCC8]'}>
                 {Math.round(metrics.cpuPercent)}%
               </span>
             </div>
@@ -91,7 +91,7 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           {metrics.memoryPercent > 0 && (
             <div className="flex justify-between">
               <span>MEM</span>
-              <span className={metrics.memoryPercent > 80 ? 'text-red-400' : 'text-gray-300'}>
+              <span className={metrics.memoryPercent > 80 ? 'text-red-400' : 'text-[#B8BCC8]'}>
                 {Math.round(metrics.memoryPercent)}%
               </span>
             </div>
@@ -114,7 +114,7 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
       )}
 
       {showShardDist && (
-        <div className="px-3 pb-2">
+        <div className="px-4 pb-3">
           <div className="flex gap-0.5 h-8 items-end">
             {metrics!.shardDistribution!.map((load, i) => {
               const maxLoad = Math.max(...metrics!.shardDistribution!);
@@ -123,14 +123,14 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
               return (
                 <div
                   key={i}
-                  className={`flex-1 rounded-t-sm transition-all ${isHot ? 'bg-red-500' : 'bg-emerald-500'}`}
+                  className={`flex-1 rounded-t transition-all duration-200 ${isHot ? 'bg-red-500' : 'bg-emerald-500'}`}
                   style={{ height: `${Math.max(pct, 5)}%` }}
                   title={`Shard ${i}: ${Math.round(load)} ops/s`}
                 />
               );
             })}
           </div>
-          <div className="text-[9px] text-gray-500 mt-0.5">Shard distribution</div>
+          <div className="text-[9px] text-[#5A6078] mt-1 font-['Geist_Mono',monospace]">Shard distribution</div>
         </div>
       )}
     </motion.div>

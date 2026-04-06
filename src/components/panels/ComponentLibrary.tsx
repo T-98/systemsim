@@ -25,21 +25,21 @@ export default function ComponentLibrary() {
   };
 
   return (
-    <div className="w-56 bg-[#13151E] border-r border-[#1E2030] flex flex-col h-full overflow-hidden">
-      <div className="p-3 border-b border-[#1E2030]">
+    <div className="w-56 bg-[#0A0B12] border-r border-[#14161F] flex flex-col h-full overflow-hidden">
+      <div className="px-4 py-3.5 border-b border-[#14161F]">
         <input
           type="text"
           placeholder="Search components..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full bg-[#1A1D27] text-gray-300 text-xs px-3 py-2 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none placeholder-gray-600"
+          className="w-full bg-[#0C0D14] text-[#8890A8] text-[12px] px-3.5 py-2 rounded-lg border border-[#14161F] placeholder-[#2A2F42] transition-all"
         />
       </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-3">
+      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
         {filteredCategories.map((cat) => (
           <div key={cat.name}>
-            <div className="text-[10px] uppercase tracking-wider text-gray-500 px-2 mb-1">{cat.label}</div>
-            <div className="space-y-1">
+            <div className="text-[9px] uppercase tracking-[0.25em] text-[#2A2F42] font-semibold px-2 mb-2.5">{cat.label}</div>
+            <div className="space-y-0.5">
               {cat.types.map((type) => {
                 const def = COMPONENT_DEFS[type];
                 return (
@@ -48,17 +48,20 @@ export default function ComponentLibrary() {
                     draggable={!isRunning}
                     onDragStart={(e) => onDragStart(e, type)}
                     onClick={() => !isRunning && addComponent(type)}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded-sm cursor-pointer transition-colors
-                      ${isRunning ? 'opacity-40 cursor-not-allowed' : 'hover:bg-[#1E2235]'}`}
-                    style={{ borderLeft: `2px solid ${def.categoryColor}` }}
+                    className={`group flex items-center gap-3 px-2.5 py-2.5 rounded-lg cursor-pointer transition-all duration-200
+                      ${isRunning ? 'opacity-25 cursor-not-allowed' : 'hover:bg-[#0E1019]'}`}
                   >
-                    <div className="text-gray-400 shrink-0" style={{ width: 18, height: 18 }}>
-                      <ComponentIcon type={type} />
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all"
+                      style={{ backgroundColor: def.categoryColor + '08', border: `1px solid ${def.categoryColor}12` }}>
+                      <div className="text-[#4A5068] group-hover:text-[#8890A8] transition-colors" style={{ width: 16, height: 16 }}>
+                        <ComponentIcon type={type} />
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <div className="text-xs text-gray-300 truncate">{def.label}</div>
-                      <div className="text-[10px] text-gray-600 truncate">{def.shortcut}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12px] text-[#8890A8] font-medium truncate group-hover:text-white transition-colors leading-tight">{def.label}</div>
+                      <div className="text-[10px] text-[#2A2F42] truncate mt-0.5">{def.description}</div>
                     </div>
+                    <span className="text-[9px] font-mono text-[#1E2030] bg-[#0C0D14] px-1.5 py-0.5 rounded border border-[#14161F] shrink-0">{def.shortcut}</span>
                   </div>
                 );
               })}

@@ -104,20 +104,20 @@ export default function Canvas() {
         defaultEdgeOptions={{ type: 'simWire' }}
         fitView
         proOptions={{ hideAttribution: true }}
-        className="bg-[#0F1117]"
+        className="bg-[#08090D]"
         nodesDraggable={!isRunning}
         nodesConnectable={!isRunning}
         elementsSelectable={true}
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#1A1D27" />
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#10121A" />
         <Controls
           showInteractive={false}
-          className="!bg-[#1A1D27] !border-[#2A2D3A] !rounded-sm [&>button]:!bg-[#1A1D27] [&>button]:!border-[#2A2D3A] [&>button]:!text-gray-400 [&>button:hover]:!bg-[#252838]"
+          className="!bg-[#0C0D14] !border-[#14161F] !rounded-lg [&>button]:!bg-[#0C0D14] [&>button]:!border-[#14161F] [&>button]:!text-[#5A6078] [&>button:hover]:!bg-[#14161F] [&>button:hover]:!text-[#8890A8]"
         />
         <MiniMap
-          className="!bg-[#13151E] !border-[#1E2030]"
-          nodeColor="#1E2235"
-          maskColor="#0F111740"
+          className="!bg-[#0A0B12] !border-[#14161F] !rounded-lg"
+          nodeColor="#14161F"
+          maskColor="#08090D40"
         />
         <ParticleOverlay />
       </ReactFlow>

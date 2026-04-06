@@ -63,20 +63,30 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
   };
 
   return (
-    <div className="bg-[#0F1117] min-h-screen text-white">
-      <div className="max-w-3xl mx-auto py-8 px-4">
-        <h2 className="text-lg font-semibold mb-6">Design Flow</h2>
-        <p className="text-sm text-gray-400 mb-8">
+    <div className="bg-[#08090D] min-h-screen text-[#B8BCC8]">
+      <div className="max-w-2xl mx-auto py-10 px-8">
+        <h2 className="text-xl font-semibold mb-3 text-white font-['Playfair_Display',serif]">Design Flow</h2>
+        <p className="text-sm text-[#5A6078] mb-10 leading-relaxed">
           Complete each section to enrich the simulation. You can skip sections and come back — minimum viable input is a diagram.
         </p>
 
-        <div className="flex gap-2 mb-6">
+        {/* Scenario brief banner */}
+        <div className="mb-8 rounded-lg border border-[#14161F] bg-[#0C0D14] px-5 py-4">
+          <div className="text-[10px] uppercase tracking-widest text-[#5A6078] mb-1.5">Scenario Brief</div>
+          <p className="text-sm text-[#8890A8] leading-relaxed">
+            Design a system that handles @everyone mentions in a Discord-scale server with 500k+ members, fanning out notifications without degrading real-time chat.
+          </p>
+        </div>
+
+        <div className="flex gap-1 mb-8 bg-[#0C0D14] p-1 rounded-lg">
           {sections.map((s) => (
             <button
               key={s.id}
               onClick={() => setActiveSection(s.id)}
-              className={`px-3 py-1.5 text-xs rounded-sm transition-colors ${
-                activeSection === s.id ? 'bg-blue-600 text-white' : 'bg-[#1A1D27] text-gray-400 hover:text-gray-200'
+              className={`flex-1 px-4 py-2.5 text-xs rounded-lg transition-all duration-200 font-medium ${
+                activeSection === s.id
+                  ? 'bg-[#14161F] text-white shadow-sm'
+                  : 'text-[#5A6078] hover:text-[#8890A8]'
               }`}
             >
               {s.label}
@@ -85,19 +95,19 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
         </div>
 
         {activeSection === 'requirements' && (
-          <div className="space-y-4">
+          <div className="space-y-5">
             <div>
-              <label className="block text-xs text-gray-400 mb-2">Functional Requirements (one per line)</label>
+              <label className="block text-[11px] text-[#5A6078] mb-2 font-medium">Functional Requirements (one per line)</label>
               <textarea
                 value={reqInput}
                 onChange={(e) => setReqInput(e.target.value)}
                 rows={6}
-                className="w-full bg-[#1A1D27] text-gray-300 text-sm px-3 py-2 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none font-mono"
+                className="w-full bg-[#0C0D14] text-[#B8BCC8] text-sm px-4 py-3 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 font-['Geist_Mono',monospace] transition-all duration-200"
                 placeholder="Handle @everyone mentions in servers with 500k+ members&#10;Fan out notifications to all members..."
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-400 mb-2">Non-Functional Requirements</label>
+              <label className="block text-[11px] text-[#5A6078] mb-2 font-medium">Non-Functional Requirements</label>
               {nfrList.map((nfr, i) => (
                 <div key={i} className="flex gap-2 mb-2">
                   <input
@@ -108,7 +118,7 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                       copy[i] = { ...copy[i], attribute: e.target.value };
                       setNfrList(copy);
                     }}
-                    className="flex-1 bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none"
+                    className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
                   />
                   <input
                     placeholder="Target"
@@ -118,7 +128,7 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                       copy[i] = { ...copy[i], target: e.target.value };
                       setNfrList(copy);
                     }}
-                    className="flex-1 bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none"
+                    className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
                   />
                   <input
                     placeholder="Scope"
@@ -128,26 +138,26 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                       copy[i] = { ...copy[i], scope: e.target.value };
                       setNfrList(copy);
                     }}
-                    className="flex-1 bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none"
+                    className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
                   />
                 </div>
               ))}
               <button
                 onClick={() => setNfrList([...nfrList, { attribute: '', target: '', scope: '' }])}
-                className="text-xs text-blue-400 hover:text-blue-300"
+                className="text-xs text-blue-400 hover:text-blue-300 transition-all duration-200"
               >
                 + Add NFR
               </button>
             </div>
-            <button onClick={saveRequirements} className="px-4 py-2 text-xs bg-blue-600 hover:bg-blue-500 rounded-sm">
+            <button onClick={saveRequirements} className="px-5 py-2.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-500/15 transition-all duration-200">
               Save Requirements
             </button>
           </div>
         )}
 
         {activeSection === 'api' && (
-          <div className="space-y-4">
-            <label className="block text-xs text-gray-400 mb-2">API Contracts</label>
+          <div className="space-y-5">
+            <label className="block text-[11px] text-[#5A6078] mb-2 font-medium">API Contracts</label>
             {apiList.map((api, i) => (
               <div key={i} className="flex gap-2 mb-2 items-center">
                 <select
@@ -157,7 +167,7 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                     copy[i] = { ...copy[i], method: e.target.value };
                     setApiList(copy);
                   }}
-                  className="w-24 bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none"
+                  className="w-24 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
                 >
                   <option>GET</option>
                   <option>POST</option>
@@ -172,7 +182,7 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                     copy[i] = { ...copy[i], path: e.target.value };
                     setApiList(copy);
                   }}
-                  className="flex-1 bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none font-mono"
+                  className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 font-['Geist_Mono',monospace] transition-all duration-200"
                 />
                 <input
                   placeholder="Description"
@@ -182,9 +192,9 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                     copy[i] = { ...copy[i], description: e.target.value };
                     setApiList(copy);
                   }}
-                  className="flex-1 bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none"
+                  className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
                 />
-                <label className="flex items-center gap-1 text-[10px] text-gray-500">
+                <label className="flex items-center gap-1.5 text-[10px] text-[#5A6078]">
                   <input
                     type="checkbox"
                     checked={api.auth}
@@ -193,7 +203,7 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                       copy[i] = { ...copy[i], auth: e.target.checked };
                       setApiList(copy);
                     }}
-                    className="rounded-sm"
+                    className="rounded accent-blue-600"
                   />
                   Auth
                 </label>
@@ -201,12 +211,12 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
             ))}
             <button
               onClick={() => setApiList([...apiList, { method: 'GET', path: '', description: '', auth: true }])}
-              className="text-xs text-blue-400 hover:text-blue-300"
+              className="text-xs text-blue-400 hover:text-blue-300 transition-all duration-200"
             >
               + Add endpoint
             </button>
             <div>
-              <button onClick={saveApi} className="px-4 py-2 text-xs bg-blue-600 hover:bg-blue-500 rounded-sm">
+              <button onClick={saveApi} className="px-5 py-2.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-500/15 transition-all duration-200">
                 Save API Contracts
               </button>
             </div>
@@ -214,15 +224,15 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
         )}
 
         {activeSection === 'schema' && (
-          <div className="space-y-4">
-            <label className="block text-xs text-gray-400 mb-2">
+          <div className="space-y-5">
+            <label className="block text-[11px] text-[#5A6078] mb-2 font-medium">
               Data Model — write in any format (SQL, JSON, natural language, bullet points)
             </label>
             <textarea
               value={schemaText}
               onChange={(e) => setSchemaText(e.target.value)}
               rows={10}
-              className="w-full bg-[#1A1D27] text-gray-300 text-sm px-3 py-2 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none font-mono"
+              className="w-full bg-[#0C0D14] text-[#B8BCC8] text-sm px-4 py-3 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 font-['Geist_Mono',monospace] transition-all duration-200"
               placeholder={`users table: id (bigint PK), name (text)
 notifications table: id (bigint PK), user_id (bigint FK users.id), content (text), created_at (timestamp)
   - partition key: user_id
@@ -232,7 +242,7 @@ notifications table: id (bigint PK), user_id (bigint FK users.id), content (text
             <button
               onClick={saveSchema}
               disabled={schemaLoading}
-              className="px-4 py-2 text-xs bg-blue-600 hover:bg-blue-500 rounded-sm disabled:opacity-50"
+              className="px-5 py-2.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-500/15 disabled:opacity-50 transition-all duration-200"
             >
               {schemaLoading ? 'Parsing...' : 'Parse & Save Schema'}
             </button>
@@ -242,10 +252,10 @@ notifications table: id (bigint PK), user_id (bigint FK users.id), content (text
           </div>
         )}
 
-        <div className="mt-8 flex justify-end">
+        <div className="mt-10 flex justify-end">
           <button
             onClick={onComplete}
-            className="px-6 py-2.5 text-sm bg-blue-600 hover:bg-blue-500 rounded-sm font-medium"
+            className="px-8 py-3 text-sm bg-blue-600 hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-500/15 text-white transition-all duration-200"
           >
             Continue to Canvas
           </button>
@@ -260,19 +270,19 @@ function SchemaPreview() {
   if (!schema) return null;
 
   return (
-    <div className="mt-4 p-3 bg-[#1A1D27] rounded-sm border border-[#2A2D3A]">
-      <div className="text-xs text-gray-400 mb-2">Parsed Schema (v{schema.version})</div>
+    <div className="mt-5 p-5 bg-[#0C0D14] rounded-lg border border-[#14161F]">
+      <div className="text-xs text-[#5A6078] mb-3 font-medium">Parsed Schema (v{schema.version})</div>
       {schema.entities.map((entity) => (
-        <div key={entity.name} className="mb-3">
-          <div className="text-xs font-semibold text-gray-300">{entity.name}</div>
-          <div className="ml-2 text-[10px] text-gray-500 font-mono">
+        <div key={entity.name} className="mb-4">
+          <div className="text-xs font-semibold text-[#8890A8]">{entity.name}</div>
+          <div className="ml-3 text-[10px] text-[#5A6078] font-['Geist_Mono',monospace] mt-1 space-y-0.5">
             {entity.fields.map((f) => (
               <div key={f.name}>
                 {f.name}: {f.type} [{f.cardinality}] {f.notes ? `— ${f.notes}` : ''}
               </div>
             ))}
             {entity.partitionKey && (
-              <div className={`mt-1 ${entity.partitionKeyCardinalityWarning ? 'text-amber-400' : 'text-gray-400'}`}>
+              <div className={`mt-1.5 ${entity.partitionKeyCardinalityWarning ? 'text-amber-400' : 'text-[#8890A8]'}`}>
                 Partition key: {entity.partitionKey}
                 {entity.partitionKeyCardinalityWarning && ' (cardinality warning)'}
               </div>
@@ -281,7 +291,7 @@ function SchemaPreview() {
         </div>
       ))}
       {schema.aiNotes && (
-        <div className="text-[10px] text-amber-400/80 mt-2 border-t border-[#2A2D3A] pt-2">{schema.aiNotes}</div>
+        <div className="text-[10px] text-amber-400/80 mt-3 border-t border-[#14161F] pt-3">{schema.aiNotes}</div>
       )}
     </div>
   );

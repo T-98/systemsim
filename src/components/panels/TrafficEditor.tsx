@@ -39,51 +39,54 @@ export default function TrafficEditor() {
     setPhases(copy);
   };
 
+  const inputClass = "w-full bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200";
+  const compactInputClass = "bg-[#0C0D14] text-[#B8BCC8] px-2 py-1.5 rounded-lg border border-[#14161F] text-[10px] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200";
+
   return (
-    <div className="p-3 space-y-3 border-b border-[#1E2030]">
-      <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Traffic Profile</div>
+    <div className="px-4 py-3 space-y-3 border-b border-[#14161F]">
+      <div className="text-[10px] uppercase tracking-widest text-[#5A6078] font-medium mb-1">Traffic Profile</div>
 
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className="block text-[10px] text-gray-500 mb-1">Name</label>
+          <label className="block text-[10px] text-[#5A6078] mb-1 font-medium">Name</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none"
+            className={inputClass}
           />
         </div>
         <div className="w-20">
-          <label className="block text-[10px] text-gray-500 mb-1">Duration (s)</label>
+          <label className="block text-[10px] text-[#5A6078] mb-1 font-medium">Duration (s)</label>
           <input
             type="number"
             value={duration}
             onChange={(e) => setDuration(Number(e.target.value))}
-            className="w-full bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none"
+            className={inputClass}
           />
         </div>
         <div className="w-16">
-          <label className="block text-[10px] text-gray-500 mb-1">Jitter %</label>
+          <label className="block text-[10px] text-[#5A6078] mb-1 font-medium">Jitter %</label>
           <input
             type="number"
             value={jitter}
             onChange={(e) => setJitter(Number(e.target.value))}
-            className="w-full bg-[#1A1D27] text-gray-300 text-xs px-2 py-1.5 rounded-sm border border-[#2A2D3A] focus:border-blue-500 focus:outline-none"
+            className={inputClass}
           />
         </div>
       </div>
 
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         {phases.map((phase, i) => (
-          <div key={i} className="flex gap-1 items-center text-xs">
+          <div key={i} className="flex gap-1.5 items-center text-xs">
             <input type="number" value={phase.startS} onChange={(e) => updatePhase(i, { startS: Number(e.target.value) })}
-              className="w-12 bg-[#1A1D27] text-gray-300 px-1 py-1 rounded-sm border border-[#2A2D3A] text-[10px]" placeholder="Start" />
-            <span className="text-gray-600">-</span>
+              className={`w-12 ${compactInputClass}`} placeholder="Start" />
+            <span className="text-[#5A6078]/50">-</span>
             <input type="number" value={phase.endS} onChange={(e) => updatePhase(i, { endS: Number(e.target.value) })}
-              className="w-12 bg-[#1A1D27] text-gray-300 px-1 py-1 rounded-sm border border-[#2A2D3A] text-[10px]" placeholder="End" />
+              className={`w-12 ${compactInputClass}`} placeholder="End" />
             <input type="number" value={phase.rps} onChange={(e) => updatePhase(i, { rps: Number(e.target.value) })}
-              className="w-16 bg-[#1A1D27] text-gray-300 px-1 py-1 rounded-sm border border-[#2A2D3A] text-[10px]" placeholder="RPS" />
+              className={`w-16 ${compactInputClass}`} placeholder="RPS" />
             <select value={phase.shape} onChange={(e) => updatePhase(i, { shape: e.target.value as TrafficPhase['shape'] })}
-              className="bg-[#1A1D27] text-gray-300 px-1 py-1 rounded-sm border border-[#2A2D3A] text-[10px]">
+              className={compactInputClass}>
               <option value="steady">Steady</option>
               <option value="spike">Spike</option>
               <option value="instant_spike">Instant</option>
@@ -91,8 +94,8 @@ export default function TrafficEditor() {
               <option value="ramp_down">Ramp Down</option>
             </select>
             <input value={phase.description} onChange={(e) => updatePhase(i, { description: e.target.value })}
-              className="flex-1 bg-[#1A1D27] text-gray-300 px-1 py-1 rounded-sm border border-[#2A2D3A] text-[10px]" placeholder="Description" />
-            <button onClick={() => setPhases(phases.filter((_, j) => j !== i))} className="text-gray-600 hover:text-red-400 text-[10px]">&times;</button>
+              className={`flex-1 ${compactInputClass}`} placeholder="Description" />
+            <button onClick={() => setPhases(phases.filter((_, j) => j !== i))} className="text-[#5A6078] hover:text-red-400 text-[10px] transition-all duration-200">&times;</button>
           </div>
         ))}
       </div>
@@ -100,11 +103,11 @@ export default function TrafficEditor() {
       <div className="flex gap-2">
         <button
           onClick={() => setPhases([...phases, { startS: phases.length ? phases[phases.length - 1].endS : 0, endS: duration, rps: 1000, shape: 'steady', description: '' }])}
-          className="text-[10px] text-blue-400 hover:text-blue-300"
+          className="text-[10px] text-blue-400 hover:text-blue-300 transition-all duration-200"
         >
           + Phase
         </button>
-        <button onClick={save} className="px-2 py-1 text-[10px] bg-blue-600 hover:bg-blue-500 text-white rounded-sm ml-auto">
+        <button onClick={save} className="px-3 py-1.5 text-[10px] bg-blue-600 hover:bg-blue-500 text-white rounded-lg ml-auto shadow-lg shadow-blue-500/15 transition-all duration-200">
           Apply
         </button>
       </div>

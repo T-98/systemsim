@@ -23,28 +23,28 @@ export default function LiveLog() {
   if (!isActive) return null;
 
   const severityColor = {
-    info: 'text-gray-400',
+    info: 'text-[#5A6078]',
     warning: 'text-amber-400',
     critical: 'text-red-400',
   };
 
   return (
-    <div className={`bg-[#0D0F17] border-t border-[#1E2030] transition-all ${logPanelExpanded ? 'h-64' : 'h-32'}`}>
-      <div className="flex items-center justify-between px-3 py-1 border-b border-[#1E2030]">
-        <span className="text-[10px] uppercase tracking-wider text-gray-500">
-          Live Log {simulationStatus === 'running' && <span className="text-blue-400 ml-1 animate-pulse">LIVE</span>}
+    <div className={`bg-[#0A0B12] border-t border-[#14161F] transition-all duration-200 ${logPanelExpanded ? 'h-72' : 'h-28'}`}>
+      <div className="flex items-center justify-between px-5 py-2.5 border-b border-[#14161F]">
+        <span className="text-[10px] uppercase tracking-widest text-[#5A6078] font-medium">
+          Live Log {simulationStatus === 'running' && <span className="text-blue-500 ml-1.5 animate-pulse font-semibold">LIVE</span>}
         </span>
         <button
           onClick={() => setLogPanelExpanded(!logPanelExpanded)}
-          className="text-gray-500 hover:text-gray-300 text-xs"
+          className="text-[#5A6078] hover:text-white text-xs transition-all duration-200"
         >
           {logPanelExpanded ? 'Collapse' : 'Expand'}
         </button>
       </div>
-      <div className="overflow-y-auto h-full pb-8 px-3 py-1 font-mono text-[11px] leading-relaxed">
+      <div className="overflow-y-auto h-full pb-8 px-5 py-2 font-['Geist_Mono',monospace] text-[11px] leading-relaxed">
         {liveLog.map((entry, i) => (
           <div key={i} className={`${severityColor[entry.severity]}`}>
-            <span className="text-gray-600 mr-2">[{formatTime(entry.time)}]</span>
+            <span className="text-[#5A6078]/50 mr-2 select-none">[{formatTime(entry.time)}]</span>
             {entry.message}
           </div>
         ))}
