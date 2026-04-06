@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev"],
+      "port": 5180,
+      "env": {
+        "PATH": "/Users/divyanshkhare/Library/pnpm/nodejs/24.14.1/bin:/Users/divyanshkhare/Library/pnpm:/usr/bin:/bin:/usr/sbin:/sbin"
+      }
+    }
+  ]
+}
