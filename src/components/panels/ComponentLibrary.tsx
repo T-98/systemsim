@@ -25,49 +25,107 @@ export default function ComponentLibrary() {
   };
 
   return (
-    <div className="w-56 bg-[#0A0B12] border-r border-[#14161F] flex flex-col h-full overflow-hidden">
-      <div className="px-4 py-3.5 border-b border-[#14161F]">
+    <div
+      className="w-56 flex flex-col h-full overflow-hidden"
+      style={{
+        background: 'var(--bg-sidebar)',
+        borderRight: '1px solid var(--border-color)',
+      }}
+    >
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-color)' }}>
         <input
           type="text"
           placeholder="Search components..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full bg-[#0C0D14] text-[#8890A8] text-[12px] px-3.5 py-2 rounded-lg border border-[#14161F] placeholder-[#2A2F42] transition-all"
+          className="w-full transition-all"
+          style={{
+            background: 'var(--bg-input)',
+            color: 'var(--text-secondary)',
+            fontSize: '14px',
+            letterSpacing: '-0.224px',
+            padding: '8px 14px',
+            borderRadius: '8px',
+            border: '1px solid var(--border-color)',
+          }}
         />
       </div>
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
-        {filteredCategories.map((cat) => (
-          <div key={cat.name}>
-            <div className="text-[9px] uppercase tracking-[0.25em] text-[#2A2F42] font-semibold px-2 mb-2.5">{cat.label}</div>
-            <div className="space-y-0.5">
-              {cat.types.map((type) => {
-                const def = COMPONENT_DEFS[type];
-                return (
-                  <div
-                    key={type}
-                    draggable={!isRunning}
-                    onDragStart={(e) => onDragStart(e, type)}
-                    onClick={() => !isRunning && addComponent(type)}
-                    className={`group flex items-center gap-3 px-2.5 py-2.5 rounded-lg cursor-pointer transition-all duration-200
-                      ${isRunning ? 'opacity-25 cursor-not-allowed' : 'hover:bg-[#0E1019]'}`}
-                  >
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all"
-                      style={{ backgroundColor: def.categoryColor + '08', border: `1px solid ${def.categoryColor}12` }}>
-                      <div className="text-[#4A5068] group-hover:text-[#8890A8] transition-colors" style={{ width: 16, height: 16 }}>
-                        <ComponentIcon type={type} />
+      <div className="flex-1 overflow-y-auto" style={{ padding: '16px 12px' }}>
+        <div className="space-y-5">
+          {filteredCategories.map((cat) => (
+            <div key={cat.name}>
+              <div
+                className="font-semibold uppercase"
+                style={{
+                  fontSize: '10px',
+                  letterSpacing: '0.25em',
+                  color: 'var(--text-tertiary)',
+                  padding: '0 8px',
+                  marginBottom: '10px',
+                }}
+              >
+                {cat.label}
+              </div>
+              <div className="space-y-0.5">
+                {cat.types.map((type) => {
+                  const def = COMPONENT_DEFS[type];
+                  return (
+                    <div
+                      key={type}
+                      draggable={!isRunning}
+                      onDragStart={(e) => onDragStart(e, type)}
+                      onClick={() => !isRunning && addComponent(type)}
+                      className="group flex items-center gap-3 rounded-lg cursor-pointer transition-all duration-200"
+                      style={{
+                        padding: '10px',
+                        opacity: isRunning ? 0.25 : 1,
+                        cursor: isRunning ? 'not-allowed' : 'pointer',
+                      }}
+                      onMouseEnter={(e) => { if (!isRunning) e.currentTarget.style.background = 'var(--bg-hover)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <div
+                        className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-all"
+                        style={{ backgroundColor: def.categoryColor + '08', border: `1px solid ${def.categoryColor}12` }}
+                      >
+                        <div style={{ width: 16, height: 16, color: 'var(--text-tertiary)' }}>
+                          <ComponentIcon type={type} />
+                        </div>
                       </div>
+                      <div className="min-w-0 flex-1">
+                        <div
+                          className="font-medium truncate leading-tight"
+                          style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}
+                        >
+                          {def.label}
+                        </div>
+                        <div
+                          className="truncate"
+                          style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '2px', letterSpacing: '-0.12px' }}
+                        >
+                          {def.description}
+                        </div>
+                      </div>
+                      <span
+                        className="font-mono shrink-0"
+                        style={{
+                          fontSize: '10px',
+                          color: 'var(--text-tertiary)',
+                          background: 'var(--bg-input)',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                        }}
+                      >
+                        {def.shortcut}
+                      </span>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[12px] text-[#8890A8] font-medium truncate group-hover:text-white transition-colors leading-tight">{def.label}</div>
-                      <div className="text-[10px] text-[#2A2F42] truncate mt-0.5">{def.description}</div>
-                    </div>
-                    <span className="text-[9px] font-mono text-[#1E2030] bg-[#0C0D14] px-1.5 py-0.5 rounded border border-[#14161F] shrink-0">{def.shortcut}</span>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );

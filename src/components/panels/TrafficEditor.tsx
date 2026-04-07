@@ -6,6 +6,7 @@ export default function TrafficEditor() {
   const trafficProfile = useStore((s) => s.trafficProfile);
   const setTrafficProfile = useStore((s) => s.setTrafficProfile);
   const appMode = useStore((s) => s.appMode);
+  const [collapsed, setCollapsed] = useState(true);
 
   const [name, setName] = useState(trafficProfile?.profileName ?? 'custom_profile');
   const [duration, setDuration] = useState(trafficProfile?.durationSeconds ?? 120);
@@ -39,54 +40,95 @@ export default function TrafficEditor() {
     setPhases(copy);
   };
 
-  const inputClass = "w-full bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200";
-  const compactInputClass = "bg-[#0C0D14] text-[#B8BCC8] px-2 py-1.5 rounded-lg border border-[#14161F] text-[10px] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200";
+  const inputStyle: React.CSSProperties = {
+    background: 'var(--bg-input)',
+    color: 'var(--text-secondary)',
+    fontSize: '14px',
+    letterSpacing: '-0.224px',
+    padding: '8px 12px',
+    borderRadius: '8px',
+    border: '1px solid var(--border-color)',
+  };
+
+  const compactInputStyle: React.CSSProperties = {
+    background: 'var(--bg-input)',
+    color: 'var(--text-secondary)',
+    fontSize: '12px',
+    letterSpacing: '-0.12px',
+    padding: '6px 8px',
+    borderRadius: '8px',
+    border: '1px solid var(--border-color)',
+  };
 
   return (
-    <div className="px-4 py-3 space-y-3 border-b border-[#14161F]">
-      <div className="text-[10px] uppercase tracking-widest text-[#5A6078] font-medium mb-1">Traffic Profile</div>
+    <div style={{ borderBottom: '1px solid var(--border-color)' }}>
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full flex items-center justify-between transition-colors duration-150"
+        style={{ padding: '10px 16px' }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+      >
+        <span
+          className="uppercase font-medium"
+          style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-tertiary)' }}
+        >
+          Traffic Profile
+        </span>
+        <svg
+          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          style={{ color: 'var(--text-tertiary)', transform: collapsed ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.2s' }}
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
 
+      {!collapsed && (
+      <div className="space-y-3" style={{ padding: '0 16px 12px' }}>
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className="block text-[10px] text-[#5A6078] mb-1 font-medium">Name</label>
+          <label className="block font-medium" style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '4px', letterSpacing: '-0.12px' }}>Name</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className={inputClass}
+            className="w-full transition-all duration-200"
+            style={inputStyle}
           />
         </div>
         <div className="w-20">
-          <label className="block text-[10px] text-[#5A6078] mb-1 font-medium">Duration (s)</label>
+          <label className="block font-medium" style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '4px', letterSpacing: '-0.12px' }}>Duration (s)</label>
           <input
             type="number"
             value={duration}
             onChange={(e) => setDuration(Number(e.target.value))}
-            className={inputClass}
+            className="w-full transition-all duration-200"
+            style={inputStyle}
           />
         </div>
         <div className="w-16">
-          <label className="block text-[10px] text-[#5A6078] mb-1 font-medium">Jitter %</label>
+          <label className="block font-medium" style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '4px', letterSpacing: '-0.12px' }}>Jitter %</label>
           <input
             type="number"
             value={jitter}
             onChange={(e) => setJitter(Number(e.target.value))}
-            className={inputClass}
+            className="w-full transition-all duration-200"
+            style={inputStyle}
           />
         </div>
       </div>
 
       <div className="space-y-1.5">
         {phases.map((phase, i) => (
-          <div key={i} className="flex gap-1.5 items-center text-xs">
+          <div key={i} className="flex gap-1.5 items-center">
             <input type="number" value={phase.startS} onChange={(e) => updatePhase(i, { startS: Number(e.target.value) })}
-              className={`w-12 ${compactInputClass}`} placeholder="Start" />
-            <span className="text-[#5A6078]/50">-</span>
+              className="w-12 transition-all duration-200" style={compactInputStyle} placeholder="Start" />
+            <span style={{ color: 'var(--text-tertiary)', opacity: 0.5 }}>-</span>
             <input type="number" value={phase.endS} onChange={(e) => updatePhase(i, { endS: Number(e.target.value) })}
-              className={`w-12 ${compactInputClass}`} placeholder="End" />
+              className="w-12 transition-all duration-200" style={compactInputStyle} placeholder="End" />
             <input type="number" value={phase.rps} onChange={(e) => updatePhase(i, { rps: Number(e.target.value) })}
-              className={`w-16 ${compactInputClass}`} placeholder="RPS" />
+              className="w-16 transition-all duration-200" style={compactInputStyle} placeholder="RPS" />
             <select value={phase.shape} onChange={(e) => updatePhase(i, { shape: e.target.value as TrafficPhase['shape'] })}
-              className={compactInputClass}>
+              className="transition-all duration-200" style={compactInputStyle}>
               <option value="steady">Steady</option>
               <option value="spike">Spike</option>
               <option value="instant_spike">Instant</option>
@@ -94,8 +136,16 @@ export default function TrafficEditor() {
               <option value="ramp_down">Ramp Down</option>
             </select>
             <input value={phase.description} onChange={(e) => updatePhase(i, { description: e.target.value })}
-              className={`flex-1 ${compactInputClass}`} placeholder="Description" />
-            <button onClick={() => setPhases(phases.filter((_, j) => j !== i))} className="text-[#5A6078] hover:text-red-400 text-[10px] transition-all duration-200">&times;</button>
+              className="flex-1 transition-all duration-200" style={compactInputStyle} placeholder="Description" />
+            <button
+              onClick={() => setPhases(phases.filter((_, j) => j !== i))}
+              className="transition-all duration-200"
+              style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--destructive)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+            >
+              &times;
+            </button>
           </div>
         ))}
       </div>
@@ -103,14 +153,29 @@ export default function TrafficEditor() {
       <div className="flex gap-2">
         <button
           onClick={() => setPhases([...phases, { startS: phases.length ? phases[phases.length - 1].endS : 0, endS: duration, rps: 1000, shape: 'steady', description: '' }])}
-          className="text-[10px] text-blue-400 hover:text-blue-300 transition-all duration-200"
+          className="transition-all duration-200"
+          style={{ fontSize: '12px', color: 'var(--accent-link)', letterSpacing: '-0.12px' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-hover)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
         >
           + Phase
         </button>
-        <button onClick={save} className="px-3 py-1.5 text-[10px] bg-blue-600 hover:bg-blue-500 text-white rounded-lg ml-auto shadow-lg shadow-blue-500/15 transition-all duration-200">
+        <button
+          onClick={save}
+          className="rounded-lg ml-auto transition-all duration-200"
+          style={{
+            padding: '6px 12px',
+            fontSize: '12px',
+            letterSpacing: '-0.12px',
+            background: 'var(--accent)',
+            color: 'var(--text-on-accent)',
+          }}
+        >
           Apply
         </button>
       </div>
+      </div>
+      )}
     </div>
   );
 }

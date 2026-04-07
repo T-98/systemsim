@@ -86,7 +86,7 @@ export default function Canvas() {
   }, [addComponent, undo, redo, isRunning]);
 
   return (
-    <div className="flex-1 relative">
+    <div className="flex-1 relative" style={{ background: 'var(--canvas-bg)' }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -104,20 +104,21 @@ export default function Canvas() {
         defaultEdgeOptions={{ type: 'simWire' }}
         fitView
         proOptions={{ hideAttribution: true }}
-        className="bg-[#08090D]"
+        style={{ background: 'var(--canvas-bg)' }}
         nodesDraggable={!isRunning}
         nodesConnectable={!isRunning}
         elementsSelectable={true}
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#10121A" />
-        <Controls
-          showInteractive={false}
-          className="!bg-[#0C0D14] !border-[#14161F] !rounded-lg [&>button]:!bg-[#0C0D14] [&>button]:!border-[#14161F] [&>button]:!text-[#5A6078] [&>button:hover]:!bg-[#14161F] [&>button:hover]:!text-[#8890A8]"
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={24}
+          size={1}
+          color="var(--canvas-dot)"
         />
+        <Controls showInteractive={false} />
         <MiniMap
-          className="!bg-[#0A0B12] !border-[#14161F] !rounded-lg"
-          nodeColor="#14161F"
-          maskColor="#08090D40"
+          nodeColor="var(--node-border)"
+          maskColor="rgba(0,0,0,0.25)"
         />
         <ParticleOverlay />
       </ReactFlow>

@@ -1,79 +1,172 @@
 @import "tailwindcss";
 
-/* Tailwind's preflight handles box-sizing and sensible resets.
-   No blanket * { padding: 0 } — it kills Tailwind utilities. */
+/* ════════════════════════════════════════════════════
+   Apple-inspired Design System — Light & Dark modes
+   Single accent: Apple Blue (#0071e3 light, #2997ff dark)
+   Typography: Inter with negative letter-spacing at all sizes
+   Border radius: 8px standard, 11px search, 980px pills
+   Shadows: rare — 3px 5px 30px 0.22 opacity or nothing
+   ════════════════════════════════════════════════════ */
+
+/* ─── Light Mode (default) ─── */
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f5f5f7;
+  --bg-tertiary: #ffffff;
+  --bg-card: #f5f5f7;
+  --bg-card-elevated: #ffffff;
+  --bg-input: #fafafc;
+  --bg-nav: rgba(255, 255, 255, 0.72);
+  --bg-sidebar: #f5f5f7;
+  --bg-hover: #e8e8ed;
+
+  --border-color: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.12);
+
+  --text-primary: #1d1d1f;
+  --text-secondary: rgba(0, 0, 0, 0.8);
+  --text-tertiary: rgba(0, 0, 0, 0.48);
+  --text-on-accent: #ffffff;
+
+  --accent: #0071e3;
+  --accent-hover: #0077ed;
+  --accent-link: #0066cc;
+  --accent-ring: rgba(0, 113, 227, 0.25);
+
+  --destructive: #ff3b30;
+  --warning: #ff9f0a;
+  --success: #34c759;
+
+  --shadow-card: rgba(0, 0, 0, 0.08) 0px 2px 12px 0px;
+  --shadow-elevated: rgba(0, 0, 0, 0.12) 0px 4px 24px 0px;
+
+  --canvas-bg: #f5f5f7;
+  --canvas-dot: rgba(0, 0, 0, 0.06);
+  --wire-color: rgba(0, 0, 0, 0.12);
+
+  --node-bg: #ffffff;
+  --node-border: rgba(0, 0, 0, 0.08);
+  --node-border-warning: #ff9f0a;
+  --node-border-critical: #ff3b30;
+  --node-border-crashed: #ff3b30;
+
+  color-scheme: light;
+}
+
+/* ─── Dark Mode ─── */
+:root.dark {
+  --bg-primary: #000000;
+  --bg-secondary: #1d1d1f;
+  --bg-tertiary: #000000;
+  --bg-card: #1c1c1e;
+  --bg-card-elevated: #272729;
+  --bg-input: #1c1c1e;
+  --bg-nav: rgba(0, 0, 0, 0.88);
+  --bg-sidebar: #1d1d1f;
+  --bg-hover: #2a2a2d;
+
+  --border-color: #333336;
+  --border-strong: #48484a;
+
+  --text-primary: #f5f5f7;
+  --text-secondary: rgba(255, 255, 255, 0.8);
+  --text-tertiary: rgba(255, 255, 255, 0.48);
+  --text-on-accent: #ffffff;
+
+  --accent: #2997ff;
+  --accent-hover: #40a9ff;
+  --accent-link: #2997ff;
+  --accent-ring: rgba(41, 151, 255, 0.25);
+
+  --destructive: #ff453a;
+  --warning: #ff9f0a;
+  --success: #30d158;
+
+  --shadow-card: rgba(0, 0, 0, 0.5) 3px 5px 30px 0px;
+  --shadow-elevated: rgba(0, 0, 0, 0.6) 0px 8px 40px 0px;
+
+  --canvas-bg: #000000;
+  --canvas-dot: rgba(255, 255, 255, 0.04);
+  --wire-color: #333336;
+
+  --node-bg: #1c1c1e;
+  --node-border: #333336;
+  --node-border-warning: #ff9f0a;
+  --node-border-critical: #ff453a;
+  --node-border-crashed: #ff453a;
+
+  color-scheme: dark;
+}
 
 html, body, #app {
   height: 100%;
-  background: #08090D;
-  color: #B8BCC8;
-  font-family: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  font-size: 17px;
+  font-weight: 400;
+  line-height: 1.47;
+  letter-spacing: -0.374px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  letter-spacing: -0.01em;
 }
 
-/* ── React Flow dark overrides ── */
-.react-flow__node { border-radius: 10px; }
-.react-flow__edge-path { stroke: #1A1D28; }
+/* ─── React Flow overrides ─── */
+.react-flow__node { border-radius: 12px; }
+.react-flow__edge-path { stroke: var(--wire-color); }
 .react-flow__handle { border-radius: 50%; }
 
 .react-flow__controls {
-  border-radius: 10px !important;
+  border-radius: 8px !important;
   overflow: hidden;
-  border: 1px solid #14161F !important;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
-  backdrop-filter: blur(12px);
+  border: none !important;
+  background: var(--bg-card) !important;
+  box-shadow: var(--shadow-card) !important;
 }
 .react-flow__controls-button {
   border-radius: 0 !important;
-  background: #0C0D14 !important;
-  border-color: #14161F !important;
-  color: #4A5068 !important;
-  transition: all 0.2s;
+  background: var(--bg-card) !important;
+  border: none !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  color: var(--text-tertiary) !important;
+  transition: all 0.15s;
 }
+.react-flow__controls-button:last-child { border-bottom: none !important; }
 .react-flow__controls-button:hover {
-  background: #12141E !important;
-  color: #8890A8 !important;
+  background: var(--bg-hover) !important;
+  color: var(--text-secondary) !important;
 }
 .react-flow__controls-button svg { fill: currentColor !important; }
+
 .react-flow__minimap {
-  border-radius: 10px !important;
-  border: 1px solid #14161F !important;
+  border-radius: 8px !important;
+  border: none !important;
   overflow: hidden;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.3) !important;
+  box-shadow: var(--shadow-card) !important;
 }
 
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #14161F; border-radius: 100px; }
-::-webkit-scrollbar-thumb:hover { background: #1E2030; }
+::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
 
-/* ── Selection ── */
-::selection { background: #3B82F625; color: #fff; }
+/* ─── Selection ─── */
+::selection { background: var(--accent-ring); color: var(--text-primary); }
 
-/* ── Focus glow for inputs ── */
+/* ─── Focus ring ─── */
 input:focus, select:focus, textarea:focus {
   outline: none;
-  box-shadow: 0 0 0 2px #3B82F618, 0 0 16px #3B82F610;
-  border-color: #3B82F650 !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
-/* ── Animations ── */
-@keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
-  50% { box-shadow: 0 0 16px 3px rgba(59, 130, 246, 0.12); }
+/* ─── Animations ─── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-@keyframes fade-in-up {
-  from { transform: translateY(12px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-@keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
-}
-.animate-fade-in-up { animation: fade-in-up 0.4s ease-out both; }
-.animate-fade-in-up-1 { animation: fade-in-up 0.4s ease-out 0.05s both; }
-.animate-fade-in-up-2 { animation: fade-in-up 0.4s ease-out 0.1s both; }
-.animate-fade-in-up-3 { animation: fade-in-up 0.4s ease-out 0.15s both; }
+.animate-fade-in { animation: fade-in 0.5s ease-out both; }
+.animate-fade-in-1 { animation: fade-in 0.5s ease-out 0.06s both; }
+.animate-fade-in-2 { animation: fade-in 0.5s ease-out 0.12s both; }
+.animate-fade-in-3 { animation: fade-in 0.5s ease-out 0.18s both; }

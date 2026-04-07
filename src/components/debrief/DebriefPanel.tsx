@@ -9,34 +9,71 @@ export default function DebriefPanel() {
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-50 transition-transform">
-      <div className="bg-[#0A0B12] border-t border-[#14161F] max-h-[60vh] overflow-y-auto shadow-2xl shadow-black/50">
-        <div className="flex items-center justify-between px-8 py-4 border-b border-[#14161F] sticky top-0 bg-[#0A0B12]">
+      <div
+        className="max-h-[60vh] overflow-y-auto"
+        style={{
+          background: 'var(--bg-card-elevated)',
+          borderTop: '1px solid var(--border-color)',
+          boxShadow: 'var(--shadow-elevated)',
+        }}
+      >
+        <div
+          className="flex items-center justify-between sticky top-0"
+          style={{
+            padding: '16px 32px',
+            borderBottom: '1px solid var(--border-color)',
+            background: 'var(--bg-card-elevated)',
+          }}
+        >
           <div className="flex items-center gap-4">
-            <span className="text-sm font-semibold text-white font-['Playfair_Display',serif]">Post-Run Debrief</span>
-            <div className="flex gap-3 text-xs">
+            <span
+              className="font-semibold"
+              style={{ fontSize: '17px', color: 'var(--text-primary)', letterSpacing: '-0.374px' }}
+            >
+              Post-Run Debrief
+            </span>
+            <div className="flex gap-3">
               <ScoreBadge label="Coherence" score={debrief.scores.coherence} />
               <ScoreBadge label="Security" score={debrief.scores.security} />
               <ScoreBadge label="Performance" score={debrief.scores.performance} />
             </div>
           </div>
-          <button onClick={() => setDebriefVisible(false)} className="text-[#5A6078] hover:text-white transition-all duration-200">&times;</button>
+          <button
+            onClick={() => setDebriefVisible(false)}
+            className="transition-all duration-200"
+            style={{ color: 'var(--text-tertiary)', fontSize: '17px' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+          >
+            &times;
+          </button>
         </div>
 
-        <div className="p-8 max-w-3xl">
+        <div className="max-w-3xl" style={{ padding: '32px' }}>
           {/* Summary */}
-          <div className="mb-8">
-            <h3 className="text-[10px] uppercase tracking-widest text-[#5A6078] mb-3 font-medium">What Happened</h3>
-            <p className="text-sm text-[#8890A8] leading-relaxed">{debrief.summary}</p>
+          <div style={{ marginBottom: '32px' }}>
+            <h3
+              className="uppercase font-medium"
+              style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-tertiary)', marginBottom: '12px' }}
+            >
+              What Happened
+            </h3>
+            <p className="leading-relaxed" style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}>{debrief.summary}</p>
           </div>
 
           {/* Questions */}
           {debrief.questions.length > 0 && (
-            <div className="mb-8">
-              <h3 className="text-[10px] uppercase tracking-widest text-[#5A6078] mb-3 font-medium">Questions for You</h3>
+            <div style={{ marginBottom: '32px' }}>
+              <h3
+                className="uppercase font-medium"
+                style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-tertiary)', marginBottom: '12px' }}
+              >
+                Questions for You
+              </h3>
               <div className="space-y-3">
                 {debrief.questions.map((q, i) => (
-                  <div key={i} className="pl-4 border-l-2 border-blue-500/60">
-                    <p className="text-sm text-[#8890A8] italic leading-relaxed">{q}</p>
+                  <div key={i} style={{ paddingLeft: '16px', borderLeft: '2px solid var(--accent)' }}>
+                    <p className="italic leading-relaxed" style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}>{q}</p>
                   </div>
                 ))}
               </div>
@@ -45,11 +82,24 @@ export default function DebriefPanel() {
 
           {/* Flags */}
           {debrief.flags.length > 0 && (
-            <div className="mb-8">
-              <h3 className="text-[10px] uppercase tracking-widest text-[#5A6078] mb-3 font-medium">Patterns Detected</h3>
+            <div style={{ marginBottom: '32px' }}>
+              <h3
+                className="uppercase font-medium"
+                style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-tertiary)', marginBottom: '12px' }}
+              >
+                Patterns Detected
+              </h3>
               <div className="space-y-1.5">
                 {debrief.flags.map((flag, i) => (
-                  <div key={i} className="text-xs text-amber-400 font-['Geist_Mono',monospace]">
+                  <div
+                    key={i}
+                    style={{
+                      fontSize: '14px',
+                      color: 'var(--warning)',
+                      fontFamily: "'Geist Mono', monospace",
+                      letterSpacing: '-0.224px',
+                    }}
+                  >
                     {flag}
                   </div>
                 ))}
@@ -63,15 +113,24 @@ export default function DebriefPanel() {
 }
 
 function ScoreBadge({ label, score }: { label: string; score: number }) {
-  const bg = score >= 80
-    ? 'bg-emerald-500/10 text-emerald-400'
-    : score >= 50
-    ? 'bg-amber-500/10 text-amber-400'
-    : 'bg-red-500/10 text-red-400';
+  const getColors = () => {
+    if (score >= 80) return { bg: 'rgba(52,199,89,0.1)', text: 'var(--success)' };
+    if (score >= 50) return { bg: 'rgba(255,159,10,0.1)', text: 'var(--warning)' };
+    return { bg: 'rgba(255,59,48,0.1)', text: 'var(--destructive)' };
+  };
+  const colors = getColors();
   return (
-    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${bg}`}>
-      <span className="text-[#5A6078] text-[10px]">{label}</span>
-      <span className="font-['Geist_Mono',monospace] font-bold text-[11px]">{score}</span>
+    <div
+      className="flex items-center gap-1.5 rounded-lg"
+      style={{ padding: '4px 10px', background: colors.bg }}
+    >
+      <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>{label}</span>
+      <span
+        className="font-bold"
+        style={{ fontSize: '12px', color: colors.text, fontFamily: "'Geist Mono', monospace", letterSpacing: '-0.12px' }}
+      >
+        {score}
+      </span>
     </div>
   );
 }

@@ -27,12 +27,34 @@ export default function ConfigPanel() {
   if (selectedEdge) {
     const wireConfig = selectedEdge.data!.config;
     return (
-      <div className="w-80 bg-[#0A0B12] border-l border-[#14161F] flex flex-col h-full overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#14161F]">
-          <span className="text-xs font-semibold tracking-wide text-[#8890A8]">Wire Config</span>
-          <button onClick={close} className="text-[#5A6078] hover:text-white text-sm transition-all duration-200">&times;</button>
+      <div
+        className="w-80 flex flex-col h-full overflow-y-auto"
+        style={{
+          background: 'var(--bg-sidebar)',
+          borderLeft: '1px solid var(--border-color)',
+        }}
+      >
+        <div
+          className="flex items-center justify-between"
+          style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)' }}
+        >
+          <span
+            className="font-semibold tracking-wide"
+            style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}
+          >
+            Wire Config
+          </span>
+          <button
+            onClick={close}
+            className="transition-all duration-200"
+            style={{ fontSize: '17px', color: 'var(--text-tertiary)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+          >
+            &times;
+          </button>
         </div>
-        <div className="p-5 space-y-5">
+        <div style={{ padding: '20px' }} className="space-y-5">
           <ConfigField label="Throughput (RPS)" type="number" value={wireConfig.throughputRps}
             onChange={(v) => updateWireConfig(selectedEdge.id, { throughputRps: Number(v) })} disabled={isRunning} />
           <ConfigField label="Latency (ms)" type="number" value={wireConfig.latencyMs}
@@ -55,12 +77,34 @@ export default function ConfigPanel() {
   };
 
   return (
-    <div className="w-80 bg-[#0A0B12] border-l border-[#14161F] flex flex-col h-full overflow-y-auto">
-      <div className="flex items-center justify-between px-5 py-4 border-b border-[#14161F]">
-        <span className="text-xs font-semibold tracking-wide text-[#8890A8]">{def.label}</span>
-        <button onClick={close} className="text-[#5A6078] hover:text-white text-sm transition-all duration-200">&times;</button>
+    <div
+      className="w-80 flex flex-col h-full overflow-y-auto"
+      style={{
+        background: 'var(--bg-sidebar)',
+        borderLeft: '1px solid var(--border-color)',
+      }}
+    >
+      <div
+        className="flex items-center justify-between"
+        style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)' }}
+      >
+        <span
+          className="font-semibold tracking-wide"
+          style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}
+        >
+          {def.label}
+        </span>
+        <button
+          onClick={close}
+          className="transition-all duration-200"
+          style={{ fontSize: '17px', color: 'var(--text-tertiary)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+        >
+          &times;
+        </button>
       </div>
-      <div className="p-5 space-y-5">
+      <div style={{ padding: '20px' }} className="space-y-5">
         <ConfigField label="Label" type="text" value={data.label}
           onChange={(v) => updateComponentLabel(selectedNode.id, String(v))} disabled={isRunning} />
 
@@ -93,8 +137,8 @@ export default function ConfigPanel() {
           }
           if (Array.isArray(value)) {
             return (
-              <div key={key} className="text-[10px] text-[#5A6078]">
-                <span className="text-[#8890A8]">{label}:</span> {value.length} items
+              <div key={key} style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>{label}:</span> {value.length} items
               </div>
             );
           }
@@ -104,7 +148,19 @@ export default function ConfigPanel() {
         {!isRunning && (
           <button
             onClick={() => removeComponent(selectedNode.id)}
-            className="w-full mt-4 px-4 py-2.5 text-xs text-red-400 border border-red-900/50 rounded-lg hover:bg-red-950/40 transition-all duration-200"
+            className="w-full rounded-lg transition-all duration-200"
+            style={{
+              marginTop: '16px',
+              padding: '10px 16px',
+              fontSize: '14px',
+              letterSpacing: '-0.224px',
+              color: 'var(--destructive)',
+              border: '1px solid var(--destructive)',
+              opacity: 0.7,
+              background: 'transparent',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7'; }}
           >
             Delete Component
           </button>
@@ -119,13 +175,28 @@ function ConfigField({ label, type, value, onChange, disabled }: {
 }) {
   return (
     <div>
-      <label className="block text-[11px] text-[#5A6078] mb-1.5 font-medium">{label}</label>
+      <label
+        className="block font-medium"
+        style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '6px', letterSpacing: '-0.12px' }}
+      >
+        {label}
+      </label>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="w-full bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 disabled:opacity-40 transition-all duration-200 font-['Geist_Mono',monospace]"
+        className="w-full disabled:opacity-40 transition-all duration-200"
+        style={{
+          background: 'var(--bg-input)',
+          color: 'var(--text-secondary)',
+          fontSize: '14px',
+          letterSpacing: '-0.224px',
+          padding: '10px 14px',
+          borderRadius: '8px',
+          border: '1px solid var(--border-color)',
+          fontFamily: "'Geist Mono', monospace",
+        }}
       />
     </div>
   );
@@ -136,12 +207,28 @@ function ConfigToggle({ label, value, onChange, disabled }: {
 }) {
   return (
     <div className="flex items-center justify-between">
-      <label className="text-[11px] text-[#5A6078] font-medium">{label}</label>
+      <label
+        className="font-medium"
+        style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}
+      >
+        {label}
+      </label>
       <button
         onClick={() => !disabled && onChange(!value)}
-        className={`w-9 h-5 rounded-full transition-all duration-200 ${value ? 'bg-blue-600' : 'bg-[#14161F]'} ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+        className="w-9 h-5 rounded-full transition-all duration-200"
+        style={{
+          background: value ? 'var(--accent)' : 'var(--border-color)',
+          opacity: disabled ? 0.4 : 1,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+        }}
       >
-        <div className={`w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-all duration-200 ${value ? 'translate-x-[18px]' : 'translate-x-[3px]'}`} />
+        <div
+          className="w-3.5 h-3.5 rounded-full shadow-sm transition-all duration-200"
+          style={{
+            background: '#ffffff',
+            transform: value ? 'translateX(18px)' : 'translateX(3px)',
+          }}
+        />
       </button>
     </div>
   );
@@ -152,12 +239,26 @@ function ConfigSelect({ label, value, options, onChange, disabled }: {
 }) {
   return (
     <div>
-      <label className="block text-[11px] text-[#5A6078] mb-1.5 font-medium">{label}</label>
+      <label
+        className="block font-medium"
+        style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '6px', letterSpacing: '-0.12px' }}
+      >
+        {label}
+      </label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        className="w-full bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 disabled:opacity-40 transition-all duration-200"
+        className="w-full disabled:opacity-40 transition-all duration-200"
+        style={{
+          background: 'var(--bg-input)',
+          color: 'var(--text-secondary)',
+          fontSize: '14px',
+          letterSpacing: '-0.224px',
+          padding: '10px 14px',
+          borderRadius: '8px',
+          border: '1px solid var(--border-color)',
+        }}
       >
         {options.map((opt) => (
           <option key={opt} value={opt}>{opt}</option>

@@ -62,32 +62,86 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
     setSchemaLoading(false);
   };
 
+  const inputStyle: React.CSSProperties = {
+    background: 'var(--bg-input)',
+    color: 'var(--text-secondary)',
+    fontSize: '14px',
+    letterSpacing: '-0.224px',
+    padding: '10px 14px',
+    borderRadius: '8px',
+    border: '1px solid var(--border-color)',
+  };
+
+  const textareaStyle: React.CSSProperties = {
+    ...inputStyle,
+    fontSize: '14px',
+    padding: '12px 16px',
+    fontFamily: "'Geist Mono', monospace",
+  };
+
   return (
-    <div className="bg-[#08090D] min-h-screen text-[#B8BCC8]">
-      <div className="max-w-2xl mx-auto py-10 px-8">
-        <h2 className="text-xl font-semibold mb-3 text-white font-['Playfair_Display',serif]">Design Flow</h2>
-        <p className="text-sm text-[#5A6078] mb-10 leading-relaxed">
+    <div className="min-h-screen" style={{ background: 'var(--bg-primary)', color: 'var(--text-secondary)' }}>
+      <div className="max-w-2xl mx-auto" style={{ padding: '40px 32px' }}>
+        <h2
+          className="font-semibold"
+          style={{
+            fontSize: '40px',
+            letterSpacing: '-0.374px',
+            color: 'var(--text-primary)',
+            marginBottom: '12px',
+          }}
+        >
+          Design Flow
+        </h2>
+        <p
+          className="leading-relaxed"
+          style={{
+            fontSize: '17px',
+            color: 'var(--text-tertiary)',
+            letterSpacing: '-0.374px',
+            marginBottom: '40px',
+          }}
+        >
           Complete each section to enrich the simulation. You can skip sections and come back — minimum viable input is a diagram.
         </p>
 
         {/* Scenario brief banner */}
-        <div className="mb-8 rounded-lg border border-[#14161F] bg-[#0C0D14] px-5 py-4">
-          <div className="text-[10px] uppercase tracking-widest text-[#5A6078] mb-1.5">Scenario Brief</div>
-          <p className="text-sm text-[#8890A8] leading-relaxed">
+        <div
+          className="rounded-lg"
+          style={{
+            marginBottom: '32px',
+            padding: '20px',
+            background: 'var(--bg-card)',
+          }}
+        >
+          <div
+            className="uppercase font-medium"
+            style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-tertiary)', marginBottom: '6px' }}
+          >
+            Scenario Brief
+          </div>
+          <p className="leading-relaxed" style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}>
             Design a system that handles @everyone mentions in a Discord-scale server with 500k+ members, fanning out notifications without degrading real-time chat.
           </p>
         </div>
 
-        <div className="flex gap-1 mb-8 bg-[#0C0D14] p-1 rounded-lg">
+        <div
+          className="flex gap-1 rounded-lg"
+          style={{ marginBottom: '32px', padding: '4px', background: 'var(--bg-card)' }}
+        >
           {sections.map((s) => (
             <button
               key={s.id}
               onClick={() => setActiveSection(s.id)}
-              className={`flex-1 px-4 py-2.5 text-xs rounded-lg transition-all duration-200 font-medium ${
-                activeSection === s.id
-                  ? 'bg-[#14161F] text-white shadow-sm'
-                  : 'text-[#5A6078] hover:text-[#8890A8]'
-              }`}
+              className="flex-1 rounded-lg transition-all duration-200 font-medium"
+              style={{
+                padding: '10px 16px',
+                fontSize: '14px',
+                letterSpacing: '-0.224px',
+                background: activeSection === s.id ? 'var(--bg-card-elevated)' : 'transparent',
+                color: activeSection === s.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                boxShadow: activeSection === s.id ? 'var(--shadow-card)' : 'none',
+              }}
             >
               {s.label}
             </button>
@@ -97,17 +151,28 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
         {activeSection === 'requirements' && (
           <div className="space-y-5">
             <div>
-              <label className="block text-[11px] text-[#5A6078] mb-2 font-medium">Functional Requirements (one per line)</label>
+              <label
+                className="block font-medium"
+                style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '8px', letterSpacing: '-0.12px' }}
+              >
+                Functional Requirements (one per line)
+              </label>
               <textarea
                 value={reqInput}
                 onChange={(e) => setReqInput(e.target.value)}
                 rows={6}
-                className="w-full bg-[#0C0D14] text-[#B8BCC8] text-sm px-4 py-3 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 font-['Geist_Mono',monospace] transition-all duration-200"
+                className="w-full transition-all duration-200"
+                style={textareaStyle}
                 placeholder="Handle @everyone mentions in servers with 500k+ members&#10;Fan out notifications to all members..."
               />
             </div>
             <div>
-              <label className="block text-[11px] text-[#5A6078] mb-2 font-medium">Non-Functional Requirements</label>
+              <label
+                className="block font-medium"
+                style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '8px', letterSpacing: '-0.12px' }}
+              >
+                Non-Functional Requirements
+              </label>
               {nfrList.map((nfr, i) => (
                 <div key={i} className="flex gap-2 mb-2">
                   <input
@@ -118,7 +183,8 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                       copy[i] = { ...copy[i], attribute: e.target.value };
                       setNfrList(copy);
                     }}
-                    className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
+                    className="flex-1 transition-all duration-200"
+                    style={inputStyle}
                   />
                   <input
                     placeholder="Target"
@@ -128,7 +194,8 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                       copy[i] = { ...copy[i], target: e.target.value };
                       setNfrList(copy);
                     }}
-                    className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
+                    className="flex-1 transition-all duration-200"
+                    style={inputStyle}
                   />
                   <input
                     placeholder="Scope"
@@ -138,18 +205,32 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                       copy[i] = { ...copy[i], scope: e.target.value };
                       setNfrList(copy);
                     }}
-                    className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
+                    className="flex-1 transition-all duration-200"
+                    style={inputStyle}
                   />
                 </div>
               ))}
               <button
                 onClick={() => setNfrList([...nfrList, { attribute: '', target: '', scope: '' }])}
-                className="text-xs text-blue-400 hover:text-blue-300 transition-all duration-200"
+                className="transition-all duration-200"
+                style={{ fontSize: '14px', color: 'var(--accent-link)', letterSpacing: '-0.224px' }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
               >
                 + Add NFR
               </button>
             </div>
-            <button onClick={saveRequirements} className="px-5 py-2.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-500/15 transition-all duration-200">
+            <button
+              onClick={saveRequirements}
+              className="rounded-lg font-medium transition-all duration-200"
+              style={{
+                padding: '10px 20px',
+                fontSize: '14px',
+                letterSpacing: '-0.224px',
+                background: 'var(--accent)',
+                color: 'var(--text-on-accent)',
+              }}
+            >
               Save Requirements
             </button>
           </div>
@@ -157,7 +238,12 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
 
         {activeSection === 'api' && (
           <div className="space-y-5">
-            <label className="block text-[11px] text-[#5A6078] mb-2 font-medium">API Contracts</label>
+            <label
+              className="block font-medium"
+              style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '8px', letterSpacing: '-0.12px' }}
+            >
+              API Contracts
+            </label>
             {apiList.map((api, i) => (
               <div key={i} className="flex gap-2 mb-2 items-center">
                 <select
@@ -167,7 +253,8 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                     copy[i] = { ...copy[i], method: e.target.value };
                     setApiList(copy);
                   }}
-                  className="w-24 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
+                  className="w-24 transition-all duration-200"
+                  style={inputStyle}
                 >
                   <option>GET</option>
                   <option>POST</option>
@@ -182,7 +269,8 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                     copy[i] = { ...copy[i], path: e.target.value };
                     setApiList(copy);
                   }}
-                  className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 font-['Geist_Mono',monospace] transition-all duration-200"
+                  className="flex-1 transition-all duration-200"
+                  style={{ ...inputStyle, fontFamily: "'Geist Mono', monospace" }}
                 />
                 <input
                   placeholder="Description"
@@ -192,9 +280,10 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                     copy[i] = { ...copy[i], description: e.target.value };
                     setApiList(copy);
                   }}
-                  className="flex-1 bg-[#0C0D14] text-[#B8BCC8] text-xs px-3 py-2.5 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 transition-all duration-200"
+                  className="flex-1 transition-all duration-200"
+                  style={inputStyle}
                 />
-                <label className="flex items-center gap-1.5 text-[10px] text-[#5A6078]">
+                <label className="flex items-center gap-1.5" style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>
                   <input
                     type="checkbox"
                     checked={api.auth}
@@ -203,7 +292,8 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                       copy[i] = { ...copy[i], auth: e.target.checked };
                       setApiList(copy);
                     }}
-                    className="rounded accent-blue-600"
+                    className="rounded"
+                    style={{ accentColor: 'var(--accent)' }}
                   />
                   Auth
                 </label>
@@ -211,12 +301,25 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
             ))}
             <button
               onClick={() => setApiList([...apiList, { method: 'GET', path: '', description: '', auth: true }])}
-              className="text-xs text-blue-400 hover:text-blue-300 transition-all duration-200"
+              className="transition-all duration-200"
+              style={{ fontSize: '14px', color: 'var(--accent-link)', letterSpacing: '-0.224px' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
             >
               + Add endpoint
             </button>
             <div>
-              <button onClick={saveApi} className="px-5 py-2.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-500/15 transition-all duration-200">
+              <button
+                onClick={saveApi}
+                className="rounded-lg font-medium transition-all duration-200"
+                style={{
+                  padding: '10px 20px',
+                  fontSize: '14px',
+                  letterSpacing: '-0.224px',
+                  background: 'var(--accent)',
+                  color: 'var(--text-on-accent)',
+                }}
+              >
                 Save API Contracts
               </button>
             </div>
@@ -225,14 +328,18 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
 
         {activeSection === 'schema' && (
           <div className="space-y-5">
-            <label className="block text-[11px] text-[#5A6078] mb-2 font-medium">
+            <label
+              className="block font-medium"
+              style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '8px', letterSpacing: '-0.12px' }}
+            >
               Data Model — write in any format (SQL, JSON, natural language, bullet points)
             </label>
             <textarea
               value={schemaText}
               onChange={(e) => setSchemaText(e.target.value)}
               rows={10}
-              className="w-full bg-[#0C0D14] text-[#B8BCC8] text-sm px-4 py-3 rounded-lg border border-[#14161F] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500/20 font-['Geist_Mono',monospace] transition-all duration-200"
+              className="w-full transition-all duration-200"
+              style={textareaStyle}
               placeholder={`users table: id (bigint PK), name (text)
 notifications table: id (bigint PK), user_id (bigint FK users.id), content (text), created_at (timestamp)
   - partition key: user_id
@@ -242,7 +349,14 @@ notifications table: id (bigint PK), user_id (bigint FK users.id), content (text
             <button
               onClick={saveSchema}
               disabled={schemaLoading}
-              className="px-5 py-2.5 text-xs bg-blue-600 hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-500/15 disabled:opacity-50 transition-all duration-200"
+              className="rounded-lg font-medium disabled:opacity-50 transition-all duration-200"
+              style={{
+                padding: '10px 20px',
+                fontSize: '14px',
+                letterSpacing: '-0.224px',
+                background: 'var(--accent)',
+                color: 'var(--text-on-accent)',
+              }}
             >
               {schemaLoading ? 'Parsing...' : 'Parse & Save Schema'}
             </button>
@@ -252,10 +366,17 @@ notifications table: id (bigint PK), user_id (bigint FK users.id), content (text
           </div>
         )}
 
-        <div className="mt-10 flex justify-end">
+        <div className="flex justify-end" style={{ marginTop: '40px' }}>
           <button
             onClick={onComplete}
-            className="px-8 py-3 text-sm bg-blue-600 hover:bg-blue-500 rounded-lg font-medium shadow-lg shadow-blue-500/15 text-white transition-all duration-200"
+            className="rounded-lg font-medium transition-all duration-200"
+            style={{
+              padding: '12px 32px',
+              fontSize: '17px',
+              letterSpacing: '-0.374px',
+              background: 'var(--accent)',
+              color: 'var(--text-on-accent)',
+            }}
           >
             Continue to Canvas
           </button>
@@ -270,19 +391,46 @@ function SchemaPreview() {
   if (!schema) return null;
 
   return (
-    <div className="mt-5 p-5 bg-[#0C0D14] rounded-lg border border-[#14161F]">
-      <div className="text-xs text-[#5A6078] mb-3 font-medium">Parsed Schema (v{schema.version})</div>
+    <div
+      className="rounded-lg"
+      style={{
+        marginTop: '20px',
+        padding: '20px',
+        background: 'var(--bg-card)',
+      }}
+    >
+      <div
+        className="font-medium"
+        style={{ fontSize: '14px', color: 'var(--text-tertiary)', marginBottom: '12px', letterSpacing: '-0.224px' }}
+      >
+        Parsed Schema (v{schema.version})
+      </div>
       {schema.entities.map((entity) => (
         <div key={entity.name} className="mb-4">
-          <div className="text-xs font-semibold text-[#8890A8]">{entity.name}</div>
-          <div className="ml-3 text-[10px] text-[#5A6078] font-['Geist_Mono',monospace] mt-1 space-y-0.5">
+          <div className="font-semibold" style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}>{entity.name}</div>
+          <div
+            className="space-y-0.5"
+            style={{
+              marginLeft: '12px',
+              marginTop: '4px',
+              fontSize: '12px',
+              color: 'var(--text-tertiary)',
+              fontFamily: "'Geist Mono', monospace",
+              letterSpacing: '-0.12px',
+            }}
+          >
             {entity.fields.map((f) => (
               <div key={f.name}>
-                {f.name}: {f.type} [{f.cardinality}] {f.notes ? `— ${f.notes}` : ''}
+                {f.name}: {f.type} [{f.cardinality}] {f.notes ? `\u2014 ${f.notes}` : ''}
               </div>
             ))}
             {entity.partitionKey && (
-              <div className={`mt-1.5 ${entity.partitionKeyCardinalityWarning ? 'text-amber-400' : 'text-[#8890A8]'}`}>
+              <div
+                style={{
+                  marginTop: '6px',
+                  color: entity.partitionKeyCardinalityWarning ? 'var(--warning)' : 'var(--text-secondary)',
+                }}
+              >
                 Partition key: {entity.partitionKey}
                 {entity.partitionKeyCardinalityWarning && ' (cardinality warning)'}
               </div>
@@ -291,7 +439,18 @@ function SchemaPreview() {
         </div>
       ))}
       {schema.aiNotes && (
-        <div className="text-[10px] text-amber-400/80 mt-3 border-t border-[#14161F] pt-3">{schema.aiNotes}</div>
+        <div
+          style={{
+            fontSize: '12px',
+            color: 'var(--warning)',
+            marginTop: '12px',
+            paddingTop: '12px',
+            borderTop: '1px solid var(--border-color)',
+            letterSpacing: '-0.12px',
+          }}
+        >
+          {schema.aiNotes}
+        </div>
       )}
     </div>
   );

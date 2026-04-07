@@ -12,13 +12,27 @@ export default function HintCard() {
       {activeHints.map((hint) => (
         <div
           key={hint.id}
-          className="bg-[#0C0D14] border border-[#14161F] border-l-2 border-l-blue-500/40 rounded-xl p-4 shadow-lg shadow-black/30"
+          className="rounded-lg"
+          style={{
+            background: 'var(--bg-card)',
+            boxShadow: 'var(--shadow-elevated)',
+            padding: '16px',
+            borderLeft: '2px solid var(--accent)',
+          }}
         >
           <div className="flex items-start justify-between gap-3">
-            <p className="text-xs text-[#8890A8] italic leading-relaxed">{hint.message}</p>
+            <p
+              className="italic leading-relaxed"
+              style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}
+            >
+              {hint.message}
+            </p>
             <button
               onClick={() => dismissHint(hint.id)}
-              className="text-[#5A6078] hover:text-white text-xs shrink-0 transition-all duration-200"
+              className="shrink-0 transition-all duration-200"
+              style={{ fontSize: '14px', color: 'var(--text-tertiary)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
             >
               &times;
             </button>

@@ -29,7 +29,6 @@ function SimWireEdge({
   });
 
   const strokeWidth = selected ? 2.5 : viewMode === 'aggregate' && isRunning ? 3 : 1.5;
-  const strokeColor = selected ? '#3B82F6' : '#14161F';
 
   return (
     <>
@@ -37,7 +36,7 @@ function SimWireEdge({
         id={id}
         path={edgePath}
         style={{
-          stroke: strokeColor,
+          stroke: selected ? 'var(--accent)' : 'var(--wire-color)',
           strokeWidth,
           transition: 'stroke-width 0.3s',
         }}
@@ -47,9 +46,10 @@ function SimWireEdge({
           id={`${id}-glow`}
           path={edgePath}
           style={{
-            stroke: '#3B82F640',
+            stroke: 'var(--accent)',
             strokeWidth: strokeWidth + 4,
             filter: 'blur(3px)',
+            opacity: 0.25,
           }}
         />
       )}

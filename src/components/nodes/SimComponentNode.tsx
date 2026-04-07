@@ -6,18 +6,11 @@ import { COMPONENT_DEFS } from '../../types/components';
 import { ComponentIcon } from './icons';
 import { useStore } from '../../store';
 
-const healthBorder: Record<HealthState, string> = {
-  healthy: 'border-[#14161F]',
-  warning: 'border-amber-500',
-  critical: 'border-red-500',
-  crashed: 'border-red-900',
-};
-
-const healthBg: Record<HealthState, string> = {
-  healthy: 'bg-[#0C0D14]',
-  warning: 'bg-[#0C0D14]',
-  critical: 'bg-[#0C0D14]',
-  crashed: 'bg-[#0A0910] opacity-60',
+const healthBorderVar: Record<HealthState, string> = {
+  healthy: 'var(--node-border)',
+  warning: 'var(--node-border-warning)',
+  critical: 'var(--node-border-critical)',
+  crashed: 'var(--node-border-crashed)',
 };
 
 function SimComponentNode({ id, data, selected }: NodeProps & { data: SimComponentData }) {
@@ -32,58 +25,93 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
 
   return (
     <motion.div
-      className={`
-        relative min-w-[200px] rounded-xl border ${healthBorder[health]} ${healthBg[health]}
-        text-white shadow-lg shadow-black/20 cursor-pointer transition-all duration-200
-        ${selected ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-[#08090D]' : ''}
-        ${health === 'crashed' ? 'grayscale' : ''}
-      `}
+      className="relative min-w-[200px] cursor-pointer transition-all duration-200"
+      style={{
+        borderRadius: '12px',
+        border: `1px solid ${healthBorderVar[health]}`,
+        background: 'var(--node-bg)',
+        color: 'var(--text-primary)',
+        boxShadow: 'var(--shadow-card)',
+        opacity: health === 'crashed' ? 0.6 : 1,
+        filter: health === 'crashed' ? 'grayscale(1)' : 'none',
+        outline: selected ? '2px solid var(--accent)' : 'none',
+        outlineOffset: selected ? '1px' : '0',
+      }}
       animate={
         health === 'warning'
-          ? { borderColor: ['#F59E0B', '#F59E0B80', '#F59E0B'], transition: { repeat: Infinity, duration: 2 } }
+          ? { borderColor: ['var(--node-border-warning)', 'rgba(255,159,10,0.5)', 'var(--node-border-warning)'], transition: { repeat: Infinity, duration: 2 } }
           : health === 'critical'
-          ? { borderColor: ['#EF4444', '#EF444480', '#EF4444'], transition: { repeat: Infinity, duration: 0.8 } }
+          ? { borderColor: ['var(--node-border-critical)', 'rgba(255,59,48,0.5)', 'var(--node-border-critical)'], transition: { repeat: Infinity, duration: 0.8 } }
           : {}
       }
     >
-      <Handle type="target" position={Position.Left} className="!w-3 !h-3 !bg-[#3B82F6] !border-[#08090D] !border-2" />
-      <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-[#3B82F6] !border-[#08090D] !border-2" />
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{
+          width: '12px',
+          height: '12px',
+          background: 'var(--accent)',
+          border: '2px solid var(--bg-primary)',
+          borderRadius: '50%',
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{
+          width: '12px',
+          height: '12px',
+          background: 'var(--accent)',
+          border: '2px solid var(--bg-primary)',
+          borderRadius: '50%',
+        }}
+      />
 
-      <div className="flex items-center gap-2.5 px-4 py-3" style={{ borderLeft: `3px solid ${def.categoryColor}` }}>
-        <div className="text-[#8890A8] shrink-0">
+      <div className="flex items-center gap-2.5" style={{ padding: '12px 16px', borderLeft: `3px solid ${def.categoryColor}` }}>
+        <div className="shrink-0" style={{ color: 'var(--text-tertiary)' }}>
           <ComponentIcon type={data.type} />
         </div>
         <div className="min-w-0">
-          <div className="text-xs font-semibold truncate text-white">{data.label}</div>
-          <div className="text-[10px] text-[#5A6078]">{def.description}</div>
+          <div className="font-semibold truncate" style={{ fontSize: '14px', color: 'var(--text-primary)', letterSpacing: '-0.224px' }}>{data.label}</div>
+          <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>{def.description}</div>
         </div>
         {health === 'crashed' && (
-          <div className="absolute top-1.5 right-2 text-red-500 text-lg font-bold">X</div>
+          <div className="absolute font-bold" style={{ top: '6px', right: '8px', color: 'var(--destructive)', fontSize: '18px' }}>X</div>
         )}
       </div>
 
       {isRunning && metrics && (
-        <div className="px-4 pb-3 text-[10px] text-[#5A6078] space-y-0.5 font-['Geist_Mono',monospace] tabular-nums">
+        <div
+          className="space-y-0.5 tabular-nums"
+          style={{
+            padding: '0 16px 12px',
+            fontSize: '12px',
+            color: 'var(--text-tertiary)',
+            fontFamily: "'Geist Mono', monospace",
+            letterSpacing: '-0.12px',
+          }}
+        >
           <div className="flex justify-between">
             <span>RPS</span>
-            <span className="text-[#B8BCC8]">{Math.round(metrics.rps).toLocaleString()}</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{Math.round(metrics.rps).toLocaleString()}</span>
           </div>
           {metrics.p99 > 0 && (
             <div className="flex justify-between">
               <span>p99</span>
-              <span className={metrics.p99 > 500 ? 'text-red-400' : 'text-[#B8BCC8]'}>{Math.round(metrics.p99)}ms</span>
+              <span style={{ color: metrics.p99 > 500 ? 'var(--destructive)' : 'var(--text-secondary)' }}>{Math.round(metrics.p99)}ms</span>
             </div>
           )}
           {metrics.errorRate > 0 && (
             <div className="flex justify-between">
               <span>Err</span>
-              <span className="text-red-400">{(metrics.errorRate * 100).toFixed(1)}%</span>
+              <span style={{ color: 'var(--destructive)' }}>{(metrics.errorRate * 100).toFixed(1)}%</span>
             </div>
           )}
           {metrics.cpuPercent > 0 && (
             <div className="flex justify-between">
               <span>CPU</span>
-              <span className={metrics.cpuPercent > 80 ? 'text-red-400' : metrics.cpuPercent > 50 ? 'text-amber-400' : 'text-[#B8BCC8]'}>
+              <span style={{ color: metrics.cpuPercent > 80 ? 'var(--destructive)' : metrics.cpuPercent > 50 ? 'var(--warning)' : 'var(--text-secondary)' }}>
                 {Math.round(metrics.cpuPercent)}%
               </span>
             </div>
@@ -91,7 +119,7 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           {metrics.memoryPercent > 0 && (
             <div className="flex justify-between">
               <span>MEM</span>
-              <span className={metrics.memoryPercent > 80 ? 'text-red-400' : 'text-[#B8BCC8]'}>
+              <span style={{ color: metrics.memoryPercent > 80 ? 'var(--destructive)' : 'var(--text-secondary)' }}>
                 {Math.round(metrics.memoryPercent)}%
               </span>
             </div>
@@ -99,13 +127,13 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           {metrics.queueDepth !== undefined && metrics.queueDepth > 0 && (
             <div className="flex justify-between">
               <span>Depth</span>
-              <span className="text-amber-400">{metrics.queueDepth.toLocaleString()}</span>
+              <span style={{ color: 'var(--warning)' }}>{metrics.queueDepth.toLocaleString()}</span>
             </div>
           )}
           {metrics.cacheHitRate !== undefined && (
             <div className="flex justify-between">
               <span>Hit</span>
-              <span className={metrics.cacheHitRate < 0.5 ? 'text-red-400' : 'text-green-400'}>
+              <span style={{ color: metrics.cacheHitRate < 0.5 ? 'var(--destructive)' : 'var(--success)' }}>
                 {(metrics.cacheHitRate * 100).toFixed(0)}%
               </span>
             </div>
@@ -114,7 +142,7 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
       )}
 
       {showShardDist && (
-        <div className="px-4 pb-3">
+        <div style={{ padding: '0 16px 12px' }}>
           <div className="flex gap-0.5 h-8 items-end">
             {metrics!.shardDistribution!.map((load, i) => {
               const maxLoad = Math.max(...metrics!.shardDistribution!);
@@ -123,14 +151,17 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
               return (
                 <div
                   key={i}
-                  className={`flex-1 rounded-t transition-all duration-200 ${isHot ? 'bg-red-500' : 'bg-emerald-500'}`}
-                  style={{ height: `${Math.max(pct, 5)}%` }}
+                  className="flex-1 rounded-t transition-all duration-200"
+                  style={{
+                    height: `${Math.max(pct, 5)}%`,
+                    background: isHot ? 'var(--destructive)' : 'var(--success)',
+                  }}
                   title={`Shard ${i}: ${Math.round(load)} ops/s`}
                 />
               );
             })}
           </div>
-          <div className="text-[9px] text-[#5A6078] mt-1 font-['Geist_Mono',monospace]">Shard distribution</div>
+          <div style={{ fontSize: '10px', color: 'var(--text-tertiary)', marginTop: '4px', fontFamily: "'Geist Mono', monospace" }}>Shard distribution</div>
         </div>
       )}
     </motion.div>

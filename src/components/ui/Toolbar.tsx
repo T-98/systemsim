@@ -19,6 +19,7 @@ export default function Toolbar() {
   const addHint = useStore((s) => s.addHint);
   const nodes = useStore((s) => s.nodes);
   const edges = useStore((s) => s.edges);
+  const toggleTheme = useStore((s) => s.toggleTheme);
   const { startSimulation, pauseSimulation, resumeSimulation } = useSimulation();
 
   const isRunning = simulationStatus === 'running';
@@ -49,22 +50,47 @@ export default function Toolbar() {
   const progress = profileDuration > 0 ? (simulationTime / profileDuration) * 100 : 0;
 
   return (
-    <div className="h-12 bg-[#0A0B12] border-b border-[#14161F] flex items-center justify-between px-5 shrink-0">
+    <div
+      className="flex items-center justify-between shrink-0"
+      style={{
+        height: '48px',
+        paddingLeft: '20px',
+        paddingRight: '20px',
+        background: 'var(--bg-nav)',
+        backdropFilter: 'saturate(180%) blur(20px)',
+        WebkitBackdropFilter: 'saturate(180%) blur(20px)',
+        borderBottom: '1px solid var(--border-color)',
+      }}
+    >
       {/* Left: Logo + breadcrumb */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center">
+          <div
+            className="w-6 h-6 rounded-lg flex items-center justify-center"
+            style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))' }}
+          >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
               <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
               <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
             </svg>
           </div>
-          <span className="text-[13px] font-semibold text-white tracking-tight">SystemSim</span>
+          <span
+            className="font-semibold tracking-tight"
+            style={{ fontSize: '14px', color: 'var(--text-primary)', letterSpacing: '-0.224px' }}
+          >
+            SystemSim
+          </span>
         </div>
-        <svg className="w-3 h-3 text-[#2A2F42]" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
-        <span className="text-[12px] text-[#5A6078]">{scenarioTitle}</span>
+        <svg className="w-3 h-3" style={{ color: 'var(--text-tertiary)' }} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6" /></svg>
+        <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>{scenarioTitle}</span>
         {appMode === 'scenario' && (
-          <button onClick={() => setAppView('design')} className="text-[11px] text-blue-400/60 hover:text-blue-400 transition-colors ml-1">
+          <button
+            onClick={() => setAppView('design')}
+            className="transition-colors ml-1"
+            style={{ fontSize: '12px', color: 'var(--accent-link)', letterSpacing: '-0.12px', opacity: 0.7 }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = '1'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = '0.7'; }}
+          >
             Design Flow
           </button>
         )}
@@ -75,68 +101,193 @@ export default function Toolbar() {
         {/* Timer + Progress */}
         {(isRunning || isPaused || isCompleted) && (
           <div className="flex items-center gap-3">
-            <span className="text-[12px] font-mono text-[#6A7090] tabular-nums">{formatTime(simulationTime)}</span>
-            <div className="w-28 h-[3px] bg-[#14161F] rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+            <span
+              className="font-mono tabular-nums"
+              style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}
+            >
+              {formatTime(simulationTime)}
+            </span>
+            <div
+              className="w-28 rounded-full overflow-hidden"
+              style={{ height: '3px', background: 'var(--border-color)' }}
+            >
+              <div
+                className="h-full rounded-full transition-all duration-300"
+                style={{ width: `${progress}%`, background: 'var(--accent)' }}
+              />
             </div>
-            <span className="text-[12px] font-mono text-[#3A3F55] tabular-nums">{formatTime(profileDuration)}</span>
+            <span
+              className="font-mono tabular-nums"
+              style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px', opacity: 0.6 }}
+            >
+              {formatTime(profileDuration)}
+            </span>
           </div>
         )}
 
         {/* Speed */}
-        <div className="flex items-center bg-[#0C0D14] rounded-lg border border-[#14161F] overflow-hidden">
+        <div
+          className="flex items-center rounded-lg overflow-hidden"
+          style={{ background: 'var(--bg-input)', border: '1px solid var(--border-color)' }}
+        >
           {[1, 2, 5, 10].map((speed) => (
-            <button key={speed} onClick={() => setSimulationSpeed(speed)}
-              className={`px-2.5 py-1.5 text-[10px] font-mono font-medium transition-all duration-200
-                ${simulationSpeed === speed ? 'bg-blue-600 text-white shadow-inner' : 'text-[#4A5068] hover:text-[#8890A8]'}`}>
+            <button
+              key={speed}
+              onClick={() => setSimulationSpeed(speed)}
+              className="font-mono font-medium transition-all duration-200"
+              style={{
+                padding: '6px 10px',
+                fontSize: '10px',
+                letterSpacing: '-0.12px',
+                background: simulationSpeed === speed ? 'var(--accent)' : 'transparent',
+                color: simulationSpeed === speed ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
+              }}
+            >
               {speed}x
             </button>
           ))}
         </div>
 
         {/* View toggle */}
-        <button onClick={() => setViewMode(viewMode === 'particle' ? 'aggregate' : 'particle')}
-          className="px-3 py-1.5 text-[11px] text-[#5A6078] hover:text-white border border-[#14161F] hover:border-[#2A2F42] rounded-lg transition-all duration-200"
-          title="Toggle view (V)">
+        <button
+          onClick={() => setViewMode(viewMode === 'particle' ? 'aggregate' : 'particle')}
+          className="rounded-lg transition-all duration-200"
+          style={{
+            padding: '6px 12px',
+            fontSize: '12px',
+            letterSpacing: '-0.12px',
+            color: 'var(--text-tertiary)',
+            border: '1px solid var(--border-color)',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+          title="Toggle view (V)"
+        >
           {viewMode === 'particle' ? 'Particle' : 'Aggregate'}
         </button>
 
         {/* Sim controls */}
         {simulationStatus === 'idle' && (
-          <button onClick={handleRun} disabled={nodes.length === 0}
-            className="px-4 py-1.5 text-[12px] font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-lg disabled:opacity-25 transition-all shadow-lg shadow-blue-500/15 hover:shadow-blue-500/25">
+          <button
+            onClick={handleRun}
+            disabled={nodes.length === 0}
+            className="rounded-lg font-medium disabled:opacity-25 transition-all"
+            style={{
+              padding: '6px 16px',
+              fontSize: '14px',
+              letterSpacing: '-0.224px',
+              background: 'var(--accent)',
+              color: 'var(--text-on-accent)',
+            }}
+          >
             Run
           </button>
         )}
         {isRunning && (
-          <button onClick={pauseSimulation}
-            className="px-4 py-1.5 text-[12px] font-medium bg-amber-600 hover:bg-amber-500 text-white rounded-lg transition-all">
+          <button
+            onClick={pauseSimulation}
+            className="rounded-lg font-medium transition-all"
+            style={{
+              padding: '6px 16px',
+              fontSize: '14px',
+              letterSpacing: '-0.224px',
+              background: 'var(--warning)',
+              color: '#fff',
+            }}
+          >
             Pause
           </button>
         )}
         {isPaused && (
-          <button onClick={resumeSimulation}
-            className="px-4 py-1.5 text-[12px] font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-all">
+          <button
+            onClick={resumeSimulation}
+            className="rounded-lg font-medium transition-all"
+            style={{
+              padding: '6px 16px',
+              fontSize: '14px',
+              letterSpacing: '-0.224px',
+              background: 'var(--accent)',
+              color: 'var(--text-on-accent)',
+            }}
+          >
             Resume
           </button>
         )}
         {isCompleted && (
           <>
-            <button onClick={handleStop}
-              className="px-4 py-1.5 text-[12px] font-medium bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all">
+            <button
+              onClick={handleStop}
+              className="rounded-lg font-medium transition-all"
+              style={{
+                padding: '6px 16px',
+                fontSize: '14px',
+                letterSpacing: '-0.224px',
+                background: 'var(--success)',
+                color: '#fff',
+              }}
+            >
               Debrief
             </button>
-            <button onClick={() => useStore.getState().resetSimulationState()}
-              className="px-3 py-1.5 text-[12px] text-[#6A7090] border border-[#14161F] hover:border-[#2A2F42] hover:text-white rounded-lg transition-all">
+            <button
+              onClick={() => useStore.getState().resetSimulationState()}
+              className="rounded-lg transition-all"
+              style={{
+                padding: '6px 12px',
+                fontSize: '12px',
+                letterSpacing: '-0.12px',
+                color: 'var(--text-tertiary)',
+                border: '1px solid var(--border-color)',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+            >
               Reset
             </button>
           </>
         )}
 
         {/* Save */}
-        <button onClick={handleSave}
-          className="px-3 py-1.5 text-[11px] text-[#4A5068] hover:text-[#8890A8] border border-[#14161F] hover:border-[#2A2F42] rounded-lg transition-all">
+        <button
+          onClick={handleSave}
+          className="rounded-lg transition-all"
+          style={{
+            padding: '6px 12px',
+            fontSize: '12px',
+            letterSpacing: '-0.12px',
+            color: 'var(--text-tertiary)',
+            border: '1px solid var(--border-color)',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+        >
           Save
+        </button>
+
+        {/* Theme toggle */}
+        <button
+          onClick={toggleTheme}
+          className="rounded-lg transition-all duration-200 flex items-center justify-center"
+          style={{
+            width: '32px',
+            height: '32px',
+            color: 'var(--text-tertiary)',
+            border: '1px solid var(--border-color)',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+          title="Toggle theme"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="5" />
+            <line x1="12" y1="1" x2="12" y2="3" />
+            <line x1="12" y1="21" x2="12" y2="23" />
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+            <line x1="1" y1="12" x2="3" y2="12" />
+            <line x1="21" y1="12" x2="23" y2="12" />
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+          </svg>
         </button>
       </div>
     </div>

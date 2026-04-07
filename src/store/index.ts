@@ -46,9 +46,12 @@ export interface AppState {
   appMode: AppMode;
   appView: AppView;
   scenarioId: string | null;
+  theme: 'light' | 'dark';
   setAppMode: (mode: AppMode) => void;
   setAppView: (view: AppView) => void;
   setScenarioId: (id: string | null) => void;
+  setTheme: (theme: 'light' | 'dark') => void;
+  toggleTheme: () => void;
 
   // Canvas
   nodes: Node<SimComponentData>[];
@@ -143,9 +146,19 @@ export const useStore = create<AppState>((set, get) => ({
   appMode: 'scenario',
   appView: 'landing',
   scenarioId: null,
+  theme: (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') as 'light' | 'dark',
   setAppMode: (mode) => set({ appMode: mode }),
   setAppView: (view) => set({ appView: view }),
   setScenarioId: (id) => set({ scenarioId: id }),
+  setTheme: (theme) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    set({ theme });
+  },
+  toggleTheme: () => {
+    const next = get().theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.classList.toggle('dark', next === 'dark');
+    set({ theme: next });
+  },
 
   // Canvas
   nodes: [],

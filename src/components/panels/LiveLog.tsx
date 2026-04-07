@@ -22,29 +22,59 @@ export default function LiveLog() {
 
   if (!isActive) return null;
 
-  const severityColor = {
-    info: 'text-[#5A6078]',
-    warning: 'text-amber-400',
-    critical: 'text-red-400',
+  const severityStyle: Record<string, React.CSSProperties> = {
+    info: { color: 'var(--text-tertiary)' },
+    warning: { color: 'var(--warning)' },
+    critical: { color: 'var(--destructive)' },
   };
 
   return (
-    <div className={`bg-[#0A0B12] border-t border-[#14161F] transition-all duration-200 ${logPanelExpanded ? 'h-72' : 'h-28'}`}>
-      <div className="flex items-center justify-between px-5 py-2.5 border-b border-[#14161F]">
-        <span className="text-[10px] uppercase tracking-widest text-[#5A6078] font-medium">
-          Live Log {simulationStatus === 'running' && <span className="text-blue-500 ml-1.5 animate-pulse font-semibold">LIVE</span>}
+    <div
+      className="transition-all duration-200"
+      style={{
+        background: 'var(--bg-card)',
+        borderTop: '1px solid var(--border-color)',
+        height: logPanelExpanded ? '288px' : '112px',
+      }}
+    >
+      <div
+        className="flex items-center justify-between"
+        style={{
+          padding: '10px 20px',
+          borderBottom: '1px solid var(--border-color)',
+        }}
+      >
+        <span
+          className="uppercase font-medium"
+          style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-tertiary)' }}
+        >
+          Live Log {simulationStatus === 'running' && (
+            <span className="animate-pulse font-semibold" style={{ color: 'var(--accent)', marginLeft: '6px' }}>LIVE</span>
+          )}
         </span>
         <button
           onClick={() => setLogPanelExpanded(!logPanelExpanded)}
-          className="text-[#5A6078] hover:text-white text-xs transition-all duration-200"
+          className="transition-all duration-200"
+          style={{ fontSize: '14px', color: 'var(--text-tertiary)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
         >
           {logPanelExpanded ? 'Collapse' : 'Expand'}
         </button>
       </div>
-      <div className="overflow-y-auto h-full pb-8 px-5 py-2 font-['Geist_Mono',monospace] text-[11px] leading-relaxed">
+      <div
+        className="overflow-y-auto h-full leading-relaxed"
+        style={{
+          paddingBottom: '32px',
+          padding: '8px 20px 32px',
+          fontFamily: "'Geist Mono', monospace",
+          fontSize: '12px',
+          letterSpacing: '-0.12px',
+        }}
+      >
         {liveLog.map((entry, i) => (
-          <div key={i} className={`${severityColor[entry.severity]}`}>
-            <span className="text-[#5A6078]/50 mr-2 select-none">[{formatTime(entry.time)}]</span>
+          <div key={i} style={severityStyle[entry.severity]}>
+            <span className="mr-2 select-none" style={{ color: 'var(--text-tertiary)', opacity: 0.5 }}>[{formatTime(entry.time)}]</span>
             {entry.message}
           </div>
         ))}
