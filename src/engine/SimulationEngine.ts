@@ -36,6 +36,17 @@ interface WireState {
   currentRps: number;
 }
 
+// Seeded PRNG (mulberry32) for reproducible simulations in tests
+function mulberry32(seed: number): () => number {
+  let s = seed | 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export class SimulationEngine {
   private components: Map<string, ComponentState> = new Map();
   private wires: Map<string, WireState> = new Map();
@@ -51,6 +62,8 @@ export class SimulationEngine {
   private schemaShardKey: string | null = null;
   private schemaShardKeyCardinality: 'low' | 'medium' | 'high' = 'high';
   private lastLogTime: Map<string, number> = new Map(); // throttle logs per component
+  private random: () => number; // seeded PRNG for reproducibility
+  private callStack: Set<string> = new Set(); // path-based cycle detection
 
   constructor(
     nodes: Node<SimComponentData>[],
@@ -58,7 +71,9 @@ export class SimulationEngine {
     trafficProfile: TrafficProfile,
     schemaShardKey?: string,
     schemaShardKeyCardinality?: 'low' | 'medium' | 'high',
+    seed?: number,
   ) {
+    this.random = seed != null ? mulberry32(seed) : Math.random;
     this.trafficProfile = trafficProfile;
     this.schemaShardKey = schemaShardKey ?? null;
     this.schemaShardKeyCardinality = schemaShardKeyCardinality ?? 'high';
@@ -182,7 +197,7 @@ export class SimulationEngine {
   }
 
   private addJitter(value: number, jitterPct: number): number {
-    const jitter = (Math.random() - 0.5) * 2 * (jitterPct / 100) * value;
+    const jitter = (this.random() - 0.5) * 2 * (jitterPct / 100) * value;
     return Math.max(0, value + jitter);
   }
 
@@ -247,9 +262,21 @@ export class SimulationEngine {
   private processComponent(id: string, incomingRps: number, logs: LogEntry[]) {
     const state = this.components.get(id);
     if (!state || state.crashed) {
-      // Bounce traffic back as errors
       return;
     }
+
+    // Path-based cycle detection: reject only if this node is on the current call path
+    // Diamond topologies (LB→A→DB, LB→B→DB) work because DB is not on B's call stack
+    if (this.callStack.has(id)) {
+      logs.push({
+        time: this.time,
+        message: `${id}: Cycle detected — skipping to prevent infinite loop`,
+        severity: 'warning',
+        componentId: id,
+      });
+      return;
+    }
+    this.callStack.add(id);
 
     state.totalRequests += incomingRps;
 
@@ -288,6 +315,8 @@ export class SimulationEngine {
         this.processAutoscaler(state, incomingRps, logs);
         break;
     }
+
+    this.callStack.delete(id);
   }
 
   private processLoadBalancer(state: ComponentState, rps: number, logs: LogEntry[]) {
@@ -365,7 +394,7 @@ export class SimulationEngine {
 
     const utilization = Math.min(1, state.currentConnections / totalCapacity);
     state.metrics.cpuPercent = utilization * 100;
-    state.metrics.memoryPercent = utilization * 60 + Math.random() * 10;
+    state.metrics.memoryPercent = utilization * 60 + this.random() * 10;
     state.metrics.rps = rps / this.tickInterval;
 
     // Latency increases with utilization
@@ -409,7 +438,7 @@ export class SimulationEngine {
     state.metrics.memoryPercent = Math.min(100, (state.memoryUsed / maxMemoryMb) * 100);
 
     // Cache hit rate - starts high, drops under memory pressure or cold start
-    let hitRate = 0.85 + Math.random() * 0.1;
+    let hitRate = 0.85 + this.random() * 0.1;
     if (state.cacheEntries < 100) hitRate = 0.1; // Cold cache
     if (state.metrics.memoryPercent > 90) hitRate *= 0.7; // Under pressure
 
@@ -678,7 +707,7 @@ export class SimulationEngine {
     state.metrics.rps = rps / this.tickInterval;
     state.metrics.p50 = latency;
     state.metrics.p99 = latency * 3;
-    state.metrics.errorRate = errorRate + (Math.random() * 0.02);
+    state.metrics.errorRate = errorRate + (this.random() * 0.02);
   }
 
   private processAutoscaler(state: ComponentState, _rps: number, logs: LogEntry[]) {
@@ -721,7 +750,7 @@ export class SimulationEngine {
 
     if (maxUtil > 95 && state.type !== 'autoscaler') {
       // Check for crash
-      if (maxUtil > 98 && Math.random() < 0.3) {
+      if (maxUtil > 98 && this.random() < 0.3) {
         state.crashed = true;
         state.health = 'crashed';
         logs.push({
@@ -765,14 +794,14 @@ export class SimulationEngine {
     const wireEntries = [...this.wires.values()];
 
     for (let i = 0; i < particlesToAdd; i++) {
-      const wire = wireEntries[Math.floor(Math.random() * wireEntries.length)];
+      const wire = wireEntries[Math.floor(this.random() * wireEntries.length)];
       if (!wire) continue;
 
       const sourceState = this.components.get(wire.source);
       const targetState = this.components.get(wire.target);
       if (sourceState?.crashed || targetState?.crashed) continue;
 
-      const baseSpeed = 0.02 + Math.random() * 0.03;
+      const baseSpeed = 0.02 + this.random() * 0.03;
       const latencyFactor = wire.config.latencyMs > 50 ? 0.5 : 1;
 
       this.particles.push({
