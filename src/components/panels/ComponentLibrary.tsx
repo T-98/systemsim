@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { COMPONENT_CATEGORIES, COMPONENT_DEFS } from '../../types/components';
+import { COMPONENT_CATEGORIES, COMPONENT_DEFS, MVP_VISIBLE_TYPES } from '../../types/components';
 import { ComponentIcon } from '../nodes/icons';
 import { useStore } from '../../store';
 import type { ComponentType } from '../../types';
@@ -13,6 +13,7 @@ export default function ComponentLibrary() {
   const filteredCategories = COMPONENT_CATEGORIES.map((cat) => ({
     ...cat,
     types: cat.types.filter((t) => {
+      if (!MVP_VISIBLE_TYPES.has(t)) return false;
       const def = COMPONENT_DEFS[t];
       return def.label.toLowerCase().includes(search.toLowerCase()) ||
         def.description.toLowerCase().includes(search.toLowerCase());

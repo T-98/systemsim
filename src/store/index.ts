@@ -117,8 +117,10 @@ export interface AppState {
   // AI Debrief
   debrief: AIDebrief | null;
   debriefVisible: boolean;
+  debriefLoading: boolean;
   setDebrief: (debrief: AIDebrief | null) => void;
   setDebriefVisible: (visible: boolean) => void;
+  setDebriefLoading: (loading: boolean) => void;
 
   // Hints
   hints: HintMessage[];
@@ -307,6 +309,7 @@ export const useStore = create<AppState>((set, get) => ({
       liveMetrics: {},
       debrief: null,
       debriefVisible: false,
+      debriefLoading: false,
     });
     // Reset all node health
     set({
@@ -330,8 +333,10 @@ export const useStore = create<AppState>((set, get) => ({
   // AI Debrief
   debrief: null,
   debriefVisible: false,
+  debriefLoading: false,
   setDebrief: (debrief) => set({ debrief }),
   setDebriefVisible: (visible) => set({ debriefVisible: visible }),
+  setDebriefLoading: (loading) => set({ debriefLoading: loading }),
 
   // Hints
   hints: [],
@@ -357,7 +362,9 @@ export const useStore = create<AppState>((set, get) => ({
   undoStack: [],
   redoStack: [],
   pushUndo: () => {
-    const { nodes, edges, undoStack } = get();
+    const { nodes, edges, undoStack, simulationStatus } = get();
+    // Skip undo snapshots during simulation to prevent history pollution
+    if (simulationStatus !== 'idle') return;
     set({
       undoStack: [...undoStack.slice(-49), { nodes: structuredClone(nodes), edges: structuredClone(edges) }],
       redoStack: [],

@@ -145,8 +145,10 @@ export interface LogEntry {
 export interface AIDebrief {
   summary: string;
   questions: string[];
+  aiQuestions?: string[];
   flags: string[];
   scores: Scores;
+  aiAvailable: boolean;
 }
 
 export interface Scores {
