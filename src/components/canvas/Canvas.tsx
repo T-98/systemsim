@@ -13,6 +13,7 @@ import SimComponentNode from '../nodes/SimComponentNode';
 import SimWireEdge from './SimWireEdge';
 import ParticleOverlay from './ParticleOverlay';
 import type { ComponentType } from '../../types';
+import { MVP_VISIBLE_TYPES } from '../../types/components';
 
 const nodeTypes = { simComponent: SimComponentNode };
 const edgeTypes = { simWire: SimWireEdge };
@@ -77,8 +78,9 @@ export default function Canvas() {
         q: 'queue', d: 'database', w: 'websocket_gateway', f: 'fanout',
         n: 'cdn', e: 'external', a: 'autoscaler',
       };
-      if (shortcuts[e.key.toLowerCase()] && !e.metaKey && !e.ctrlKey) {
-        addComponent(shortcuts[e.key.toLowerCase()]);
+      const type = shortcuts[e.key.toLowerCase()];
+      if (type && !e.metaKey && !e.ctrlKey && MVP_VISIBLE_TYPES.has(type)) {
+        addComponent(type);
       }
     };
     window.addEventListener('keydown', handler);

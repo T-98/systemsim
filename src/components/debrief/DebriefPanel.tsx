@@ -1,8 +1,10 @@
 import { useStore } from '../../store';
+import { downloadDebriefHtml } from '../../ai/generateDebriefHtml';
 
 export default function DebriefPanel() {
   const debrief = useStore((s) => s.debrief);
   const debriefVisible = useStore((s) => s.debriefVisible);
+  const debriefLoading = useStore((s) => s.debriefLoading);
   const setDebriefVisible = useStore((s) => s.setDebriefVisible);
 
   if (!debrief || !debriefVisible) return null;
@@ -38,15 +40,30 @@ export default function DebriefPanel() {
               <ScoreBadge label="Performance" score={debrief.scores.performance} />
             </div>
           </div>
-          <button
-            onClick={() => setDebriefVisible(false)}
-            className="transition-all duration-200"
-            style={{ color: 'var(--text-tertiary)', fontSize: '17px' }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
-          >
-            &times;
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                const state = useStore.getState();
+                const latestRun = state.simulationRuns[state.simulationRuns.length - 1];
+                if (latestRun && debrief) {
+                  downloadDebriefHtml({ debrief, run: latestRun, nodes: state.nodes, edges: state.edges, scenarioId: state.scenarioId });
+                }
+              }}
+              className="rounded-lg font-medium transition-all duration-200"
+              style={{ padding: '6px 14px', fontSize: '12px', background: 'var(--accent)', color: 'white' }}
+            >
+              Download Report
+            </button>
+            <button
+              onClick={() => setDebriefVisible(false)}
+              className="transition-all duration-200"
+              style={{ color: 'var(--text-tertiary)', fontSize: '17px' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+            >
+              &times;
+            </button>
+          </div>
         </div>
 
         <div className="max-w-3xl" style={{ padding: '32px' }}>
@@ -61,8 +78,8 @@ export default function DebriefPanel() {
             <p className="leading-relaxed" style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}>{debrief.summary}</p>
           </div>
 
-          {/* Questions */}
-          {debrief.questions.length > 0 && (
+          {/* Questions — unified list from deterministic + AI sources */}
+          {(debrief.questions.length > 0 || (debrief.aiQuestions && debrief.aiQuestions.length > 0)) && (
             <div style={{ marginBottom: '32px' }}>
               <h3
                 className="uppercase font-medium"
@@ -72,11 +89,31 @@ export default function DebriefPanel() {
               </h3>
               <div className="space-y-3">
                 {debrief.questions.map((q, i) => (
-                  <div key={i} style={{ paddingLeft: '16px', borderLeft: '2px solid var(--accent)' }}>
+                  <div key={`d-${i}`} style={{ paddingLeft: '16px', borderLeft: '2px solid var(--accent)' }}>
                     <p className="italic leading-relaxed" style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}>{q}</p>
                   </div>
                 ))}
+                {debrief.aiQuestions?.map((q, i) => (
+                  <div key={`ai-${i}`} style={{ paddingLeft: '16px', borderLeft: '2px solid var(--accent)' }}>
+                    <p className="italic leading-relaxed" style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}>
+                      {q}
+                      <span style={{ marginLeft: '8px', fontSize: '10px', padding: '1px 6px', borderRadius: '4px', background: 'rgba(52,199,89,0.1)', color: 'var(--success)', fontStyle: 'normal', fontWeight: 500 }}>AI</span>
+                    </p>
+                  </div>
+                ))}
               </div>
+            </div>
+          )}
+
+          {/* AI loading/fallback status */}
+          {debriefLoading && (
+            <div style={{ marginBottom: '16px', padding: '12px 16px', background: 'rgba(0,113,227,0.06)', borderRadius: '8px', fontSize: '13px', color: 'var(--accent)' }}>
+              Generating AI-powered questions...
+            </div>
+          )}
+          {!debriefLoading && !debrief.aiAvailable && debrief.questions.length > 0 && (
+            <div style={{ marginBottom: '16px', padding: '12px 16px', background: 'rgba(255,159,10,0.06)', borderRadius: '8px', fontSize: '13px', color: 'var(--warning)' }}>
+              AI debrief unavailable — showing rule-based analysis only
             </div>
           )}
 
@@ -113,23 +150,23 @@ export default function DebriefPanel() {
 }
 
 function ScoreBadge({ label, score }: { label: string; score: number }) {
-  const getColors = () => {
-    if (score >= 80) return { bg: 'rgba(52,199,89,0.1)', text: 'var(--success)' };
-    if (score >= 50) return { bg: 'rgba(255,159,10,0.1)', text: 'var(--warning)' };
-    return { bg: 'rgba(255,59,48,0.1)', text: 'var(--destructive)' };
+  const getStatus = () => {
+    if (score > 70) return { label: 'Pass', bg: 'rgba(52,199,89,0.1)', text: 'var(--success)' };
+    if (score >= 40) return { label: 'Warn', bg: 'rgba(255,159,10,0.1)', text: 'var(--warning)' };
+    return { label: 'Fail', bg: 'rgba(255,59,48,0.1)', text: 'var(--destructive)' };
   };
-  const colors = getColors();
+  const status = getStatus();
   return (
     <div
       className="flex items-center gap-1.5 rounded-lg"
-      style={{ padding: '4px 10px', background: colors.bg }}
+      style={{ padding: '4px 10px', background: status.bg }}
     >
       <span style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>{label}</span>
       <span
         className="font-bold"
-        style={{ fontSize: '12px', color: colors.text, fontFamily: "'Geist Mono', monospace", letterSpacing: '-0.12px' }}
+        style={{ fontSize: '12px', color: status.text, fontFamily: "'Geist Mono', monospace", letterSpacing: '-0.12px' }}
       >
-        {score}
+        {status.label}
       </span>
     </div>
   );

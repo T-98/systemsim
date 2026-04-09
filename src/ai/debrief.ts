@@ -28,7 +28,7 @@ export function generateDebrief(ctx: DesignContext): AIDebrief {
   const scores = calculateScores(ctx, flags);
   const summary = generateSummary(ctx);
 
-  return { summary, questions, flags, scores };
+  return { summary, questions, flags, scores, aiAvailable: false };
 }
 
 function runDeterministicChecks(ctx: DesignContext): string[] {

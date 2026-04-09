@@ -175,6 +175,11 @@ export const COMPONENT_DEFS: Record<ComponentType, ComponentDef> = {
   },
 };
 
+// MVP: only show these 6 types in the component library. Hidden types still work in engine/sessions.
+export const MVP_VISIBLE_TYPES: Set<ComponentType> = new Set([
+  'load_balancer', 'server', 'database', 'cache', 'queue', 'fanout',
+]);
+
 export const COMPONENT_CATEGORIES: { name: ComponentCategory; label: string; types: ComponentType[] }[] = [
   { name: 'ingress', label: 'Ingress', types: ['load_balancer', 'api_gateway'] },
   { name: 'compute', label: 'Compute', types: ['server', 'fanout', 'autoscaler'] },
