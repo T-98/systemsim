@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../store';
 import type { CanonicalGraph } from '../../types';
 
@@ -27,17 +27,20 @@ export default function TemplatePicker() {
   const setAppView = useStore((s) => s.setAppView);
   const setScenarioId = useStore((s) => s.setScenarioId);
 
+  const inFlight = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
     fetch('/templates/index.json')
-      .then((r) => r.json())
+      .then((r) => { if (!r.ok) throw new Error('index fetch failed'); return r.json(); })
       .then((data) => { if (!cancelled) { setTemplates(data); setLoading(false); } })
       .catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
   const handleClick = async (id: string) => {
-    if (loadingId) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setLoadingId(id);
     setError(null);
     try {
@@ -51,6 +54,7 @@ export default function TemplatePicker() {
     } catch {
       setError(`Couldn't load this template. Try another.`);
     } finally {
+      inFlight.current = false;
       setLoadingId(null);
     }
   };
