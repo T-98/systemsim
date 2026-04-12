@@ -27,6 +27,7 @@ import type {
   ComponentMetrics,
   HealthState,
   AIDebrief,
+  CanonicalGraph,
 } from '../types';
 import { COMPONENT_DEFS } from '../types/components';
 import type { ComponentType } from '../types';
@@ -134,6 +135,12 @@ export interface AppState {
   // Log panel
   logPanelExpanded: boolean;
   setLogPanelExpanded: (expanded: boolean) => void;
+
+  // Graph versioning
+  graphVersion: number;
+
+  // Replace entire graph (transactional, single undo op)
+  replaceGraph: (graph: CanonicalGraph, options: { layout: 'auto' | 'preserve' }) => void;
 
   // Undo/Redo
   undoStack: { nodes: Node<SimComponentData>[]; edges: Edge<{ config: WireConfig }>[] }[];
@@ -357,6 +364,81 @@ export const useStore = create<AppState>((set, get) => ({
   // Log panel
   logPanelExpanded: false,
   setLogPanelExpanded: (expanded) => set({ logPanelExpanded: expanded }),
+
+  // Graph versioning
+  graphVersion: 0,
+
+  // Replace entire graph (transactional, single undo op)
+  replaceGraph: (graph, options) => {
+    const state = get();
+
+    // R3.1: halt simulation if running
+    if (state.simulationStatus !== 'idle') {
+      state.resetSimulationState();
+    }
+
+    // R3.5: push ONE undo snapshot (force push even during sim, since we just reset)
+    const undoSnapshot = {
+      nodes: structuredClone(state.nodes),
+      edges: structuredClone(state.edges),
+    };
+
+    // R3.2 + R3.3: build canonical nodes and edges
+    const newNodes: Node<SimComponentData>[] = graph.nodes.map((cn, i) => {
+      const def = COMPONENT_DEFS[cn.type];
+      const id = `${cn.type}-${i}`;
+      return {
+        id,
+        type: 'simComponent',
+        position: (options.layout === 'preserve' && cn.position) ? cn.position : { x: 0, y: 0 },
+        data: {
+          type: cn.type,
+          label: cn.label,
+          config: cn.config ? { ...def.defaultConfig, ...cn.config } : { ...def.defaultConfig },
+          health: 'healthy' as HealthState,
+          metrics: { ...emptyMetrics },
+        },
+      };
+    });
+
+    const newEdges: Edge<{ config: WireConfig }>[] = graph.edges.map((ce, i) => ({
+      id: `edge-${i}`,
+      source: ce.source,
+      target: ce.target,
+      type: 'simWire',
+      animated: false,
+      data: {
+        config: {
+          throughputRps: ce.config?.throughputRps ?? 10000,
+          latencyMs: ce.config?.latencyMs ?? 2,
+          jitterMs: ce.config?.jitterMs ?? 1,
+        },
+      },
+    }));
+
+    // R3.4 + R3.6: single atomic state update
+    set({
+      // Graph
+      nodes: newNodes,
+      edges: newEdges,
+      graphVersion: state.graphVersion + 1,
+      // Clear selection + panels
+      selectedNodeId: null,
+      selectedEdgeId: null,
+      configPanelOpen: false,
+      // Clear simulation derived state
+      liveMetrics: {},
+      particles: [],
+      liveLog: [],
+      // Undo stack
+      undoStack: [...state.undoStack.slice(-49), undoSnapshot],
+      redoStack: [],
+    });
+
+    // layout: 'auto' will be handled by Dagre in Phase 1
+    // For now, if 'auto' is requested but Dagre isn't installed, nodes stay at (0,0)
+    // and fitView will center them
+  },
 
   // Undo/Redo
   undoStack: [],

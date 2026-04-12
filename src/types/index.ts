@@ -177,6 +177,24 @@ export interface SessionFile {
   simulationRuns: SimulationRun[];
 }
 
+export interface CanonicalNode {
+  type: ComponentType;
+  label: string;
+  position?: { x: number; y: number };
+  config?: Record<string, unknown>;
+}
+
+export interface CanonicalEdge {
+  source: string;
+  target: string;
+  config?: Partial<WireConfig>;
+}
+
+export interface CanonicalGraph {
+  nodes: CanonicalNode[];
+  edges: CanonicalEdge[];
+}
+
 export type SimulationStatus = 'idle' | 'running' | 'paused' | 'completed';
 export type ViewMode = 'particle' | 'aggregate';
 export type AppMode = 'scenario' | 'freeform';

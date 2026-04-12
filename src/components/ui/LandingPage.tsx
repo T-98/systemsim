@@ -271,13 +271,49 @@ function loadSessionFromJson(session: Record<string, unknown>) {
   if (s.design?.requirements?.nonFunctional) store.setNonFunctionalReqs(s.design.requirements.nonFunctional);
   if (s.design?.apiContracts) store.setApiContracts(s.design.apiContracts);
   if (s.design?.schemaMemory) store.setSchemaMemory(s.design.schemaMemory);
+
   if (s.componentGraph?.components) {
-    for (const comp of s.componentGraph.components) {
-      const id = store.addComponent(comp.type, comp.position);
-      store.updateComponentLabel(id, comp.label);
-      store.updateComponentConfig(id, comp.config);
-    }
+    const components = s.componentGraph.components as Array<{
+      id: string; type: string; label: string;
+      position: { x: number; y: number }; config: Record<string, unknown>;
+    }>;
+    const wires = (s.componentGraph.wires ?? []) as Array<{
+      id: string;
+      from: { componentId: string };
+      to: { componentId: string };
+      config?: { throughputRps?: number; latencyMs?: number; jitterMs?: number };
+    }>;
+
+    // Build canonical graph preserving original ids
+    const idByOriginal = new Map<string, number>();
+    const canonicalNodes = components.map((comp, i) => {
+      idByOriginal.set(comp.id, i);
+      return {
+        type: comp.type as import('../../types').ComponentType,
+        label: comp.label,
+        position: comp.position,
+        config: comp.config,
+      };
+    });
+
+    // Map wire source/target from original ids to canonical ids (type-index format)
+    const canonicalEdges = wires
+      .filter((w) => idByOriginal.has(w.from.componentId) && idByOriginal.has(w.to.componentId))
+      .map((w) => {
+        const srcIdx = idByOriginal.get(w.from.componentId)!;
+        const tgtIdx = idByOriginal.get(w.to.componentId)!;
+        const srcNode = canonicalNodes[srcIdx];
+        const tgtNode = canonicalNodes[tgtIdx];
+        return {
+          source: `${srcNode.type}-${srcIdx}`,
+          target: `${tgtNode.type}-${tgtIdx}`,
+          config: w.config,
+        };
+      });
+
+    store.replaceGraph({ nodes: canonicalNodes, edges: canonicalEdges }, { layout: 'preserve' });
   }
+
   if (s.trafficProfile) store.setTrafficProfile(s.trafficProfile);
   store.setAppView('canvas');
 }
