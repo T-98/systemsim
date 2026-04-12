@@ -1,7 +1,11 @@
+import { useState, useCallback } from 'react';
 import { useStore } from '../../store';
 import { useSimulation } from '../../engine/useSimulation';
 import { DISCORD_TRAFFIC_PROFILE, DISCORD_BRIEF } from '../../scenarios/discord';
 import { generateDebrief, checkForHints } from '../../ai/debrief';
+import RemixInput from './RemixInput';
+import ConfirmModal from './ConfirmModal';
+import UndoToast from './UndoToast';
 
 export default function Toolbar() {
   const appMode = useStore((s) => s.appMode);
@@ -22,9 +26,19 @@ export default function Toolbar() {
   const toggleTheme = useStore((s) => s.toggleTheme);
   const { startSimulation, pauseSimulation, resumeSimulation } = useSimulation();
 
+  const [remixOpen, setRemixOpen] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
   const isRunning = simulationStatus === 'running';
   const isPaused = simulationStatus === 'paused';
   const isCompleted = simulationStatus === 'completed';
+  const hasNodes = nodes.length > 0;
+  const canRemix = hasNodes && simulationStatus === 'idle' && !remixOpen;
+
+  const handleRemixSuccess = useCallback(() => {
+    setToastMsg('Remixed. ⌘Z to restore.');
+  }, []);
 
   const handleRun = () => {
     const hints = checkForHints(nodes, edges, scenarioId);
@@ -50,6 +64,7 @@ export default function Toolbar() {
   const progress = profileDuration > 0 ? (simulationTime / profileDuration) * 100 : 0;
 
   return (
+    <>
     <div
       className="flex items-center justify-between shrink-0"
       style={{
@@ -246,6 +261,25 @@ export default function Toolbar() {
           </>
         )}
 
+        {/* Remix */}
+        {hasNodes && (
+          <button
+            onClick={() => simulationStatus !== 'idle' ? undefined : setRemixOpen(true)}
+            disabled={!canRemix}
+            className="rounded-lg transition-all disabled:opacity-30"
+            style={{
+              padding: '6px 14px',
+              fontSize: '12px',
+              letterSpacing: '-0.12px',
+              color: 'var(--accent)',
+              border: '1px solid var(--accent)',
+            }}
+            title={simulationStatus !== 'idle' ? 'Stop the simulation to remix' : 'Remix this diagram'}
+          >
+            Remix
+          </button>
+        )}
+
         {/* Save */}
         <button
           onClick={handleSave}
@@ -291,6 +325,31 @@ export default function Toolbar() {
         </button>
       </div>
     </div>
+
+    {remixOpen && (
+      <RemixInput
+        onClose={() => setRemixOpen(false)}
+        onSuccess={handleRemixSuccess}
+      />
+    )}
+
+    {showConfirm && (
+      <ConfirmModal
+        title="Replace current canvas?"
+        body="This will replace your current design. You can undo with ⌘Z."
+        confirmLabel="Replace"
+        onConfirm={() => { setShowConfirm(false); }}
+        onCancel={() => setShowConfirm(false)}
+      />
+    )}
+
+    {toastMsg && (
+      <UndoToast
+        message={toastMsg}
+        onDismiss={() => setToastMsg(null)}
+      />
+    )}
+    </>
   );
 }
 
