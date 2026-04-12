@@ -28,10 +28,12 @@ export default function TemplatePicker() {
   const setScenarioId = useStore((s) => s.setScenarioId);
 
   useEffect(() => {
+    let cancelled = false;
     fetch('/templates/index.json')
       .then((r) => r.json())
-      .then((data) => { setTemplates(data); setLoading(false); })
-      .catch(() => { setLoading(false); });
+      .then((data) => { if (!cancelled) { setTemplates(data); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   const handleClick = async (id: string) => {
@@ -48,6 +50,7 @@ export default function TemplatePicker() {
       setAppView('canvas');
     } catch {
       setError(`Couldn't load this template. Try another.`);
+    } finally {
       setLoadingId(null);
     }
   };

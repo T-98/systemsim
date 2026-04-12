@@ -417,10 +417,15 @@ export const useStore = create<AppState>((set, get) => ({
       },
     }));
 
+    // Run Dagre auto-layout before set() to avoid flash at (0,0)
+    const finalNodes = options.layout === 'auto'
+      ? layoutGraph(newNodes, newEdges)
+      : newNodes;
+
     // R3.4 + R3.6: single atomic state update
     set({
       // Graph
-      nodes: newNodes,
+      nodes: finalNodes,
       edges: newEdges,
       graphVersion: state.graphVersion + 1,
       // Clear selection + panels
@@ -435,15 +440,6 @@ export const useStore = create<AppState>((set, get) => ({
       undoStack: [...state.undoStack.slice(-49), undoSnapshot],
       redoStack: [],
     });
-
-    // Run Dagre auto-layout if requested
-    if (options.layout === 'auto') {
-      const laid = layoutGraph(
-        get().nodes,
-        get().edges,
-      );
-      set({ nodes: laid });
-    }
   },
 
   // Undo/Redo
