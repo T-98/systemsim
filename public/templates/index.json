@@ -1,0 +1,37 @@
+[
+  {
+    "id": "discord_fanout",
+    "name": "Discord Notification Fanout",
+    "source": "Based on Discord's notification pipeline",
+    "tags": ["fanout", "queue", "real-time"],
+    "description": "Load balancer → API servers → message queue → fanout service → delivery"
+  },
+  {
+    "id": "url_shortener",
+    "name": "URL Shortener",
+    "source": "Based on bit.ly / TinyURL architecture",
+    "tags": ["cache", "read-heavy", "simple"],
+    "description": "Load balancer → API server → cache + database for redirect lookups"
+  },
+  {
+    "id": "instagram_feed",
+    "name": "Instagram Feed",
+    "source": "Based on Instagram's feed generation",
+    "tags": ["fanout", "cache", "read-heavy"],
+    "description": "Load balancer → API → cache → fanout pre-computation → database"
+  },
+  {
+    "id": "uber_dispatch",
+    "name": "Uber Ride Dispatch",
+    "source": "Based on Uber's dispatch system",
+    "tags": ["queue", "real-time", "geo"],
+    "description": "Load balancer → API → queue → matching server → database"
+  },
+  {
+    "id": "basic_crud",
+    "name": "Basic CRUD App",
+    "source": "Standard 3-tier web application",
+    "tags": ["simple", "beginner", "classic"],
+    "description": "Load balancer → server → database. The simplest production architecture."
+  }
+]

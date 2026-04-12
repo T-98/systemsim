@@ -31,6 +31,7 @@ import type {
 } from '../types';
 import { COMPONENT_DEFS } from '../types/components';
 import type { ComponentType } from '../types';
+import { layoutGraph } from '../layout/dagre';
 
 const emptyMetrics: ComponentMetrics = {
   rps: 0,
@@ -435,9 +436,14 @@ export const useStore = create<AppState>((set, get) => ({
       redoStack: [],
     });
 
-    // layout: 'auto' will be handled by Dagre in Phase 1
-    // For now, if 'auto' is requested but Dagre isn't installed, nodes stay at (0,0)
-    // and fitView will center them
+    // Run Dagre auto-layout if requested
+    if (options.layout === 'auto') {
+      const laid = layoutGraph(
+        get().nodes,
+        get().edges,
+      );
+      set({ nodes: laid });
+    }
   },
 
   // Undo/Redo

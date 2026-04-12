@@ -1,0 +1,21 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "URL Shortener",
+    "source": "Based on bit.ly / TinyURL architecture",
+    "sourceUrl": "https://blog.bytebytego.com/p/design-a-url-shortener",
+    "tags": ["cache", "read-heavy", "simple"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "Load Balancer" },
+    { "type": "server", "label": "API Server", "config": { "instanceCount": 2 } },
+    { "type": "cache", "label": "URL Cache", "config": { "ttlSeconds": 86400, "evictionPolicy": "lru" } },
+    { "type": "database", "label": "URL Store", "config": { "engine": "postgres" } }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "server-1" },
+    { "source": "server-1", "target": "cache-2" },
+    { "source": "server-1", "target": "database-3" },
+    { "source": "cache-2", "target": "database-3" }
+  ]
+}
