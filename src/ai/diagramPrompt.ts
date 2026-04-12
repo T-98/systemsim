@@ -46,7 +46,11 @@ export function buildPrompt(options: BuildPromptOptions): { system: string; user
       .map((n, i) => `n${i + 1}: ${n.type} "${n.label}"`)
       .join('\n');
     const edgeDesc = currentGraph.edges
-      .map((e) => `${e.source} → ${e.target}`)
+      .map((e) => {
+        const srcIdx = currentGraph.nodes.findIndex((n) => `${n.type}-${currentGraph.nodes.indexOf(n)}` === e.source);
+        const tgtIdx = currentGraph.nodes.findIndex((n) => `${n.type}-${currentGraph.nodes.indexOf(n)}` === e.target);
+        return `n${srcIdx + 1} → n${tgtIdx + 1}`;
+      })
       .join('\n');
 
     return {

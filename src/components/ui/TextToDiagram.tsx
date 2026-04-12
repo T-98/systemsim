@@ -39,9 +39,12 @@ export default function TextToDiagram() {
     }
   }, []);
 
+  const requestId = useRef(0);
+
   const handleGenerate = async () => {
     if (!canGenerate) return;
 
+    const thisRequest = ++requestId.current;
     setGenerating(true);
     setError(null);
     startProgressRotation();
@@ -53,6 +56,9 @@ export default function TextToDiagram() {
       text: text.trim(),
       signal: controller.signal,
     });
+
+    // Stale request guard: if another request started or cancel was pressed, drop this result
+    if (requestId.current !== thisRequest) return;
 
     stopProgressRotation();
     abortRef.current = null;
@@ -70,7 +76,9 @@ export default function TextToDiagram() {
   };
 
   const handleCancel = () => {
+    requestId.current++;
     abortRef.current?.abort();
+    abortRef.current = null;
     stopProgressRotation();
     setGenerating(false);
   };

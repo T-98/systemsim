@@ -68,17 +68,27 @@ export function validateAndRewrite(raw: unknown): ValidationResult {
 
   for (let i = 0; i < output.nodes.length; i++) {
     const raw = output.nodes[i];
+    if (typeof raw.ref !== 'string' || typeof raw.type !== 'string' || typeof raw.label !== 'string') {
+      return { ok: false, reason: 'malformed_json' };
+    }
     if (!raw.ref || !raw.type || !raw.label) {
       return { ok: false, reason: 'malformed_json' };
     }
     if (!ALLOWED_TYPES.has(raw.type)) {
       return { ok: false, reason: 'invalid_type' };
     }
+    if (refToId.has(raw.ref)) {
+      return { ok: false, reason: 'duplicate_ref' };
+    }
+    const label = normalizeLabel(raw.label);
+    if (label.length === 0) {
+      return { ok: false, reason: 'malformed_json' };
+    }
     const id = `${raw.type}-${i}`;
     refToId.set(raw.ref, id);
     nodes.push({
       type: raw.type as CanonicalNode['type'],
-      label: normalizeLabel(raw.label),
+      label,
     });
   }
 

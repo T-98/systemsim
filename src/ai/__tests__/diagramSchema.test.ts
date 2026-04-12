@@ -113,6 +113,28 @@ describe('validateAndRewrite', () => {
       .toEqual({ ok: false, reason: 'malformed_json' });
   });
 
+  it('rejects non-string fields (type safety)', () => {
+    expect(validateAndRewrite({ nodes: [{ ref: 'n1', type: 'server', label: {} }], edges: [] }))
+      .toEqual({ ok: false, reason: 'malformed_json' });
+    expect(validateAndRewrite({ nodes: [{ ref: 'n1', type: 123, label: 'A' }], edges: [] }))
+      .toEqual({ ok: false, reason: 'malformed_json' });
+  });
+
+  it('rejects duplicate ref tokens', () => {
+    expect(validateAndRewrite({
+      nodes: [
+        { ref: 'n1', type: 'server', label: 'A' },
+        { ref: 'n1', type: 'database', label: 'B' },
+      ],
+      edges: [],
+    })).toEqual({ ok: false, reason: 'duplicate_ref' });
+  });
+
+  it('rejects labels that normalize to empty string', () => {
+    expect(validateAndRewrite({ nodes: [{ ref: 'n1', type: 'server', label: '   ' }], edges: [] }))
+      .toEqual({ ok: false, reason: 'malformed_json' });
+  });
+
   it('accepts all 6 MVP component types', () => {
     const types = ['load_balancer', 'server', 'database', 'cache', 'queue', 'fanout'];
     const nodes = types.map((t, i) => ({ ref: `n${i}`, type: t, label: t }));
