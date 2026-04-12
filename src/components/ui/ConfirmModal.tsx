@@ -10,11 +10,26 @@ interface ConfirmModalProps {
 
 export default function ConfirmModal({ title, body, confirmLabel, onConfirm, onCancel }: ConfirmModalProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     cancelRef.current?.focus();
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
+      if (e.key === 'Escape') { onCancel(); return; }
+      if (e.key === 'Tab') {
+        const focusable = dialogRef.current?.querySelectorAll<HTMLElement>('button');
+        if (!focusable || focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -27,6 +42,7 @@ export default function ConfirmModal({ title, body, confirmLabel, onConfirm, onC
       onClick={onCancel}
     >
       <div
+        ref={dialogRef}
         className="rounded-lg"
         style={{ background: 'var(--bg-card)', maxWidth: '400px', width: '90%', padding: '24px' }}
         onClick={(e) => e.stopPropagation()}
@@ -62,6 +78,7 @@ export default function ConfirmModal({ title, body, confirmLabel, onConfirm, onC
             Cancel
           </button>
           <button
+            ref={confirmRef}
             onClick={onConfirm}
             className="rounded-lg font-medium transition-all"
             style={{

@@ -36,8 +36,26 @@ export default function Toolbar() {
   const hasNodes = nodes.length > 0;
   const canRemix = hasNodes && simulationStatus === 'idle' && !remixOpen;
 
+  const handleRemixClick = useCallback(() => {
+    if (!canRemix) return;
+    if (hasNodes) {
+      setShowConfirm(true);
+    } else {
+      setRemixOpen(true);
+    }
+  }, [canRemix, hasNodes]);
+
+  const handleConfirmRemix = useCallback(() => {
+    setShowConfirm(false);
+    setRemixOpen(true);
+  }, []);
+
   const handleRemixSuccess = useCallback(() => {
     setToastMsg('Remixed. ⌘Z to restore.');
+  }, []);
+
+  const handleToastDismiss = useCallback(() => {
+    setToastMsg(null);
   }, []);
 
   const handleRun = () => {
@@ -264,7 +282,7 @@ export default function Toolbar() {
         {/* Remix */}
         {hasNodes && (
           <button
-            onClick={() => simulationStatus !== 'idle' ? undefined : setRemixOpen(true)}
+            onClick={handleRemixClick}
             disabled={!canRemix}
             className="rounded-lg transition-all disabled:opacity-30"
             style={{
@@ -338,7 +356,7 @@ export default function Toolbar() {
         title="Replace current canvas?"
         body="This will replace your current design. You can undo with ⌘Z."
         confirmLabel="Replace"
-        onConfirm={() => { setShowConfirm(false); }}
+        onConfirm={handleConfirmRemix}
         onCancel={() => setShowConfirm(false)}
       />
     )}
@@ -346,7 +364,7 @@ export default function Toolbar() {
     {toastMsg && (
       <UndoToast
         message={toastMsg}
-        onDismiss={() => setToastMsg(null)}
+        onDismiss={handleToastDismiss}
       />
     )}
     </>

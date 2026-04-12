@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useStore } from '../../store';
 import { generateDiagram, type GenerateResult } from '../../ai/generateDiagram';
 
@@ -16,6 +16,12 @@ export default function RemixInput({ onClose, onSuccess }: RemixInputProps) {
   const replaceGraph = useStore((s) => s.replaceGraph);
   const nodes = useStore((s) => s.nodes);
   const edges = useStore((s) => s.edges);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const canApply = text.trim().length >= 5 && !generating;
 

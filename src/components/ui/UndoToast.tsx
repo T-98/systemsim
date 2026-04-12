@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 interface UndoToastProps {
   message: string;
@@ -7,15 +7,21 @@ interface UndoToastProps {
 
 export default function UndoToast({ message, onDismiss }: UndoToastProps) {
   const [visible, setVisible] = useState(false);
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
 
   useEffect(() => {
     requestAnimationFrame(() => setVisible(true));
-    const timer = setTimeout(() => {
+    let fadeTimer: ReturnType<typeof setTimeout>;
+    const autoTimer = setTimeout(() => {
       setVisible(false);
-      setTimeout(onDismiss, 200);
+      fadeTimer = setTimeout(() => dismissRef.current(), 200);
     }, 4000);
-    return () => clearTimeout(timer);
-  }, [onDismiss]);
+    return () => {
+      clearTimeout(autoTimer);
+      clearTimeout(fadeTimer!);
+    };
+  }, []);
 
   return (
     <div
