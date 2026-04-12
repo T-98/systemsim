@@ -1,7 +1,10 @@
 import { useStore } from '../../store';
 import { DISCORD_BRIEF, DISCORD_TRAFFIC_PROFILE, DISCORD_DEFAULT_FUNCTIONAL_REQS, DISCORD_DEFAULT_NFRS, DISCORD_SCENARIO_ID } from '../../scenarios/discord';
 import TemplatePicker from './TemplatePicker';
+import TextToDiagram from './TextToDiagram';
 import type { ComponentType, CanonicalGraph } from '../../types';
+
+const TEXT_TO_DIAGRAM_ENABLED = import.meta.env.VITE_ENABLE_TEXT_TO_DIAGRAM === 'true';
 
 export default function LandingPage() {
   const setAppMode = useStore((s) => s.setAppMode);
@@ -117,45 +120,51 @@ export default function LandingPage() {
           </p>
         </div>
 
-        {/* Text-to-diagram placeholder (Phase 2) */}
+        {/* Text-to-diagram */}
         <div className="mb-10 animate-fade-in-1">
-          <div className="flex items-center gap-2 mb-2">
-            <span
-              className="font-semibold"
-              style={{ fontSize: '14px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
-            >
-              Describe your system
-            </span>
-            <span
-              className="rounded-full px-2 py-0.5"
-              style={{
-                fontSize: '10px',
-                fontWeight: 600,
-                letterSpacing: '0.1em',
-                textTransform: 'uppercase' as const,
-                background: 'rgba(0,113,227,0.15)',
-                color: 'var(--accent)',
-              }}
-            >
-              Coming soon
-            </span>
-          </div>
-          <textarea
-            disabled
-            placeholder="An API server behind a load balancer, connected to a Postgres database and Redis cache..."
-            className="w-full rounded-lg resize-none"
-            rows={3}
-            style={{
-              background: 'var(--bg-card)',
-              color: 'var(--text-tertiary)',
-              fontSize: '14px',
-              letterSpacing: '-0.224px',
-              padding: '12px 16px',
-              border: '1px solid var(--border-color)',
-              opacity: 0.5,
-              cursor: 'not-allowed',
-            }}
-          />
+          {TEXT_TO_DIAGRAM_ENABLED ? (
+            <TextToDiagram />
+          ) : (
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className="font-semibold"
+                  style={{ fontSize: '14px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
+                >
+                  Describe your system
+                </span>
+                <span
+                  className="rounded-full px-2 py-0.5"
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase' as const,
+                    background: 'rgba(0,113,227,0.15)',
+                    color: 'var(--accent)',
+                  }}
+                >
+                  Coming soon
+                </span>
+              </div>
+              <textarea
+                disabled
+                placeholder="An API server behind a load balancer, connected to a Postgres database and Redis cache..."
+                className="w-full rounded-lg resize-none"
+                rows={3}
+                style={{
+                  background: 'var(--bg-card)',
+                  color: 'var(--text-tertiary)',
+                  fontSize: '14px',
+                  letterSpacing: '-0.224px',
+                  padding: '12px 16px',
+                  border: '1px solid var(--border-color)',
+                  opacity: 0.5,
+                  cursor: 'not-allowed',
+                }}
+              />
+            </>
+          )}
         </div>
 
         {/* Templates (Phase 1 primary) */}
