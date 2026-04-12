@@ -1,5 +1,7 @@
 import { useStore } from '../../store';
 import { DISCORD_BRIEF, DISCORD_TRAFFIC_PROFILE, DISCORD_DEFAULT_FUNCTIONAL_REQS, DISCORD_DEFAULT_NFRS, DISCORD_SCENARIO_ID } from '../../scenarios/discord';
+import TemplatePicker from './TemplatePicker';
+import type { ComponentType, CanonicalGraph } from '../../types';
 
 export default function LandingPage() {
   const setAppMode = useStore((s) => s.setAppMode);
@@ -9,6 +11,7 @@ export default function LandingPage() {
   const setFunctionalReqs = useStore((s) => s.setFunctionalReqs);
   const setNonFunctionalReqs = useStore((s) => s.setNonFunctionalReqs);
   const toggleTheme = useStore((s) => s.toggleTheme);
+  const replaceGraph = useStore((s) => s.replaceGraph);
 
   const startScenario = () => {
     setAppMode('scenario');
@@ -61,32 +64,25 @@ export default function LandingPage() {
         style={{ background: 'radial-gradient(ellipse, rgba(0,113,227,0.06) 0%, transparent 70%)' }}
       />
 
-      {/* Theme toggle in top right */}
+      {/* Theme toggle */}
       <button
         onClick={toggleTheme}
         className="absolute top-6 right-6 z-20 w-9 h-9 rounded-full flex items-center justify-center transition-colors duration-200"
-        style={{
-          background: 'var(--bg-card)',
-          color: 'var(--text-tertiary)',
-        }}
+        style={{ background: 'var(--bg-card)', color: 'var(--text-tertiary)' }}
         title="Toggle theme"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="5" />
-          <line x1="12" y1="1" x2="12" y2="3" />
-          <line x1="12" y1="21" x2="12" y2="23" />
-          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-          <line x1="1" y1="12" x2="3" y2="12" />
-          <line x1="21" y1="12" x2="23" y2="12" />
-          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+          <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+          <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
         </svg>
       </button>
 
-      <div className="relative z-10 max-w-[680px] w-full px-8 animate-fade-in">
-        {/* Logo */}
-        <div className="text-center mb-20">
+      <div className="relative z-10 max-w-[640px] w-full px-8">
+        {/* Hero */}
+        <div className="text-center mb-16 animate-fade-in">
           <div className="inline-block mb-5">
             <div
               className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto"
@@ -115,144 +111,125 @@ export default function LandingPage() {
           </h1>
           <p
             className="leading-relaxed max-w-sm mx-auto"
-            style={{
-              fontSize: '17px',
-              color: 'var(--text-tertiary)',
-              letterSpacing: '-0.374px',
-            }}
+            style={{ fontSize: '17px', color: 'var(--text-tertiary)', letterSpacing: '-0.374px' }}
           >
             Design distributed systems. Watch them break.<br />Learn why.
           </p>
         </div>
 
-        {/* Cards */}
-        <div className="grid grid-cols-2 gap-5 mb-14 animate-fade-in-1">
-          {/* Scenario */}
-          <button
-            onClick={startScenario}
-            className="group text-left rounded-lg p-6 transition-all duration-300"
+        {/* Text-to-diagram placeholder (Phase 2) */}
+        <div className="mb-10 animate-fade-in-1">
+          <div className="flex items-center gap-2 mb-2">
+            <span
+              className="font-semibold"
+              style={{ fontSize: '14px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
+            >
+              Describe your system
+            </span>
+            <span
+              className="rounded-full px-2 py-0.5"
+              style={{
+                fontSize: '10px',
+                fontWeight: 600,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase' as const,
+                background: 'rgba(0,113,227,0.15)',
+                color: 'var(--accent)',
+              }}
+            >
+              Coming soon
+            </span>
+          </div>
+          <textarea
+            disabled
+            placeholder="An API server behind a load balancer, connected to a Postgres database and Redis cache..."
+            className="w-full rounded-lg resize-none"
+            rows={3}
             style={{
               background: 'var(--bg-card)',
-              boxShadow: 'var(--shadow-card)',
+              color: 'var(--text-tertiary)',
+              fontSize: '14px',
+              letterSpacing: '-0.224px',
+              padding: '12px 16px',
+              border: '1px solid var(--border-color)',
+              opacity: 0.5,
+              cursor: 'not-allowed',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.boxShadow = 'var(--shadow-elevated)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'var(--shadow-card)'; }}
+          />
+        </div>
+
+        {/* Templates (Phase 1 primary) */}
+        <div className="mb-10 animate-fade-in-1">
+          <p
+            className="mb-4"
+            style={{ fontSize: '14px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
           >
-            <div className="flex items-center gap-2.5 mb-4">
+            Or start from a template
+          </p>
+          <TemplatePicker />
+        </div>
+
+        {/* Scenario card (existing) */}
+        <div className="mb-6 animate-fade-in-2">
+          <button
+            onClick={startScenario}
+            className="group text-left rounded-lg p-5 w-full transition-all duration-200"
+            style={{ background: 'var(--bg-card)' }}
+            onMouseEnter={(e) => { e.currentTarget.style.boxShadow = 'var(--shadow-elevated)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
+          >
+            <div className="flex items-center gap-2 mb-2">
               <div
-                className="w-7 h-7 rounded-lg flex items-center justify-center"
+                className="w-5 h-5 rounded flex items-center justify-center"
                 style={{ background: 'var(--accent-ring)' }}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
               </div>
               <span
                 className="uppercase font-semibold"
-                style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--accent)' }}
+                style={{ fontSize: '10px', letterSpacing: '0.15em', color: 'var(--accent)' }}
               >
-                Scenario
+                Guided Scenario
               </span>
             </div>
-            <h3
-              className="font-semibold mb-2.5 tracking-tight"
-              style={{ fontSize: '15px', color: 'var(--text-primary)', letterSpacing: '-0.224px' }}
+            <h4
+              className="font-semibold mb-1"
+              style={{ fontSize: '14px', color: 'var(--text-primary)', letterSpacing: '-0.224px' }}
             >
               {DISCORD_BRIEF.title}
-            </h3>
+            </h4>
             <p
-              className="leading-relaxed mb-5"
-              style={{ fontSize: '14px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
+              style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}
             >
               {DISCORD_BRIEF.description}
             </p>
-            <div className="flex items-center justify-between">
-              <div className="flex gap-4" style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>
-                <span>Fixed traffic</span>
-                <span>AI evaluation</span>
-              </div>
-              <svg
-                className="w-4 h-4 group-hover:translate-x-0.5 transition-all"
-                style={{ color: 'var(--text-tertiary)' }}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M5 12h14M12 5l7 7-7 7" />
-              </svg>
-            </div>
-          </button>
-
-          {/* Freeform */}
-          <button
-            onClick={startFreeform}
-            className="group text-left rounded-lg p-6 transition-all duration-300"
-            style={{
-              background: 'var(--bg-card)',
-              boxShadow: 'var(--shadow-card)',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.boxShadow = 'var(--shadow-elevated)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'var(--shadow-card)'; }}
-          >
-            <div className="flex items-center gap-2.5 mb-4">
-              <div
-                className="w-7 h-7 rounded-lg flex items-center justify-center"
-                style={{ background: 'var(--bg-hover)' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15.3 15.3 0 010 20 15.3 15.3 0 010-20" /></svg>
-              </div>
-              <span
-                className="uppercase font-semibold"
-                style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-tertiary)' }}
-              >
-                Freeform
-              </span>
-            </div>
-            <h3
-              className="font-semibold mb-2.5 tracking-tight"
-              style={{ fontSize: '15px', color: 'var(--text-primary)', letterSpacing: '-0.224px' }}
-            >
-              Blank Canvas
-            </h3>
-            <p
-              className="leading-relaxed mb-5"
-              style={{ fontSize: '14px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
-            >
-              Build any system. Configure your own traffic profile. AI evaluates coherence against your requirements.
-            </p>
-            <div className="flex items-center justify-between">
-              <div className="flex gap-4" style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>
-                <span>Custom traffic</span>
-                <span>Upload docs</span>
-              </div>
-              <svg
-                className="w-4 h-4 group-hover:translate-x-0.5 transition-all"
-                style={{ color: 'var(--text-tertiary)' }}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-              >
-                <path d="M5 12h14M12 5l7 7-7 7" />
-              </svg>
-            </div>
           </button>
         </div>
 
-        {/* Load session */}
-        <div className="text-center animate-fade-in-2">
+        {/* Tertiary links */}
+        <div className="flex items-center justify-center gap-6 animate-fade-in-2">
           <button
-            onClick={loadSession}
-            className="inline-flex items-center gap-2 transition-colors"
-            style={{ fontSize: '14px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
+            onClick={startFreeform}
+            className="inline-flex items-center gap-1.5 transition-colors"
+            style={{ fontSize: '13px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
             onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
+            Start from a blank canvas
+          </button>
+          <span style={{ color: 'var(--border-color)' }}>|</span>
+          <button
+            onClick={loadSession}
+            className="inline-flex items-center gap-1.5 transition-colors"
+            style={{ fontSize: '13px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+          >
             Load session from file
           </button>
         </div>
 
-        <div className="mt-24 text-center animate-fade-in-3">
+        <div className="mt-16 text-center animate-fade-in-3">
           <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px', opacity: 0.5 }}>
             Logisim for backend architecture
           </p>
@@ -284,19 +261,17 @@ function loadSessionFromJson(session: Record<string, unknown>) {
       config?: { throughputRps?: number; latencyMs?: number; jitterMs?: number };
     }>;
 
-    // Build canonical graph preserving original ids
     const idByOriginal = new Map<string, number>();
     const canonicalNodes = components.map((comp, i) => {
       idByOriginal.set(comp.id, i);
       return {
-        type: comp.type as import('../../types').ComponentType,
+        type: comp.type as ComponentType,
         label: comp.label,
         position: comp.position,
         config: comp.config,
       };
     });
 
-    // Map wire source/target from original ids to canonical ids (type-index format)
     const canonicalEdges = wires
       .filter((w) => idByOriginal.has(w.from.componentId) && idByOriginal.has(w.to.componentId))
       .map((w) => {

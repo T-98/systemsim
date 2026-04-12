@@ -1,0 +1,24 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "Discord Notification Fanout",
+    "source": "Based on Discord's notification pipeline",
+    "sourceUrl": "https://discord.com/blog/how-discord-stores-trillions-of-messages",
+    "tags": ["fanout", "queue", "real-time"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "API Gateway" },
+    { "type": "server", "label": "API Servers", "config": { "instanceCount": 3 } },
+    { "type": "queue", "label": "Notification Queue", "config": { "maxDepth": 10000000 } },
+    { "type": "fanout", "label": "Fanout Service", "config": { "multiplier": 500000 } },
+    { "type": "server", "label": "Delivery Workers", "config": { "instanceCount": 5 } },
+    { "type": "database", "label": "User Preferences DB" }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "server-1" },
+    { "source": "server-1", "target": "queue-2" },
+    { "source": "queue-2", "target": "fanout-3" },
+    { "source": "fanout-3", "target": "server-4" },
+    { "source": "server-1", "target": "database-5" }
+  ]
+}

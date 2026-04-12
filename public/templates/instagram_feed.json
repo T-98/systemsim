@@ -1,0 +1,24 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "Instagram Feed",
+    "source": "Based on Instagram's feed generation",
+    "sourceUrl": "https://instagram-engineering.com/",
+    "tags": ["fanout", "cache", "read-heavy"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "API Gateway" },
+    { "type": "server", "label": "Feed Service", "config": { "instanceCount": 4 } },
+    { "type": "cache", "label": "Feed Cache", "config": { "ttlSeconds": 60, "maxMemoryMb": 4096 } },
+    { "type": "fanout", "label": "Feed Fanout", "config": { "multiplier": 1000 } },
+    { "type": "database", "label": "Posts DB", "config": { "shardingEnabled": true, "shardKey": "user_id", "shardCount": 8 } },
+    { "type": "database", "label": "Social Graph DB", "config": { "engine": "postgres", "readReplicas": 2 } }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "server-1" },
+    { "source": "server-1", "target": "cache-2" },
+    { "source": "cache-2", "target": "fanout-3" },
+    { "source": "fanout-3", "target": "database-4" },
+    { "source": "server-1", "target": "database-5" }
+  ]
+}

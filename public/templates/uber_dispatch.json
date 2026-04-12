@@ -1,0 +1,25 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "Uber Ride Dispatch",
+    "source": "Based on Uber's dispatch system",
+    "sourceUrl": "https://www.uber.com/blog/engineering/",
+    "tags": ["queue", "real-time", "geo"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "API Gateway" },
+    { "type": "server", "label": "Ride Service", "config": { "instanceCount": 3 } },
+    { "type": "queue", "label": "Match Queue", "config": { "maxDepth": 1000000 } },
+    { "type": "server", "label": "Matching Engine", "config": { "instanceCount": 2, "processingTimeMs": 100 } },
+    { "type": "cache", "label": "Driver Location Cache", "config": { "ttlSeconds": 5 } },
+    { "type": "database", "label": "Trips DB", "config": { "shardingEnabled": true, "shardKey": "city_id", "shardCount": 4 } }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "server-1" },
+    { "source": "server-1", "target": "queue-2" },
+    { "source": "queue-2", "target": "server-3" },
+    { "source": "server-3", "target": "cache-4" },
+    { "source": "server-3", "target": "database-5" },
+    { "source": "server-1", "target": "database-5" }
+  ]
+}

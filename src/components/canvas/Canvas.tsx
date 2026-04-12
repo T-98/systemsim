@@ -28,6 +28,7 @@ export default function Canvas() {
   const setSelectedEdgeId = useStore((s) => s.setSelectedEdgeId);
   const addComponent = useStore((s) => s.addComponent);
   const simulationStatus = useStore((s) => s.simulationStatus);
+  const graphVersion = useStore((s) => s.graphVersion);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
 
@@ -90,6 +91,7 @@ export default function Canvas() {
   return (
     <div className="flex-1 relative" style={{ background: 'var(--canvas-bg)' }}>
       <ReactFlow
+        key={graphVersion}
         nodes={nodes}
         edges={edges}
         onNodesChange={isRunning ? undefined : onNodesChange}

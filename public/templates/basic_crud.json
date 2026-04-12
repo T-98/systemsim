@@ -1,0 +1,17 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "Basic CRUD App",
+    "source": "Standard 3-tier web application",
+    "tags": ["simple", "beginner", "classic"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "Load Balancer" },
+    { "type": "server", "label": "App Server", "config": { "instanceCount": 2 } },
+    { "type": "database", "label": "Database", "config": { "engine": "postgres" } }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "server-1" },
+    { "source": "server-1", "target": "database-2" }
+  ]
+}
