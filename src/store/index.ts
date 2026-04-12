@@ -401,10 +401,6 @@ export const useStore = create<AppState>((set, get) => ({
       };
     });
 
-    // Build id mapping: index → canonical id
-    const idMap = new Map<number, string>();
-    newNodes.forEach((n, i) => idMap.set(i, n.id));
-
     const newEdges: Edge<{ config: WireConfig }>[] = graph.edges.map((ce, i) => ({
       id: `edge-${i}`,
       source: ce.source,

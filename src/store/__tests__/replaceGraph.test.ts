@@ -200,6 +200,32 @@ describe('replaceGraph', () => {
     expect(useStore.getState().nodes).toHaveLength(1);
   });
 
+  it('handles duplicate types wired together', () => {
+    const graph: CanonicalGraph = {
+      nodes: [
+        { type: 'server', label: 'API Server' },
+        { type: 'server', label: 'Worker Server' },
+        { type: 'database', label: 'Primary DB' },
+      ],
+      edges: [
+        { source: 'server-0', target: 'database-2' },
+        { source: 'server-1', target: 'database-2' },
+      ],
+    };
+
+    useStore.getState().replaceGraph(graph, { layout: 'preserve' });
+
+    const state = useStore.getState();
+    expect(state.nodes).toHaveLength(3);
+    expect(state.nodes[0].data.label).toBe('API Server');
+    expect(state.nodes[1].data.label).toBe('Worker Server');
+    expect(state.edges).toHaveLength(2);
+    expect(state.edges[0].source).toBe('server-0');
+    expect(state.edges[0].target).toBe('database-2');
+    expect(state.edges[1].source).toBe('server-1');
+    expect(state.edges[1].target).toBe('database-2');
+  });
+
   it('applies wire config defaults', () => {
     const graph: CanonicalGraph = {
       nodes: [
