@@ -45,61 +45,29 @@ const MOCK_REMIX_RESPONSE = {
   promptVersion: '1.0',
 };
 
-function mockGenerateAPI(page: import('@playwright/test').Page, response: object, status = 200) {
-  return page.route('**/api/generate-diagram', (route) => {
-    route.fulfill({
-      status,
-      contentType: 'application/json',
-      body: JSON.stringify(response),
-    });
-  });
-}
-
 test.describe('Template flow', () => {
-  test('template click loads canvas with wires', async ({ page }) => {
+  test('template click loads canvas with nodes AND edges', async ({ page }) => {
     await page.goto('/');
     await page.waitForSelector('text=Or start from a template');
 
-    // Use the template picker section specifically (not the scenario card)
     const templateSection = page.locator('text=Or start from a template').locator('..');
-    await templateSection.locator('button:has-text("Discord Notification Fanout")').click();
+    await templateSection.locator('button:has-text("Basic CRUD App")').click();
 
-    // Should navigate to canvas view
-    await page.waitForSelector('[data-testid="react-flow-wrapper"], .react-flow', { timeout: 5000 });
+    await page.waitForSelector('.react-flow__node', { timeout: 5000 });
 
-    // Verify nodes are present (React Flow renders them)
     const nodes = page.locator('.react-flow__node');
-    await expect(nodes.first()).toBeVisible({ timeout: 3000 });
-    const count = await nodes.count();
-    expect(count).toBeGreaterThanOrEqual(3);
+    const nodeCount = await nodes.count();
+    expect(nodeCount).toBeGreaterThanOrEqual(3);
+
+    const edges = page.locator('.react-flow__edge');
+    const edgeCount = await edges.count();
+    expect(edgeCount).toBeGreaterThanOrEqual(2);
   });
 });
 
 test.describe('Text-to-diagram generation', () => {
   test('description → Generate → canvas populated', async ({ page }) => {
-    await mockGenerateAPI(page, MOCK_DIAGRAM_RESPONSE);
-
-    await page.goto('/?VITE_ENABLE_TEXT_TO_DIAGRAM=true');
-
-    // If feature flag isn't applied via URL, check for the textarea
-    const textarea = page.locator('textarea[aria-label="System description"]');
-    if (await textarea.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await textarea.fill('A load balancer connected to an API server and a database');
-      await page.click('button:has-text("Generate")');
-      await page.waitForSelector('.react-flow__node', { timeout: 10000 });
-      const nodes = page.locator('.react-flow__node');
-      const count = await nodes.count();
-      expect(count).toBeGreaterThanOrEqual(3);
-    } else {
-      // Feature flag not enabled, skip gracefully
-      test.skip();
-    }
-  });
-
-  test('Generate → Cancel → no stale state', async ({ page }) => {
-    // Mock a slow API response
-    await page.route('**/api/generate-diagram', async (route) => {
-      await new Promise((r) => setTimeout(r, 5000));
+    await page.route('**/api/generate-diagram', (route) => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -108,110 +76,153 @@ test.describe('Text-to-diagram generation', () => {
     });
 
     await page.goto('/');
+
     const textarea = page.locator('textarea[aria-label="System description"]');
-    if (await textarea.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await textarea.fill('A load balancer connected to servers');
-      await page.click('button:has-text("Generate")');
+    await expect(textarea).toBeVisible({ timeout: 3000 });
 
-      // Wait for cancel button to appear
-      const cancelBtn = page.locator('button:has-text("Cancel")');
-      await expect(cancelBtn).toBeVisible({ timeout: 2000 });
-      await cancelBtn.click();
+    await textarea.fill('A load balancer connected to an API server and a database');
+    await page.click('button:has-text("Generate")');
 
-      // Should still be on landing page, not canvas
-      await expect(page.locator('text=Design distributed systems')).toBeVisible();
-    } else {
-      test.skip();
-    }
+    await page.waitForSelector('.react-flow__node', { timeout: 10000 });
+    const nodes = page.locator('.react-flow__node');
+    expect(await nodes.count()).toBeGreaterThanOrEqual(3);
   });
 
-  test('Generate → validation error → recover via template link', async ({ page }) => {
-    await mockGenerateAPI(page, MOCK_VALIDATION_ERROR, 422);
+  test('Generate → Cancel → stale response does not navigate to canvas', async ({ page }) => {
+    let resolveRoute: (() => void) | null = null;
+    await page.route('**/api/generate-diagram', async (route) => {
+      await new Promise<void>((r) => { resolveRoute = r; });
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(MOCK_DIAGRAM_RESPONSE),
+      });
+    });
+
+    await page.goto('/');
+
+    const textarea = page.locator('textarea[aria-label="System description"]');
+    await expect(textarea).toBeVisible({ timeout: 3000 });
+    await textarea.fill('A load balancer connected to servers');
+    await page.click('button:has-text("Generate")');
+
+    const cancelBtn = page.locator('button:has-text("Cancel")');
+    await expect(cancelBtn).toBeVisible({ timeout: 2000 });
+    await cancelBtn.click();
+
+    // Now let the API resolve — the stale response should be ignored
+    resolveRoute?.();
+    await page.waitForTimeout(500);
+
+    // Should still be on landing page, NOT canvas
+    await expect(page.locator('text=Design distributed systems')).toBeVisible();
+    await expect(page.locator('.react-flow__node')).toHaveCount(0);
+  });
+
+  test('Generate → validation error → shows error and template link', async ({ page }) => {
+    await page.route('**/api/generate-diagram', (route) => {
+      route.fulfill({
+        status: 422,
+        contentType: 'application/json',
+        body: JSON.stringify(MOCK_VALIDATION_ERROR),
+      });
+    });
 
     await page.goto('/');
     const textarea = page.locator('textarea[aria-label="System description"]');
-    if (await textarea.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await textarea.fill('A complex microservices architecture');
-      await page.click('button:has-text("Generate")');
+    await expect(textarea).toBeVisible({ timeout: 3000 });
+    await textarea.fill('A complex microservices architecture');
+    await page.click('button:has-text("Generate")');
 
-      // Error should appear
-      await expect(page.locator('text=Generation failed')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('text=Generation failed')).toBeVisible({ timeout: 5000 });
+    const templateLink = page.locator('text=Try a template instead');
+    await expect(templateLink).toBeVisible();
 
-      // "Try a template instead" link should be visible
-      await expect(page.locator('text=Try a template instead')).toBeVisible();
-    } else {
-      test.skip();
-    }
+    // Click the link — it should clear the error
+    await templateLink.click();
+    await expect(page.locator('text=Generation failed')).not.toBeVisible();
   });
 
   test('Generate → rate limit → shows rate limit message', async ({ page }) => {
-    await mockGenerateAPI(page, MOCK_RATE_LIMIT, 429);
+    await page.route('**/api/generate-diagram', (route) => {
+      route.fulfill({
+        status: 429,
+        contentType: 'application/json',
+        body: JSON.stringify(MOCK_RATE_LIMIT),
+      });
+    });
 
     await page.goto('/');
     const textarea = page.locator('textarea[aria-label="System description"]');
-    if (await textarea.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await textarea.fill('A simple API with a database backend');
-      await page.click('button:has-text("Generate")');
+    await expect(textarea).toBeVisible({ timeout: 3000 });
+    await textarea.fill('A simple API with a database backend');
+    await page.click('button:has-text("Generate")');
 
-      await expect(page.locator('text=Too many requests')).toBeVisible({ timeout: 5000 });
-    } else {
-      test.skip();
-    }
+    await expect(page.locator('text=Too many requests')).toBeVisible({ timeout: 5000 });
   });
 });
 
 test.describe('Remix flow', () => {
-  test('Remix → Apply → canvas updated', async ({ page }) => {
-    // First load a template to get to canvas
+  test('Remix → Apply → canvas updated with remixed graph', async ({ page }) => {
     await page.goto('/');
     await page.waitForSelector('text=Or start from a template');
-    await page.click('button:has-text("Basic CRUD App")');
+
+    const templateSection = page.locator('text=Or start from a template').locator('..');
+    await templateSection.locator('button:has-text("Basic CRUD App")').click();
     await page.waitForSelector('.react-flow__node', { timeout: 5000 });
 
-    // Mock remix API
-    await mockGenerateAPI(page, MOCK_REMIX_RESPONSE);
+    const initialCount = await page.locator('.react-flow__node').count();
 
-    // Click Remix button
+    // Mock remix API and verify it receives mode: 'remix'
+    let requestBody: any = null;
+    await page.route('**/api/generate-diagram', (route) => {
+      route.request().postDataJSON().then?.((b: any) => { requestBody = b; });
+      try { requestBody = JSON.parse(route.request().postData() ?? '{}'); } catch {}
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(MOCK_REMIX_RESPONSE),
+      });
+    });
+
     const remixBtn = page.locator('button:has-text("Remix")');
-    if (await remixBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await remixBtn.click();
+    await expect(remixBtn).toBeVisible({ timeout: 2000 });
+    await remixBtn.click();
 
-      // Confirmation modal should appear
-      const confirmBtn = page.locator('button:has-text("Replace")');
-      await expect(confirmBtn).toBeVisible({ timeout: 2000 });
-      await confirmBtn.click();
+    // Confirmation modal
+    const confirmBtn = page.locator('button:has-text("Replace")');
+    await expect(confirmBtn).toBeVisible({ timeout: 2000 });
+    await confirmBtn.click();
 
-      // Remix input should appear
-      const remixInput = page.locator('input[placeholder*="Add a read replica"]');
-      await expect(remixInput).toBeVisible({ timeout: 2000 });
-      await remixInput.fill('Add a read replica to the database');
+    // Remix input
+    const remixInput = page.locator('input[placeholder*="Add a read replica"]');
+    await expect(remixInput).toBeVisible({ timeout: 2000 });
+    await remixInput.fill('Add a read replica to the database');
+    await page.click('button:has-text("Apply")');
 
-      await page.click('button:has-text("Apply")');
+    // Wait for new nodes to appear (remixed graph has 4 nodes)
+    await expect(page.locator('.react-flow__node')).toHaveCount(4, { timeout: 5000 });
 
-      // Canvas should update with more nodes
-      await page.waitForTimeout(1000);
-      const nodes = page.locator('.react-flow__node');
-      const count = await nodes.count();
-      expect(count).toBeGreaterThanOrEqual(4);
-    }
+    // Verify request was sent as remix mode
+    expect(requestBody?.mode).toBe('remix');
+    expect(requestBody?.currentGraph).toBeTruthy();
   });
 });
 
 test.describe('Session save/load', () => {
   test('save → load → all components and wires survive', async ({ page }) => {
-    // Load a template first
     await page.goto('/');
     await page.waitForSelector('text=Or start from a template');
-    await page.click('button:has-text("Basic CRUD App")');
+
+    const templateSection = page.locator('text=Or start from a template').locator('..');
+    await templateSection.locator('button:has-text("Basic CRUD App")').click();
     await page.waitForSelector('.react-flow__node', { timeout: 5000 });
 
-    // Count initial nodes and edges
     const initialNodes = await page.locator('.react-flow__node').count();
     const initialEdges = await page.locator('.react-flow__edge').count();
     expect(initialNodes).toBeGreaterThanOrEqual(3);
     expect(initialEdges).toBeGreaterThanOrEqual(2);
 
-    // Trigger save (intercept download)
     const [download] = await Promise.all([
       page.waitForEvent('download'),
       page.click('button:has-text("Save")'),
@@ -220,26 +231,21 @@ test.describe('Session save/load', () => {
     const downloadPath = await download.path();
     expect(downloadPath).toBeTruthy();
 
-    // Read the saved file
     const fs = await import('fs');
     const savedJson = JSON.parse(fs.readFileSync(downloadPath!, 'utf-8'));
     expect(savedJson.componentGraph.components.length).toBe(initialNodes);
     expect(savedJson.componentGraph.wires.length).toBe(initialEdges);
 
-    // Navigate back to landing
     await page.goto('/');
     await page.waitForSelector('text=Design distributed systems');
 
-    // Load the saved file
     const fileChooserPromise = page.waitForEvent('filechooser');
     await page.click('button:has-text("Load session from file")');
     const fileChooser = await fileChooserPromise;
     await fileChooser.setFiles(downloadPath!);
 
-    // Should navigate to canvas
     await page.waitForSelector('.react-flow__node', { timeout: 5000 });
 
-    // Verify same count
     const loadedNodes = await page.locator('.react-flow__node').count();
     const loadedEdges = await page.locator('.react-flow__edge').count();
     expect(loadedNodes).toBe(initialNodes);

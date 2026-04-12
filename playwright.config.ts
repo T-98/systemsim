@@ -9,7 +9,7 @@ export default defineConfig({
     headless: true,
   },
   webServer: {
-    command: 'pnpm dev',
+    command: 'VITE_ENABLE_TEXT_TO_DIAGRAM=true pnpm dev',
     port: 5180,
     reuseExistingServer: true,
     timeout: 15000,
