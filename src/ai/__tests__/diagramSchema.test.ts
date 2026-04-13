@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateAndRewrite } from '../diagramSchema';
+import { validateAndRewrite, applyLabelPresets } from '../diagramSchema';
 
 describe('validateAndRewrite', () => {
   it('accepts valid input and rewrites refs to canonical ids', () => {
@@ -142,5 +142,83 @@ describe('validateAndRewrite', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.graph.nodes).toHaveLength(6);
+  });
+});
+
+describe('applyLabelPresets', () => {
+  it('applies sharding config when label contains "shard"', () => {
+    const graph = {
+      nodes: [{ type: 'database' as const, label: 'Sharded Database' }],
+      edges: [],
+    };
+    const result = applyLabelPresets(graph);
+    expect(result.nodes[0].config).toMatchObject({ shardingEnabled: true, shardCount: 4 });
+  });
+
+  it('applies redis config when label contains "redis"', () => {
+    const graph = {
+      nodes: [{ type: 'cache' as const, label: 'Redis Cache' }],
+      edges: [],
+    };
+    const result = applyLabelPresets(graph);
+    expect(result.nodes[0].config).toMatchObject({ evictionPolicy: 'lru', maxMemoryMb: 2048 });
+  });
+
+  it('applies CDN config when label contains "cdn"', () => {
+    const graph = {
+      nodes: [{ type: 'cache' as const, label: 'CDN Edge' }],
+      edges: [],
+    };
+    const result = applyLabelPresets(graph);
+    expect(result.nodes[0].config).toMatchObject({ ttlSeconds: 3600 });
+  });
+
+  it('applies worker config when label contains "worker"', () => {
+    const graph = {
+      nodes: [{ type: 'server' as const, label: 'Delivery Workers' }],
+      edges: [],
+    };
+    const result = applyLabelPresets(graph);
+    expect(result.nodes[0].config).toMatchObject({ instanceCount: 5, processingTimeMs: 100 });
+  });
+
+  it('applies kafka config when label contains "kafka"', () => {
+    const graph = {
+      nodes: [{ type: 'queue' as const, label: 'Kafka Topic' }],
+      edges: [],
+    };
+    const result = applyLabelPresets(graph);
+    expect(result.nodes[0].config).toMatchObject({ consumerGroupCount: 3 });
+  });
+
+  it('merges multiple matching presets', () => {
+    const graph = {
+      nodes: [{ type: 'database' as const, label: 'Sharded Postgres Replica' }],
+      edges: [],
+    };
+    const result = applyLabelPresets(graph);
+    expect(result.nodes[0].config).toMatchObject({
+      shardingEnabled: true,
+      readReplicas: 2,
+      engine: 'postgres',
+    });
+  });
+
+  it('leaves nodes without matching labels unchanged', () => {
+    const graph = {
+      nodes: [{ type: 'server' as const, label: 'My Service' }],
+      edges: [],
+    };
+    const result = applyLabelPresets(graph);
+    expect(result.nodes[0].config).toBeUndefined();
+  });
+
+  it('does not modify edges', () => {
+    const graph = {
+      nodes: [{ type: 'server' as const, label: 'API' }],
+      edges: [{ source: 'server-0', target: 'server-0' }],
+    };
+    const result = applyLabelPresets(graph);
+    expect(result.edges).toEqual(graph.edges);
   });
 });

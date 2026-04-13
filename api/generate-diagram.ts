@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
-import { TOOL_SCHEMA, validateAndRewrite } from '../src/ai/diagramSchema';
+import { TOOL_SCHEMA, validateAndRewrite, applyLabelPresets } from '../src/ai/diagramSchema';
 import { buildPrompt, PROMPT_VERSION } from '../src/ai/diagramPrompt';
 
 const MAX_PAYLOAD_BYTES = 32 * 1024;
@@ -60,7 +60,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    return res.status(200).json({ graph: result.graph, promptVersion: PROMPT_VERSION });
+    const graphWithPresets = applyLabelPresets(result.graph);
+    return res.status(200).json({ graph: graphWithPresets, promptVersion: PROMPT_VERSION });
   } catch (err: unknown) {
     if (err instanceof Anthropic.RateLimitError) {
       return res.status(429).json({ error: true, kind: 'rate_limit', message: 'Too many requests. Wait a moment.' });

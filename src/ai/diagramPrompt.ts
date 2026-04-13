@@ -27,10 +27,16 @@ RULES:
 4. Use local ref tokens (n1, n2, n3...) for edges. Labels are display-only.
 5. Never emit multiple nodes of the same type with the same label. If the user mentions "3 servers", emit ONE server node labeled appropriately.
 6. Do NOT emit ids, positions, or config. Just ref, type, and label per node. Source and target per edge.
+7. EDGE DIRECTION: source is the data producer, target is the data consumer. Edges represent the direction data flows. For queues: producers write TO the queue (producer→queue), consumers read FROM the queue (queue→consumer). For caches: the service that reads/writes is the source, the cache is the target. For databases: the service that queries is the source, the database is the target.
 
-EXAMPLE:
+EXAMPLE 1 (simple):
 User: "A notification system with a load balancer, two API servers, a message queue, and a database"
-Output: nodes=[{ref:"n1",type:"load_balancer",label:"LB"},{ref:"n2",type:"server",label:"API Servers"},{ref:"n3",type:"queue",label:"Notification Queue"},{ref:"n4",type:"database",label:"Notifications DB"}], edges=[{source:"n1",target:"n2"},{source:"n2",target:"n3"},{source:"n2",target:"n4"}]`;
+Output: nodes=[{ref:"n1",type:"load_balancer",label:"LB"},{ref:"n2",type:"server",label:"API Servers"},{ref:"n3",type:"queue",label:"Notification Queue"},{ref:"n4",type:"database",label:"Notifications DB"}], edges=[{source:"n1",target:"n2"},{source:"n2",target:"n3"},{source:"n2",target:"n4"}]
+
+EXAMPLE 2 (queue producer/consumer pattern):
+User: "Ride requests go to an API, which puts them in a job queue. A matching engine consumes from the queue and writes to a database."
+Output: nodes=[{ref:"n1",type:"server",label:"Ride API"},{ref:"n2",type:"queue",label:"Job Queue"},{ref:"n3",type:"server",label:"Matching Engine"},{ref:"n4",type:"database",label:"Trips DB"}], edges=[{source:"n1",target:"n2"},{source:"n2",target:"n3"},{source:"n3",target:"n4"}]
+Note: n1→n2 (API produces to queue), n2→n3 (queue feeds consumer), n3→n4 (consumer writes to DB).`;
 
 interface BuildPromptOptions {
   mode: 'generate' | 'remix';

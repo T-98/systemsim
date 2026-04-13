@@ -112,6 +112,60 @@ export function validateAndRewrite(raw: unknown): ValidationResult {
   return { ok: true, graph: { nodes, edges } };
 }
 
+interface LabelPreset {
+  pattern: RegExp;
+  config: Record<string, unknown>;
+}
+
+const LABEL_PRESETS: LabelPreset[] = [
+  // Database presets
+  { pattern: /shard/i, config: { shardingEnabled: true, shardCount: 4 } },
+  { pattern: /replica|read.?replica/i, config: { readReplicas: 2 } },
+  { pattern: /postgres/i, config: { engine: 'postgres' } },
+  { pattern: /mysql/i, config: { engine: 'mysql' } },
+  { pattern: /mongo/i, config: { engine: 'mongodb' } },
+  { pattern: /dynamo/i, config: { engine: 'dynamodb' } },
+
+  // Cache presets
+  { pattern: /cdn|cloudfront|fastly|edge.?cache/i, config: { ttlSeconds: 3600 } },
+  { pattern: /redis/i, config: { evictionPolicy: 'lru', maxMemoryMb: 2048 } },
+  { pattern: /memcache/i, config: { evictionPolicy: 'lru', maxMemoryMb: 4096 } },
+  { pattern: /session/i, config: { ttlSeconds: 1800 } },
+
+  // Queue presets
+  { pattern: /kafka/i, config: { consumerGroupCount: 3, consumersPerGroup: 5, maxDepth: 100000000 } },
+  { pattern: /sqs|rabbit/i, config: { dlqEnabled: true, retryCount: 3 } },
+  { pattern: /notification|alert/i, config: { maxDepth: 10000000 } },
+
+  // Server presets
+  { pattern: /worker/i, config: { instanceCount: 5, processingTimeMs: 100 } },
+  { pattern: /api|gateway/i, config: { instanceCount: 3 } },
+  { pattern: /match/i, config: { instanceCount: 2, processingTimeMs: 100 } },
+
+  // Load balancer presets
+  { pattern: /gateway/i, config: { algorithm: 'round-robin' } },
+
+  // Fanout presets
+  { pattern: /notification|push/i, config: { multiplier: 100000 } },
+  { pattern: /feed|timeline/i, config: { multiplier: 500000 } },
+];
+
+export function applyLabelPresets(graph: CanonicalGraph): CanonicalGraph {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => {
+      const matchedConfigs: Record<string, unknown> = {};
+      for (const preset of LABEL_PRESETS) {
+        if (preset.pattern.test(node.label)) {
+          Object.assign(matchedConfigs, preset.config);
+        }
+      }
+      if (Object.keys(matchedConfigs).length === 0) return node;
+      return { ...node, config: matchedConfigs };
+    }),
+  };
+}
+
 export const TOOL_SCHEMA = {
   name: 'generate_system_diagram',
   description: 'Generate a distributed system architecture diagram from a text description.',

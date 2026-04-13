@@ -50,4 +50,18 @@ describe('buildPrompt', () => {
     expect(result.system).toContain('Max 15 nodes');
     expect(result.system).toContain('max 30 edges');
   });
+
+  it('system prompt includes edge direction rules', () => {
+    const result = buildPrompt({ mode: 'generate', userText: 'test' });
+    expect(result.system).toContain('EDGE DIRECTION');
+    expect(result.system).toContain('source is the data producer');
+    expect(result.system).toContain('target is the data consumer');
+  });
+
+  it('system prompt includes queue producer/consumer example', () => {
+    const result = buildPrompt({ mode: 'generate', userText: 'test' });
+    expect(result.system).toContain('EXAMPLE 2');
+    expect(result.system).toContain('Matching Engine');
+    expect(result.system).toContain('queue feeds consumer');
+  });
 });
