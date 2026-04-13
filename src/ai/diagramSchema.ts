@@ -113,41 +113,35 @@ export function validateAndRewrite(raw: unknown): ValidationResult {
 }
 
 interface LabelPreset {
+  type: CanonicalNode['type'];
   pattern: RegExp;
   config: Record<string, unknown>;
 }
 
 const LABEL_PRESETS: LabelPreset[] = [
   // Database presets
-  { pattern: /shard/i, config: { shardingEnabled: true, shardCount: 4 } },
-  { pattern: /replica|read.?replica/i, config: { readReplicas: 2 } },
-  { pattern: /postgres/i, config: { engine: 'postgres' } },
-  { pattern: /mysql/i, config: { engine: 'mysql' } },
-  { pattern: /mongo/i, config: { engine: 'mongodb' } },
-  { pattern: /dynamo/i, config: { engine: 'dynamodb' } },
+  { type: 'database', pattern: /\bshard/i, config: { shardingEnabled: true, shardCount: 4 } },
+  { type: 'database', pattern: /\breplica/i, config: { readReplicas: 2 } },
+  { type: 'database', pattern: /\bpostgres/i, config: { engine: 'postgres' } },
+  { type: 'database', pattern: /\bcassandra/i, config: { engine: 'cassandra' } },
 
   // Cache presets
-  { pattern: /cdn|cloudfront|fastly|edge.?cache/i, config: { ttlSeconds: 3600 } },
-  { pattern: /redis/i, config: { evictionPolicy: 'lru', maxMemoryMb: 2048 } },
-  { pattern: /memcache/i, config: { evictionPolicy: 'lru', maxMemoryMb: 4096 } },
-  { pattern: /session/i, config: { ttlSeconds: 1800 } },
+  { type: 'cache', pattern: /\bcdn\b|cloudfront|fastly|edge.?cache/i, config: { ttlSeconds: 3600 } },
+  { type: 'cache', pattern: /\bredis\b/i, config: { evictionPolicy: 'lru', maxMemoryMb: 2048 } },
+  { type: 'cache', pattern: /\bmemcache/i, config: { evictionPolicy: 'lru', maxMemoryMb: 4096 } },
+  { type: 'cache', pattern: /\bsession\b/i, config: { ttlSeconds: 1800 } },
 
   // Queue presets
-  { pattern: /kafka/i, config: { consumerGroupCount: 3, consumersPerGroup: 5, maxDepth: 100000000 } },
-  { pattern: /sqs|rabbit/i, config: { dlqEnabled: true, retryCount: 3 } },
-  { pattern: /notification|alert/i, config: { maxDepth: 10000000 } },
+  { type: 'queue', pattern: /\bkafka\b/i, config: { consumerGroupCount: 3, consumersPerGroup: 5, maxDepth: 100000000 } },
+  { type: 'queue', pattern: /\bsqs\b|\brabbit/i, config: { dlqEnabled: true, retryCount: 3 } },
 
   // Server presets
-  { pattern: /worker/i, config: { instanceCount: 5, processingTimeMs: 100 } },
-  { pattern: /api|gateway/i, config: { instanceCount: 3 } },
-  { pattern: /match/i, config: { instanceCount: 2, processingTimeMs: 100 } },
-
-  // Load balancer presets
-  { pattern: /gateway/i, config: { algorithm: 'round-robin' } },
+  { type: 'server', pattern: /\bworker/i, config: { instanceCount: 5, processingTimeMs: 100 } },
+  { type: 'server', pattern: /\bmatching\b/i, config: { instanceCount: 2, processingTimeMs: 100 } },
 
   // Fanout presets
-  { pattern: /notification|push/i, config: { multiplier: 100000 } },
-  { pattern: /feed|timeline/i, config: { multiplier: 500000 } },
+  { type: 'fanout', pattern: /\bnotif/i, config: { multiplier: 100000 } },
+  { type: 'fanout', pattern: /\bfeed\b|\btimeline\b/i, config: { multiplier: 500000 } },
 ];
 
 export function applyLabelPresets(graph: CanonicalGraph): CanonicalGraph {
@@ -156,7 +150,7 @@ export function applyLabelPresets(graph: CanonicalGraph): CanonicalGraph {
     nodes: graph.nodes.map((node) => {
       const matchedConfigs: Record<string, unknown> = {};
       for (const preset of LABEL_PRESETS) {
-        if (preset.pattern.test(node.label)) {
+        if (preset.type === node.type && preset.pattern.test(node.label)) {
           Object.assign(matchedConfigs, preset.config);
         }
       }

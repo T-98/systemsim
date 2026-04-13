@@ -213,9 +213,34 @@ describe('applyLabelPresets', () => {
     expect(result.nodes[0].config).toBeUndefined();
   });
 
+  it('does not apply presets across node types (type-scoped)', () => {
+    const graph = {
+      nodes: [
+        { type: 'load_balancer' as const, label: 'API Gateway' },
+        { type: 'queue' as const, label: 'Notification Queue' },
+      ],
+      edges: [],
+    };
+    const result = applyLabelPresets(graph);
+    // load_balancer should NOT get server presets (instanceCount)
+    expect(result.nodes[0].config).toBeUndefined();
+    // queue should NOT get fanout presets (multiplier)
+    expect(result.nodes[1].config).toBeUndefined();
+  });
+
+  it('does not false-positive on substrings (word boundaries)', () => {
+    const graph = {
+      nodes: [{ type: 'server' as const, label: 'Rapid Service' }],
+      edges: [],
+    };
+    const result = applyLabelPresets(graph);
+    // "Rapid" contains "api" but word boundary prevents match
+    expect(result.nodes[0].config).toBeUndefined();
+  });
+
   it('does not modify edges', () => {
     const graph = {
-      nodes: [{ type: 'server' as const, label: 'API' }],
+      nodes: [{ type: 'server' as const, label: 'Worker' }],
       edges: [{ source: 'server-0', target: 'server-0' }],
     };
     const result = applyLabelPresets(graph);
