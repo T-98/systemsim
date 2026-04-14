@@ -75,7 +75,7 @@ export default function IntentHeader() {
         style={{
           background: 'var(--bg-card)',
           borderBottom: '1px solid var(--border-color)',
-          padding: '10px 16px',
+          padding: '6px 16px',
         }}
       >
         <div className="flex items-start gap-3 max-w-5xl mx-auto">
@@ -143,7 +143,7 @@ export default function IntentHeader() {
       style={{
         background: 'var(--bg-card)',
         borderBottom: '1px solid var(--border-color)',
-        padding: '10px 16px',
+        padding: '6px 16px',
         cursor: 'text',
       }}
       onMouseEnter={(e) => {
