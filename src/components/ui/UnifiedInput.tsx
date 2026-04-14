@@ -11,7 +11,7 @@ const PROGRESS_MESSAGES = [
   'Building spec...',
 ];
 
-const MIN_CHARS = 5;
+const MIN_CHARS = 15;
 const MAX_CHARS = 10000;
 
 interface StagedImage {

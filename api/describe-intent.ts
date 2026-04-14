@@ -20,7 +20,7 @@ import {
 
 const MAX_PAYLOAD_BYTES = 6 * 1024 * 1024;
 const MAX_DECODED_IMAGE_BYTES = 5 * 1024 * 1024;
-const MIN_TEXT_LEN = 5;
+const MIN_TEXT_LEN = 10;
 
 export default createAnthropicHandler({
   endpointName: 'describe-intent',
@@ -112,12 +112,16 @@ export default createAnthropicHandler({
       tool_choice: { type: 'tool', name: 'describe_intent' },
     });
 
+    const failureMessage = hasImage
+      ? "Couldn't read your diagram. Try a clearer image."
+      : "Add more detail to your description so we can pick out components.";
+
     const toolBlock = response.content.find((b) => b.type === 'tool_use');
     if (!toolBlock || toolBlock.type !== 'tool_use') {
       res.status(502).json({
         error: true,
         kind: 'validation',
-        message: "Couldn't read your diagram. Try a clearer image.",
+        message: failureMessage,
       });
       return;
     }
@@ -130,7 +134,7 @@ export default createAnthropicHandler({
       res.status(422).json({
         error: true,
         kind: 'validation',
-        message: "Couldn't read your diagram. Try a clearer image.",
+        message: failureMessage,
         reason: validation.reason,
       });
       return;
