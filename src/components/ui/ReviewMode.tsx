@@ -182,13 +182,15 @@ export default function ReviewMode() {
                 : 'Add at least one connection to generate'
               : undefined
           }
-          className="rounded-lg font-medium transition-all disabled:opacity-30"
+          className="rounded-lg font-medium transition-all"
           style={{
             padding: '8px 16px',
             fontSize: 14,
             letterSpacing: '-0.224px',
-            background: 'var(--accent)',
-            color: 'var(--text-on-accent)',
+            background: canGenerate ? 'var(--accent)' : 'var(--bg-card)',
+            color: canGenerate ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
+            border: canGenerate ? 'none' : '1px solid var(--border-color)',
+            cursor: canGenerate ? 'pointer' : 'not-allowed',
           }}
         >
           Generate diagram

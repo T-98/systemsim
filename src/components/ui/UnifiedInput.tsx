@@ -293,13 +293,15 @@ export default function UnifiedInput() {
                 onClick={handleSubmit}
                 disabled={!canSubmit}
                 title={disabledReason}
-                className="rounded-lg font-medium transition-all disabled:opacity-30"
+                className="rounded-lg font-medium transition-all"
                 style={{
                   padding: '6px 16px',
                   fontSize: 14,
                   letterSpacing: '-0.224px',
-                  background: 'var(--accent)',
-                  color: 'var(--text-on-accent)',
+                  background: canSubmit ? 'var(--accent)' : 'var(--bg-card)',
+                  color: canSubmit ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
+                  border: canSubmit ? 'none' : '1px solid var(--border-color)',
+                  cursor: canSubmit ? 'pointer' : 'not-allowed',
                 }}
               >
                 {resizing ? 'Preparing…' : 'Generate'}
