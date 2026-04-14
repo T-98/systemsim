@@ -15,19 +15,6 @@ const MOCK_DIAGRAM_RESPONSE = {
   promptVersion: '1.0',
 };
 
-const MOCK_VALIDATION_ERROR = {
-  error: true,
-  kind: 'validation',
-  message: 'Generation failed. Try rephrasing your description.',
-  reason: 'invalid_type',
-};
-
-const MOCK_RATE_LIMIT = {
-  error: true,
-  kind: 'rate_limit',
-  message: 'Too many requests. Wait a moment.',
-};
-
 const MOCK_REMIX_RESPONSE = {
   graph: {
     nodes: [
@@ -65,100 +52,165 @@ test.describe('Template flow', () => {
   });
 });
 
-test.describe('Text-to-diagram generation', () => {
-  test('description → Generate → canvas populated', async ({ page }) => {
-    await page.route('**/api/generate-diagram', (route) => {
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(MOCK_DIAGRAM_RESPONSE),
-      });
+const MOCK_INTENT_RESPONSE = {
+  intent: 'We let users place orders. Orders go to a payment service and a confirmation email is sent.',
+  components: [
+    { label: 'Load Balancer', type: 'load_balancer' },
+    { label: 'API Server', type: 'server' },
+    { label: 'Orders DB', type: 'database' },
+    { label: 'Queue', type: 'queue' },
+    { label: 'Email Worker', type: 'server' },
+  ],
+  connections: [
+    'Load Balancer --> API Server',
+    'API Server --> Orders DB',
+    'API Server --> Queue',
+    'Queue --> Email Worker',
+  ].join('\n'),
+  confidence: { intent: 'high', items: [] },
+  promptVersion: '2.0',
+};
+
+const MOCK_INTENT_LOW_CONFIDENCE = {
+  intent: 'A system with some components, but the diagram was unclear in places.',
+  components: [
+    { label: 'API', type: 'server' },
+    { label: 'Database', type: 'database' },
+  ],
+  connections: 'API --> Database',
+  confidence: {
+    intent: 'low',
+    items: [{ name: 'Cache?', confidence: 'low', reasoning: 'Label was blurry' }],
+  },
+  promptVersion: '2.0',
+};
+
+test.describe('Vision-to-intent (text-only)', () => {
+  test('text description → Generate → review → Generate diagram → canvas populated', async ({ page }) => {
+    await page.route('**/api/describe-intent', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_INTENT_RESPONSE) });
     });
 
     await page.goto('/');
-
     const textarea = page.locator('textarea[aria-label="System description"]');
     await expect(textarea).toBeVisible({ timeout: 3000 });
-
-    await textarea.fill('A load balancer connected to an API server and a database');
+    await textarea.fill('A load balancer connected to two API servers and a Postgres database');
     await page.click('button:has-text("Generate")');
 
+    // Review screen appears with intent + components + connections
+    await expect(page.getByRole('heading', { name: 'What you are building' })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('textarea[aria-label="What you are building"]')).toHaveValue(MOCK_INTENT_RESPONSE.intent);
+    await expect(page.getByRole('heading', { name: 'Components detected' })).toBeVisible();
+    await expect(page.locator('text=5 components read')).toBeVisible();
+    await expect(page.locator('textarea[aria-label="Connections"]')).toHaveValue(MOCK_INTENT_RESPONSE.connections);
+
+    // Generate the diagram — local graph assembly, no second API call
+    await page.click('button:has-text("Generate diagram")');
     await page.waitForSelector('.react-flow__node', { timeout: 10000 });
-    const nodes = page.locator('.react-flow__node');
-    expect(await nodes.count()).toBeGreaterThanOrEqual(3);
+    const nodeCount = await page.locator('.react-flow__node').count();
+    expect(nodeCount).toBe(5);
   });
 
-  test('Generate → Cancel → stale response does not navigate to canvas', async ({ page }) => {
-    let resolveRoute: (() => void) | null = null;
-    await page.route('**/api/generate-diagram', async (route) => {
-      await new Promise<void>((r) => { resolveRoute = r; });
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(MOCK_DIAGRAM_RESPONSE),
-      });
-    });
-
-    await page.goto('/');
-
-    const textarea = page.locator('textarea[aria-label="System description"]');
-    await expect(textarea).toBeVisible({ timeout: 3000 });
-    await textarea.fill('A load balancer connected to servers');
-    await page.click('button:has-text("Generate")');
-
-    const cancelBtn = page.locator('button:has-text("Cancel")');
-    await expect(cancelBtn).toBeVisible({ timeout: 2000 });
-    await cancelBtn.click();
-
-    // Now let the API resolve — the stale response should be ignored
-    resolveRoute?.();
-    await page.waitForTimeout(500);
-
-    // Should still be on landing page, NOT canvas
-    await expect(page.locator('text=Design distributed systems')).toBeVisible();
-    await expect(page.locator('.react-flow__node')).toHaveCount(0);
-  });
-
-  test('Generate → validation error → shows error and template link', async ({ page }) => {
-    await page.route('**/api/generate-diagram', (route) => {
-      route.fulfill({
-        status: 422,
-        contentType: 'application/json',
-        body: JSON.stringify(MOCK_VALIDATION_ERROR),
-      });
+  test('review → Back → landing preserves input', async ({ page }) => {
+    await page.route('**/api/describe-intent', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_INTENT_RESPONSE) });
     });
 
     await page.goto('/');
     const textarea = page.locator('textarea[aria-label="System description"]');
     await expect(textarea).toBeVisible({ timeout: 3000 });
-    await textarea.fill('A complex microservices architecture');
+    const typedText = 'A load balancer with servers and a database';
+    await textarea.fill(typedText);
     await page.click('button:has-text("Generate")');
 
-    await expect(page.locator('text=Generation failed')).toBeVisible({ timeout: 5000 });
-    const templateLink = page.locator('text=Try a template instead');
-    await expect(templateLink).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'What you are building' })).toBeVisible({ timeout: 10000 });
 
-    // Click the link — it should clear the error
-    await templateLink.click();
-    await expect(page.locator('text=Generation failed')).not.toBeVisible();
+    await page.click('button:has-text("← Back")');
+    await expect(page.locator('text=Design distributed systems')).toBeVisible({ timeout: 3000 });
+    await expect(page.locator('textarea[aria-label="System description"]')).toHaveValue(typedText);
   });
 
-  test('Generate → rate limit → shows rate limit message', async ({ page }) => {
-    await page.route('**/api/generate-diagram', (route) => {
+  test('edited connections → canvas respects edits', async ({ page }) => {
+    await page.route('**/api/describe-intent', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_INTENT_RESPONSE) });
+    });
+
+    await page.goto('/');
+    const textarea = page.locator('textarea[aria-label="System description"]');
+    await expect(textarea).toBeVisible({ timeout: 3000 });
+    await textarea.fill('An e-commerce checkout system');
+    await page.click('button:has-text("Generate")');
+
+    await expect(page.getByRole('heading', { name: 'What you are building' })).toBeVisible({ timeout: 10000 });
+
+    // Edit connections: keep only two edges
+    const connectionsField = page.locator('textarea[aria-label="Connections"]');
+    await connectionsField.fill(
+      'Load Balancer --> API Server\nAPI Server --> Orders DB'
+    );
+    await expect(page.locator('text=2 connections ready')).toBeVisible();
+
+    await page.click('button:has-text("Generate diagram")');
+    await page.waitForSelector('.react-flow__node', { timeout: 10000 });
+    expect(await page.locator('.react-flow__edge').count()).toBe(2);
+  });
+
+  test('connection typo → error banner, generate disabled', async ({ page }) => {
+    await page.route('**/api/describe-intent', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_INTENT_RESPONSE) });
+    });
+
+    await page.goto('/');
+    const textarea = page.locator('textarea[aria-label="System description"]');
+    await expect(textarea).toBeVisible({ timeout: 3000 });
+    await textarea.fill('An e-commerce checkout system');
+    await page.click('button:has-text("Generate")');
+
+    await expect(page.getByRole('heading', { name: 'What you are building' })).toBeVisible({ timeout: 10000 });
+
+    // Type a connection referencing a nonexistent component
+    const connectionsField = page.locator('textarea[aria-label="Connections"]');
+    await connectionsField.fill('mystery box --> API Server');
+
+    await expect(page.locator('text=1 connection needs fixing')).toBeVisible();
+    await expect(page.locator('text=not in the components list')).toBeVisible();
+
+    const generateBtn = page.locator('button:has-text("Generate diagram")');
+    await expect(generateBtn).toBeDisabled();
+  });
+
+  test('low-confidence response → warning banner visible on review', async ({ page }) => {
+    await page.route('**/api/describe-intent', (route) => {
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(MOCK_INTENT_LOW_CONFIDENCE) });
+    });
+
+    await page.goto('/');
+    const textarea = page.locator('textarea[aria-label="System description"]');
+    await expect(textarea).toBeVisible({ timeout: 3000 });
+    await textarea.fill('A rough sketch of some system');
+    await page.click('button:has-text("Generate")');
+
+    await expect(page.getByRole('heading', { name: 'What you are building' })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('text=Some parts of your diagram were unclear')).toBeVisible();
+  });
+
+  test('describe-intent validation error → stay on landing, show banner', async ({ page }) => {
+    await page.route('**/api/describe-intent', (route) => {
       route.fulfill({
-        status: 429,
+        status: 400,
         contentType: 'application/json',
-        body: JSON.stringify(MOCK_RATE_LIMIT),
+        body: JSON.stringify({ error: true, kind: 'validation', message: 'Describe your system or attach an image.' }),
       });
     });
 
     await page.goto('/');
     const textarea = page.locator('textarea[aria-label="System description"]');
     await expect(textarea).toBeVisible({ timeout: 3000 });
-    await textarea.fill('A simple API with a database backend');
+    await textarea.fill('not enough input maybe');
     await page.click('button:has-text("Generate")');
 
-    await expect(page.locator('text=Too many requests')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('text=Describe your system or attach an image')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'What you are building' })).not.toBeVisible();
   });
 });
 

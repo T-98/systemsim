@@ -29,6 +29,22 @@ import type {
   AIDebrief,
   CanonicalGraph,
 } from '../types';
+import type { DescribeIntentOutput } from '../ai/describeIntentSchema';
+
+export interface ReviewInput {
+  text?: string;
+  image?: {
+    base64: string;
+    mimeType: 'image/jpeg' | 'image/png' | 'image/webp';
+    bytes: number;
+    filename?: string;
+  };
+}
+
+export interface ReviewState {
+  data: DescribeIntentOutput;
+  sourceInput: ReviewInput;
+}
 import { COMPONENT_DEFS } from '../types/components';
 import type { ComponentType } from '../types';
 import { layoutGraph } from '../layout/dagre';
@@ -54,6 +70,16 @@ export interface AppState {
   setScenarioId: (id: string | null) => void;
   setTheme: (theme: 'light' | 'dark') => void;
   toggleTheme: () => void;
+
+  // Review (vision-to-intent handoff)
+  reviewState: ReviewState | null;
+  landingInput: ReviewInput | null;
+  setReviewState: (state: ReviewState | null) => void;
+  setLandingInput: (input: ReviewInput | null) => void;
+
+  // Persistent intent (survives graph replacements, saves with session)
+  intent: string | null;
+  setIntent: (intent: string | null) => void;
 
   // Canvas
   nodes: Node<SimComponentData>[];
@@ -160,6 +186,16 @@ export const useStore = create<AppState>((set, get) => ({
   setAppMode: (mode) => set({ appMode: mode }),
   setAppView: (view) => set({ appView: view }),
   setScenarioId: (id) => set({ scenarioId: id }),
+
+  // Review (vision-to-intent handoff)
+  reviewState: null,
+  landingInput: null,
+  setReviewState: (state) => set({ reviewState: state }),
+  setLandingInput: (input) => set({ landingInput: input }),
+
+  // Persistent intent
+  intent: null,
+  setIntent: (intent) => set({ intent }),
   setTheme: (theme) => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
     set({ theme });

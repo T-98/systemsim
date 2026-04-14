@@ -1,0 +1,3 @@
+{
+  "text": "A load balancer in front of two API servers. The API servers talk to a Postgres database. There is a Redis cache in front of the database for read-heavy paths."
+}

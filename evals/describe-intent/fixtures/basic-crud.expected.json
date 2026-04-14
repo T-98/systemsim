@@ -1,0 +1,14 @@
+{
+  "components": [
+    { "label": "Load Balancer", "type": "load_balancer" },
+    { "label": "API Server", "type": "server" },
+    { "label": "Redis", "type": "cache" },
+    { "label": "Postgres", "type": "database" }
+  ],
+  "connections": [
+    { "source": "Load Balancer", "target": "API Server" },
+    { "source": "API Server", "target": "Redis" },
+    { "source": "API Server", "target": "Postgres" }
+  ],
+  "notes": "Canonical shape for a minimal CRUD. Label matching is case/whitespace-insensitive, so 'API Servers' or 'Postgres DB' still pass for the label dimension."
+}

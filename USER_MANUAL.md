@@ -40,32 +40,57 @@ When you open the app, you'll see four entry points stacked vertically:
 - The layout flows left-to-right, no overlapping nodes
 - Clicking a node opens the config panel on the right
 
-## Flow 2: Text-to-Diagram Generation
+## Flow 2: Vision-to-Intent (text or image → review → diagram)
 
 > Requires `VITE_ENABLE_TEXT_TO_DIAGRAM=true` and a valid `ANTHROPIC_API_KEY`
 
-1. On the landing page, find the "Describe your system" text input
-2. Type a system description, e.g.:
+On the landing page, the "Describe your system" input accepts **text, image upload, or pasted image**.
+
+### 2A. Text-only path
+1. Type a description, e.g.:
    ```
    A social media feed with a load balancer, three API servers,
    a Redis cache for hot posts, a fanout service for feed
    generation, and a sharded Postgres database
    ```
-3. Click **Generate**
-4. Watch the progress messages rotate: "Reading your description..." etc.
-5. After 3-8 seconds, the canvas populates with an AI-generated diagram
+2. Click **Generate**
+3. Review screen appears with your **intent** (plain English) and **technical spec**
+4. Edit either field if needed (Cmd+Enter to generate)
+5. Click **Generate diagram** → canvas populates
+
+### 2B. Image upload path (Miro / Figma / Excalidraw screenshot)
+1. Click the **[+]** button in the input zone
+2. Pick a PNG, JPEG, or WebP file (HEIC not supported, convert first)
+3. The image is resized to 1568px and re-encoded to JPEG client-side
+4. A preview chip with filename and size appears below the input
+5. Optionally add text to clarify ambiguous parts of the image
+6. Click **Generate** → review screen → canvas (same as 2A from step 3)
+
+### 2C. Paste image path
+1. Copy an image (Cmd+C on a screenshot, or Copy Image from a browser)
+2. Click inside the input zone
+3. Cmd+V (Mac) / Ctrl+V (Win/Linux) — the preview chip appears
+4. Click **Generate** → review → canvas
 
 **What to verify:**
-- Progress text rotates while waiting
-- Canvas shows nodes matching your description (types mapped: "Redis" becomes a cache node, etc.)
-- Nodes are auto-laid-out with Dagre
-- The privacy warning is visible below the text input
+- Review screen shows your intent written in founder voice ("We let users..." not "Users can...")
+- Technical spec uses plain English (no ASCII arrows)
+- When confidence is low, an amber banner "Some parts of your diagram were unclear" appears
+- "← Back" returns to landing with your text/image still populated
+- Canvas renders the diagram from the spec
+
+**Known limits tonight:**
+- Single image only (multi-image Miro boards: split into one screenshot each)
+- No drag-and-drop yet (use upload button or paste)
+- No persistent intent header on canvas yet (follow-up PR)
+- Desktop only (min width 900px recommended)
 
 **Error cases to try:**
-- Type fewer than 10 characters, click Generate: button should be disabled (grayed out)
-- Type a very long description (>10,000 chars): amber warning appears
-- Click Generate, then immediately click **Cancel**: should stay on landing page, no canvas flash
-- If you get a "Generation failed" error: a "Try a template instead" link appears below
+- Submit with nothing typed and no image: Generate button is disabled (tooltip: "Describe your system or attach an image")
+- Type < 5 chars with no image: still disabled
+- Paste a non-image file into the zone: error banner "Image format not supported"
+- Click Generate, then immediately click **Cancel**: should stay on landing with input preserved
+- Trigger a vision timeout: banner reads "AI took too long to respond. Try again, or paste a smaller/simpler image."
 
 ## Flow 3: Remix an Existing Diagram
 
@@ -199,3 +224,9 @@ npx playwright install chromium
 | Cache | H | In-memory caching (Redis-like) |
 | Queue | Q | Async message processing |
 | Fanout | F | Multiplies messages to N downstream |
+
+## Plans
+~/.gstack/projects/T-98-systemsim/ceo-plans/
+
+## Good user prompts
+I want to build a highly secure homelab setup with a bastion server on a vps that runs a caddy reverse proxy. That should connect to a local lab caddy reverse proxy that handles network traffic for all the homelab systems. The homelab ssytems consist of grimmory, jellyfin, and a wnrn music server, all running in rootless podman containers. We need a mTLS connection between the caddy proxies with a certificate sync script in the lab, a vpn connection between the bastion and the homelab, local dns serving on the homelab using a bare metal dnsmasq (the caddy proxy in the homelab is also running on baremetal), and there is a wireguard vpn from the home lab to a separate mobile device. 

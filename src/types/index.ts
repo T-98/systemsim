@@ -161,6 +161,7 @@ export interface SessionFile {
   systemsimVersion: string;
   mode: 'scenario' | 'freeform';
   scenarioId: string | null;
+  intent: string | null;
   session: {
     createdAt: string;
     lastModified: string;
@@ -198,7 +199,7 @@ export interface CanonicalGraph {
 export type SimulationStatus = 'idle' | 'running' | 'paused' | 'completed';
 export type ViewMode = 'particle' | 'aggregate';
 export type AppMode = 'scenario' | 'freeform';
-export type AppView = 'landing' | 'design' | 'canvas';
+export type AppView = 'landing' | 'design' | 'review' | 'canvas';
 
 export interface Particle {
   id: string;

@@ -10,6 +10,9 @@ import Toolbar from './components/ui/Toolbar';
 import LiveLog from './components/panels/LiveLog';
 import DebriefPanel from './components/debrief/DebriefPanel';
 import HintCard from './components/ui/HintCard';
+import ReviewMode from './components/ui/ReviewMode';
+import DesktopOnlyNotice from './components/ui/DesktopOnlyNotice';
+import IntentHeader from './components/canvas/IntentHeader';
 
 export default function App() {
   const appView = useStore((s) => s.appView);
@@ -17,7 +20,21 @@ export default function App() {
   const appMode = useStore((s) => s.appMode);
 
   if (appView === 'landing') {
-    return <LandingPage />;
+    return (
+      <>
+        <DesktopOnlyNotice />
+        <LandingPage />
+      </>
+    );
+  }
+
+  if (appView === 'review') {
+    return (
+      <>
+        <DesktopOnlyNotice />
+        <ReviewMode />
+      </>
+    );
   }
 
   if (appView === 'design') {
@@ -33,6 +50,7 @@ export default function App() {
           color: 'var(--text-secondary)',
         }}
       >
+        <IntentHeader />
         <Toolbar />
         <div className="flex flex-1 overflow-hidden">
           <div className="flex flex-col">
