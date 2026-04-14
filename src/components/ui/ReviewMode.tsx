@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../store';
 import { aggregateConfidence } from '../../ai/describeIntentSchema';
+import { describeIntent } from '../../ai/describeIntent';
 import { parseConnections, buildCanonicalGraph } from '../../ai/parseConnections';
+import ConfidencePanel from './ConfidencePanel';
 
 const COMPONENT_TYPE_LABELS: Record<string, string> = {
   load_balancer: 'load balancer',
@@ -17,9 +19,12 @@ export default function ReviewMode() {
   const setReviewState = useStore((s) => s.setReviewState);
   const setAppView = useStore((s) => s.setAppView);
   const replaceGraph = useStore((s) => s.replaceGraph);
+  const persistIntent = useStore((s) => s.setIntent);
 
   const [intent, setIntent] = useState(reviewState?.data.intent ?? '');
   const [connections, setConnections] = useState(reviewState?.data.connections ?? '');
+  const [rederiving, setRederiving] = useState(false);
+  const [rederiveError, setRederiveError] = useState<string | null>(null);
 
   const sourceLabel = useMemo(() => {
     if (!reviewState) return '';
@@ -56,9 +61,37 @@ export default function ReviewMode() {
     if (!canGenerate || !reviewState || !parseResult) return;
     const graph = buildCanonicalGraph(reviewState.data.components, parseResult.edges);
     replaceGraph(graph, { layout: 'auto' });
+    persistIntent(intent.trim() || null);
     setReviewState(null);
     setAppView('canvas');
-  }, [canGenerate, reviewState, parseResult, replaceGraph, setReviewState, setAppView]);
+  }, [canGenerate, reviewState, parseResult, replaceGraph, persistIntent, intent, setReviewState, setAppView]);
+
+  const handleRederive = useCallback(async () => {
+    const trimmed = intent.trim();
+    if (trimmed.length < 15 || !reviewState) return;
+    setRederiving(true);
+    setRederiveError(null);
+    const result = await describeIntent({ text: trimmed });
+    setRederiving(false);
+    if (result.ok) {
+      setReviewState({
+        data: result.data,
+        sourceInput: { text: trimmed },
+      });
+      setIntent(result.data.intent);
+      setConnections(result.data.connections);
+    } else if (result.kind !== 'aborted') {
+      setRederiveError(
+        result.kind === 'rate_limit'
+          ? 'Rate limited. Wait a moment and try again.'
+          : result.kind === 'network'
+            ? "Can't reach the service. Check your connection."
+            : result.kind === 'validation'
+              ? result.message
+              : "Couldn't re-derive. Try editing the intent further and try again."
+      );
+    }
+  }, [intent, reviewState, setReviewState]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -181,17 +214,73 @@ export default function ReviewMode() {
         </p>
 
         <section>
-          <h2
-            style={{
-              fontSize: 24,
-              fontWeight: 600,
-              letterSpacing: '-0.5px',
-              color: 'var(--text-primary)',
-              marginBottom: 10,
-            }}
-          >
-            What you are building
-          </h2>
+          <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+            <h2
+              style={{
+                fontSize: 24,
+                fontWeight: 600,
+                letterSpacing: '-0.5px',
+                color: 'var(--text-primary)',
+              }}
+            >
+              What you are building
+            </h2>
+            <button
+              type="button"
+              onClick={handleRederive}
+              disabled={rederiving || intent.trim().length < 15 || !reviewState}
+              title={
+                rederiving
+                  ? 'Re-reading your intent'
+                  : intent.trim().length < 15
+                    ? 'Add more detail before re-deriving'
+                    : 'Re-derive components and connections from this intent'
+              }
+              className="transition-colors disabled:opacity-40"
+              style={{
+                fontSize: 13,
+                letterSpacing: '-0.224px',
+                color: 'var(--accent-link)',
+                background: 'transparent',
+                padding: '4px 8px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+              onMouseEnter={(e) => {
+                if (!rederiving && intent.trim().length >= 15) {
+                  e.currentTarget.style.textDecoration = 'underline';
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.textDecoration = 'none';
+              }}
+            >
+              {rederiving && (
+                <span
+                  className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"
+                  aria-hidden="true"
+                />
+              )}
+              {rederiving ? 'Re-reading…' : 'Re-derive from intent'}
+            </button>
+          </div>
+          {rederiveError && (
+            <div
+              role="alert"
+              className="mb-3 rounded-lg"
+              style={{
+                background: 'rgba(255,69,58,0.08)',
+                border: '1px solid rgba(255,69,58,0.2)',
+                padding: '10px 12px',
+                fontSize: 13,
+                color: '#ff453a',
+                letterSpacing: '-0.224px',
+              }}
+            >
+              {rederiveError}
+            </div>
+          )}
           <textarea
             value={intent}
             onChange={(e) => setIntent(e.target.value)}
@@ -421,6 +510,11 @@ raw video --extracted audio--> STT"
             </div>
           )}
         </section>
+
+        <ConfidencePanel
+          intentConfidence={reviewState.data.confidence.intent}
+          items={reviewState.data.confidence.items}
+        />
 
         {confidence === 'low' && (
           <div

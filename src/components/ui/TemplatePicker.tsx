@@ -26,6 +26,7 @@ export default function TemplatePicker() {
   const setAppMode = useStore((s) => s.setAppMode);
   const setAppView = useStore((s) => s.setAppView);
   const setScenarioId = useStore((s) => s.setScenarioId);
+  const setIntent = useStore((s) => s.setIntent);
 
   const inFlight = useRef(false);
 
@@ -50,6 +51,7 @@ export default function TemplatePicker() {
       replaceGraph({ nodes: tpl.nodes, edges: tpl.edges }, { layout: 'auto' });
       setAppMode('freeform');
       setScenarioId(null);
+      setIntent(null);
       setAppView('canvas');
     } catch {
       setError(`Couldn't load this template. Try another.`);

@@ -12,6 +12,7 @@ import DebriefPanel from './components/debrief/DebriefPanel';
 import HintCard from './components/ui/HintCard';
 import ReviewMode from './components/ui/ReviewMode';
 import DesktopOnlyNotice from './components/ui/DesktopOnlyNotice';
+import IntentHeader from './components/canvas/IntentHeader';
 
 export default function App() {
   const appView = useStore((s) => s.appView);
@@ -49,6 +50,7 @@ export default function App() {
           color: 'var(--text-secondary)',
         }}
       >
+        <IntentHeader />
         <Toolbar />
         <div className="flex flex-1 overflow-hidden">
           <div className="flex flex-col">

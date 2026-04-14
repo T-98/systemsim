@@ -253,6 +253,7 @@ function loadSessionFromJson(session: Record<string, unknown>) {
   const s = session as any;
   store.setAppMode(s.mode ?? 'freeform');
   store.setScenarioId(s.scenarioId ?? null);
+  store.setIntent(typeof s.intent === 'string' ? s.intent : null);
   if (s.design?.requirements?.functional) store.setFunctionalReqs(s.design.requirements.functional);
   if (s.design?.requirements?.nonFunctional) store.setNonFunctionalReqs(s.design.requirements.nonFunctional);
   if (s.design?.apiContracts) store.setApiContracts(s.design.apiContracts);

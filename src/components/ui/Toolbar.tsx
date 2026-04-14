@@ -374,7 +374,7 @@ export default function Toolbar() {
 function handleSave() {
   const state = useStore.getState();
   const session = {
-    systemsimVersion: '1.0', mode: state.appMode, scenarioId: state.scenarioId,
+    systemsimVersion: '1.0', mode: state.appMode, scenarioId: state.scenarioId, intent: state.intent ?? null,
     session: { createdAt: new Date().toISOString(), lastModified: new Date().toISOString() },
     design: { requirements: { functional: state.functionalReqs, nonFunctional: state.nonFunctionalReqs }, apiContracts: state.apiContracts, schemaMemory: state.schemaMemory, schemaHistory: state.schemaHistory },
     componentGraph: { components: state.nodes.map((n) => ({ id: n.id, type: n.data.type, label: n.data.label, position: n.position, config: n.data.config })), wires: state.edges.map((e) => ({ id: e.id, from: { componentId: e.source, port: 'output' }, to: { componentId: e.target, port: 'input' }, config: e.data?.config })) },

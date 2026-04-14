@@ -161,6 +161,7 @@ export interface SessionFile {
   systemsimVersion: string;
   mode: 'scenario' | 'freeform';
   scenarioId: string | null;
+  intent: string | null;
   session: {
     createdAt: string;
     lastModified: string;

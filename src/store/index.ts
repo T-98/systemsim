@@ -77,6 +77,10 @@ export interface AppState {
   setReviewState: (state: ReviewState | null) => void;
   setLandingInput: (input: ReviewInput | null) => void;
 
+  // Persistent intent (survives graph replacements, saves with session)
+  intent: string | null;
+  setIntent: (intent: string | null) => void;
+
   // Canvas
   nodes: Node<SimComponentData>[];
   edges: Edge<{ config: WireConfig }>[];
@@ -188,6 +192,10 @@ export const useStore = create<AppState>((set, get) => ({
   landingInput: null,
   setReviewState: (state) => set({ reviewState: state }),
   setLandingInput: (input) => set({ landingInput: input }),
+
+  // Persistent intent
+  intent: null,
+  setIntent: (intent) => set({ intent }),
   setTheme: (theme) => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
     set({ theme });

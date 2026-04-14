@@ -14,39 +14,15 @@ inside its own plan file — do not duplicate items here.
 
 ---
 
-## [V2I-FOLLOWUP] Tomorrow's PR (2026-04-14) — ship after translator lands
+## [V2I-FOLLOWUP] Followup PR — shipped 2026-04-14
 
-Items deferred from the 2026-04-13 night ship per Codex scope cut. These ship as ONE
-clean follow-up PR on top of the vision-to-intent translator.
+The followup PR landed the features below on top of the translator:
 
-### [V2I-FOLLOWUP] Persistent intent header on canvas
-**What:** Editable intent header pinned above the toolbar. Click-to-edit inline. Survives graph replacement. Persisted to session JSON as `intent: string | null`.
-**Why:** The moat. Vision-design coherence visible at all times past the review screen.
-**Context:** Deferred from 2026-04-13 ship per Codex review. Requires: Toolbar height reflow, session load/save updates, store slice for intent, graph-replace interaction. Ship as follow-up PR to vision-to-intent.
-**Effort:** S-M (human: 1-2 hrs, CC: 30 min)
-**Priority:** P1
-**Depends on:** V2I translator shipped (2026-04-13 night).
-
-### [V2I-FOLLOWUP] Per-item confidence reveal panel
-**What:** "What did you see?" collapsible showing each extracted component with its confidence level + reasoning for low-confidence items.
-**Why:** Trust-builder for non-technical founders. Makes the AI honest about what it guessed vs what it was sure of.
-**Effort:** S (~20 min with CC)
-**Priority:** P2
-**Depends on:** V2I translator shipped; describe-intent endpoint returns per-item confidence.
-
-### [V2I-FOLLOWUP] Drag-and-drop image support on unified input
-**What:** Drop an image file onto the landing input zone.
-**Why:** ~1/3 of users try it before paste/upload. Easy delight.
-**Effort:** S (~15 min with CC)
-**Priority:** P2
-**Depends on:** V2I translator shipped.
-
-### [V2I-FOLLOWUP] "Regenerate spec from intent" button in review mode
-**What:** Button in review mode that re-calls describe-intent with only the edited intent text to re-derive the systemSpec.
-**Why:** Reduces retyping friction when user substantially edits the intent.
-**Effort:** S (~30 min with CC — needs endpoint to accept text-only re-derivation)
-**Priority:** P2
-**Depends on:** V2I translator shipped.
+- [x] **Persistent intent header on canvas** — editable, click-to-edit, survives `replaceGraph`, persists to SessionFile, cleared on template load
+- [x] **Per-item confidence reveal panel** — collapsible "What did we see?" with low/med/high per-item
+- [x] **Drag-and-drop image support** — drop zone with live overlay, accepts PNG/JPEG/WebP
+- [x] **Re-derive from intent** — button on review screen re-calls describe-intent with edited intent text; refreshes components + connections
+- [x] **Full E2E matrix** — 9 new specs in `e2e/vision-to-intent-followup.spec.ts`
 
 ### [V2I-FOLLOWUP] /design-review on live review mode screen
 **What:** Run /design-review on the rendered review mode within 24h of shipping.

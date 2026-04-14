@@ -227,3 +227,6 @@ npx playwright install chromium
 
 ## Plans
 ~/.gstack/projects/T-98-systemsim/ceo-plans/
+
+## Good user prompts
+I want to build a highly secure homelab setup with a bastion server on a vps that runs a caddy reverse proxy. That should connect to a local lab caddy reverse proxy that handles network traffic for all the homelab systems. The homelab ssytems consist of grimmory, jellyfin, and a wnrn music server, all running in rootless podman containers. We need a mTLS connection between the caddy proxies with a certificate sync script in the lab, a vpn connection between the bastion and the homelab, local dns serving on the homelab using a bare metal dnsmasq (the caddy proxy in the homelab is also running on baremetal), and there is a wireguard vpn from the home lab to a separate mobile device. 
