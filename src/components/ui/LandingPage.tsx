@@ -1,7 +1,7 @@
 import { useStore } from '../../store';
 import { DISCORD_BRIEF, DISCORD_TRAFFIC_PROFILE, DISCORD_DEFAULT_FUNCTIONAL_REQS, DISCORD_DEFAULT_NFRS, DISCORD_SCENARIO_ID } from '../../scenarios/discord';
 import TemplatePicker from './TemplatePicker';
-import TextToDiagram from './TextToDiagram';
+import UnifiedInput from './UnifiedInput';
 import type { ComponentType, CanonicalGraph } from '../../types';
 
 const TEXT_TO_DIAGRAM_ENABLED = import.meta.env.VITE_ENABLE_TEXT_TO_DIAGRAM === 'true';
@@ -123,7 +123,7 @@ export default function LandingPage() {
         {/* Text-to-diagram */}
         <div className="mb-10 animate-fade-in-1">
           {TEXT_TO_DIAGRAM_ENABLED ? (
-            <TextToDiagram />
+            <UnifiedInput />
           ) : (
             <>
               <div className="flex items-center gap-2 mb-2">

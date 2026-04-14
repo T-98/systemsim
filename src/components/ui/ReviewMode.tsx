@@ -1,0 +1,477 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useStore } from '../../store';
+import { aggregateConfidence } from '../../ai/describeIntentSchema';
+import { parseConnections, buildCanonicalGraph } from '../../ai/parseConnections';
+
+const COMPONENT_TYPE_LABELS: Record<string, string> = {
+  load_balancer: 'load balancer',
+  server: 'server',
+  database: 'database',
+  cache: 'cache',
+  queue: 'queue',
+  fanout: 'fanout',
+};
+
+export default function ReviewMode() {
+  const reviewState = useStore((s) => s.reviewState);
+  const setReviewState = useStore((s) => s.setReviewState);
+  const setAppView = useStore((s) => s.setAppView);
+  const replaceGraph = useStore((s) => s.replaceGraph);
+
+  const [intent, setIntent] = useState(reviewState?.data.intent ?? '');
+  const [connections, setConnections] = useState(reviewState?.data.connections ?? '');
+
+  const sourceLabel = useMemo(() => {
+    if (!reviewState) return '';
+    if (reviewState.sourceInput.image) {
+      return `← from ${reviewState.sourceInput.image.filename}`;
+    }
+    return '← from your description';
+  }, [reviewState]);
+
+  const confidence = useMemo(
+    () => (reviewState ? aggregateConfidence(reviewState.data) : 'high'),
+    [reviewState]
+  );
+
+  const parseResult = useMemo(() => {
+    if (!reviewState) return null;
+    return parseConnections(connections, reviewState.data.components);
+  }, [connections, reviewState]);
+
+  const hasBlockingErrors = !!parseResult?.errors.some(
+    (e) => e.reason !== 'self_loop'
+  );
+  const canGenerate =
+    !!reviewState &&
+    !!parseResult &&
+    parseResult.edges.length > 0 &&
+    !hasBlockingErrors;
+
+  const handleBack = useCallback(() => {
+    setAppView('landing');
+  }, [setAppView]);
+
+  const handleGenerate = useCallback(() => {
+    if (!canGenerate || !reviewState || !parseResult) return;
+    const graph = buildCanonicalGraph(reviewState.data.components, parseResult.edges);
+    replaceGraph(graph, { layout: 'auto' });
+    setReviewState(null);
+    setAppView('canvas');
+  }, [canGenerate, reviewState, parseResult, replaceGraph, setReviewState, setAppView]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleBack();
+        return;
+      }
+      const isMac = typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('mac');
+      const submitModifier = isMac ? e.metaKey : e.ctrlKey;
+      if (submitModifier && e.key === 'Enter' && canGenerate) {
+        e.preventDefault();
+        handleGenerate();
+      }
+    },
+    [canGenerate, handleBack, handleGenerate]
+  );
+
+  useEffect(() => {
+    if (!reviewState) return;
+    setIntent(reviewState.data.intent);
+    setConnections(reviewState.data.connections);
+  }, [reviewState]);
+
+  if (!reviewState) {
+    return (
+      <div
+        className="flex items-center justify-center w-screen h-screen"
+        style={{ background: 'var(--bg-secondary)' }}
+      >
+        <p style={{ color: 'var(--text-tertiary)', fontSize: 14 }}>Loading review…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="w-screen h-screen overflow-y-auto"
+      style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+    >
+      <div
+        className="sticky top-0 z-10 flex items-center justify-between"
+        style={{
+          background: 'var(--bg-nav)',
+          borderBottom: '1px solid var(--border-color)',
+          padding: '12px 24px',
+          backdropFilter: 'saturate(180%) blur(20px)',
+          WebkitBackdropFilter: 'saturate(180%) blur(20px)',
+        }}
+      >
+        <button
+          type="button"
+          onClick={handleBack}
+          className="transition-colors"
+          style={{
+            color: 'var(--accent-link)',
+            fontSize: 14,
+            letterSpacing: '-0.224px',
+            background: 'transparent',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.textDecoration = 'underline';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.textDecoration = 'none';
+          }}
+        >
+          ← Back
+        </button>
+        <span
+          style={{
+            fontSize: 15,
+            fontWeight: 600,
+            letterSpacing: '-0.32px',
+            color: 'var(--text-primary)',
+          }}
+        >
+          SystemSim
+        </span>
+        <button
+          type="button"
+          onClick={handleGenerate}
+          disabled={!canGenerate}
+          title={
+            !canGenerate
+              ? hasBlockingErrors
+                ? 'Fix connection errors before generating'
+                : 'Add at least one connection to generate'
+              : undefined
+          }
+          className="rounded-lg font-medium transition-all disabled:opacity-30"
+          style={{
+            padding: '8px 16px',
+            fontSize: 14,
+            letterSpacing: '-0.224px',
+            background: 'var(--accent)',
+            color: 'var(--text-on-accent)',
+          }}
+        >
+          Generate diagram
+        </button>
+      </div>
+
+      <main
+        className="mx-auto"
+        style={{
+          maxWidth: 720,
+          padding: '48px 24px 64px',
+        }}
+      >
+        <p
+          style={{
+            fontSize: 12,
+            color: 'var(--text-tertiary)',
+            letterSpacing: '-0.12px',
+            marginBottom: 24,
+          }}
+        >
+          {sourceLabel}
+        </p>
+
+        <section>
+          <h2
+            style={{
+              fontSize: 24,
+              fontWeight: 600,
+              letterSpacing: '-0.5px',
+              color: 'var(--text-primary)',
+              marginBottom: 10,
+            }}
+          >
+            What you are building
+          </h2>
+          <textarea
+            value={intent}
+            onChange={(e) => setIntent(e.target.value)}
+            onKeyDown={handleKeyDown}
+            aria-label="What you are building"
+            placeholder="Describe what you're building."
+            rows={4}
+            style={{
+              width: '100%',
+              fontSize: 14,
+              lineHeight: 1.5,
+              letterSpacing: '-0.224px',
+              padding: '14px 16px',
+              borderRadius: 8,
+              border: '1px solid var(--border-color)',
+              background: 'var(--bg-tertiary)',
+              color: 'var(--text-primary)',
+              resize: 'vertical',
+              outline: 'none',
+              fontFamily: 'inherit',
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = 'var(--accent)';
+              e.currentTarget.style.boxShadow = '0 0 0 2px var(--accent-ring)';
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = 'var(--border-color)';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
+          />
+        </section>
+
+        <section style={{ marginTop: 32 }}>
+          <h2
+            style={{
+              fontSize: 24,
+              fontWeight: 600,
+              letterSpacing: '-0.5px',
+              color: 'var(--text-primary)',
+              marginBottom: 10,
+            }}
+          >
+            Components detected
+          </h2>
+          <p
+            style={{
+              fontSize: 13,
+              color: 'var(--text-tertiary)',
+              letterSpacing: '-0.224px',
+              marginBottom: 12,
+            }}
+          >
+            {reviewState.data.components.length} component{reviewState.data.components.length === 1 ? '' : 's'} read from your {reviewState.sourceInput.image ? 'diagram' : 'description'}.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {reviewState.data.components.map((c, i) => {
+              const unused = parseResult?.unusedComponents.some(
+                (u) => u.label === c.label && u.type === c.type
+              );
+              return (
+                <div
+                  key={`${c.type}-${i}`}
+                  className="inline-flex items-baseline gap-1.5 rounded"
+                  title={unused ? 'Not referenced in any connection below' : undefined}
+                  style={{
+                    background: 'var(--bg-tertiary)',
+                    border: `1px solid ${unused ? 'rgba(255,159,10,0.35)' : 'var(--border-color)'}`,
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 13,
+                      color: 'var(--text-primary)',
+                      letterSpacing: '-0.224px',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {c.label}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--text-tertiary)',
+                      letterSpacing: '-0.12px',
+                    }}
+                  >
+                    {COMPONENT_TYPE_LABELS[c.type] ?? c.type}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section style={{ marginTop: 32 }}>
+          <h2
+            style={{
+              fontSize: 24,
+              fontWeight: 600,
+              letterSpacing: '-0.5px',
+              color: 'var(--text-primary)',
+              marginBottom: 6,
+            }}
+          >
+            Connections
+          </h2>
+          <p
+            style={{
+              fontSize: 13,
+              color: 'var(--text-tertiary)',
+              letterSpacing: '-0.224px',
+              marginBottom: 10,
+            }}
+          >
+            One per line. Format:{' '}
+            <code style={{ fontSize: 12, fontFamily: 'SF Mono, Menlo, monospace', color: 'var(--text-secondary)' }}>
+              source --&gt; target
+            </code>{' '}
+            or{' '}
+            <code style={{ fontSize: 12, fontFamily: 'SF Mono, Menlo, monospace', color: 'var(--text-secondary)' }}>
+              source --label--&gt; target
+            </code>
+            . Fix any wrong arrows before generating.
+          </p>
+          <textarea
+            value={connections}
+            onChange={(e) => setConnections(e.target.value)}
+            onKeyDown={handleKeyDown}
+            aria-label="Connections"
+            placeholder="user uploads video --> raw video
+raw video --extracted audio--> STT"
+            rows={12}
+            spellCheck={false}
+            style={{
+              width: '100%',
+              fontSize: 13,
+              lineHeight: 1.65,
+              letterSpacing: '-0.12px',
+              padding: '14px 16px',
+              borderRadius: 8,
+              border: '1px solid var(--border-color)',
+              background: 'var(--bg-tertiary)',
+              color: 'var(--text-primary)',
+              resize: 'vertical',
+              outline: 'none',
+              fontFamily: 'SF Mono, Menlo, Consolas, monospace',
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.borderColor = 'var(--accent)';
+              e.currentTarget.style.boxShadow = '0 0 0 2px var(--accent-ring)';
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.borderColor = 'var(--border-color)';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
+          />
+          <div
+            aria-live="polite"
+            style={{
+              fontSize: 12,
+              color: 'var(--text-tertiary)',
+              letterSpacing: '-0.12px',
+              marginTop: 8,
+            }}
+          >
+            {parseResult && (
+              <>
+                {parseResult.edges.length} connection{parseResult.edges.length === 1 ? '' : 's'} ready
+                {parseResult.unusedComponents.length > 0 && (
+                  <>
+                    {' · '}
+                    {parseResult.unusedComponents.length} component
+                    {parseResult.unusedComponents.length === 1 ? '' : 's'} unreferenced
+                  </>
+                )}
+              </>
+            )}
+          </div>
+
+          {parseResult && parseResult.errors.length > 0 && (
+            <div
+              role="alert"
+              className="mt-3 rounded-lg"
+              style={{
+                background: 'rgba(255,69,58,0.08)',
+                border: '1px solid rgba(255,69,58,0.2)',
+                padding: '12px 14px',
+              }}
+            >
+              <p
+                style={{
+                  fontSize: 13,
+                  color: '#ff453a',
+                  letterSpacing: '-0.224px',
+                  fontWeight: 500,
+                  marginBottom: 6,
+                }}
+              >
+                {parseResult.errors.length} connection{parseResult.errors.length === 1 ? ' needs' : 's need'} fixing
+              </p>
+              <ul style={{ fontSize: 12, color: 'var(--text-secondary)', letterSpacing: '-0.12px', lineHeight: 1.55 }}>
+                {parseResult.errors.slice(0, 6).map((err, i) => (
+                  <li key={i}>
+                    <strong>Line {err.lineNumber}:</strong> {err.hint ?? err.reason}
+                    {err.line && (
+                      <>
+                        {' — '}
+                        <code
+                          style={{
+                            fontFamily: 'SF Mono, Menlo, monospace',
+                            fontSize: 11,
+                            color: 'var(--text-tertiary)',
+                          }}
+                        >
+                          {err.line}
+                        </code>
+                      </>
+                    )}
+                  </li>
+                ))}
+                {parseResult.errors.length > 6 && (
+                  <li>…and {parseResult.errors.length - 6} more.</li>
+                )}
+              </ul>
+            </div>
+          )}
+        </section>
+
+        {confidence === 'low' && (
+          <div
+            className="mt-4 rounded-lg"
+            role="alert"
+            style={{
+              background: 'rgba(255,159,10,0.08)',
+              border: '1px solid rgba(255,159,10,0.2)',
+              padding: '12px 14px',
+              display: 'flex',
+              gap: 10,
+              alignItems: 'flex-start',
+            }}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 2 }}
+            >
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', letterSpacing: '-0.224px', lineHeight: 1.5 }}>
+              Some parts of your diagram were unclear. Review carefully before generating.
+            </p>
+          </div>
+        )}
+
+        <p
+          style={{
+            fontSize: 13,
+            color: 'var(--text-tertiary)',
+            letterSpacing: '-0.224px',
+            marginTop: 16,
+          }}
+        >
+          Make any final changes before generating the diagram. {navigatorIsMac() ? 'Cmd' : 'Ctrl'}+Enter to generate.
+        </p>
+      </main>
+    </div>
+  );
+}
+
+function navigatorIsMac(): boolean {
+  if (typeof navigator === 'undefined') return true;
+  return navigator.platform.toLowerCase().includes('mac');
+}

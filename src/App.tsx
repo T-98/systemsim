@@ -10,6 +10,8 @@ import Toolbar from './components/ui/Toolbar';
 import LiveLog from './components/panels/LiveLog';
 import DebriefPanel from './components/debrief/DebriefPanel';
 import HintCard from './components/ui/HintCard';
+import ReviewMode from './components/ui/ReviewMode';
+import DesktopOnlyNotice from './components/ui/DesktopOnlyNotice';
 
 export default function App() {
   const appView = useStore((s) => s.appView);
@@ -17,7 +19,21 @@ export default function App() {
   const appMode = useStore((s) => s.appMode);
 
   if (appView === 'landing') {
-    return <LandingPage />;
+    return (
+      <>
+        <DesktopOnlyNotice />
+        <LandingPage />
+      </>
+    );
+  }
+
+  if (appView === 'review') {
+    return (
+      <>
+        <DesktopOnlyNotice />
+        <ReviewMode />
+      </>
+    );
   }
 
   if (appView === 'design') {
