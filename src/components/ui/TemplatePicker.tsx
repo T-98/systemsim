@@ -98,7 +98,7 @@ export default function TemplatePicker() {
               e.currentTarget.style.boxShadow = 'none';
             }}
           >
-            <h4
+            <h3
               className="font-semibold mb-1.5"
               style={{ fontSize: '15px', color: 'var(--text-primary)', letterSpacing: '-0.224px' }}
             >
@@ -106,7 +106,7 @@ export default function TemplatePicker() {
               {loadingId === tpl.id && (
                 <span className="ml-2 inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
               )}
-            </h4>
+            </h3>
             <p
               className="mb-3"
               style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}

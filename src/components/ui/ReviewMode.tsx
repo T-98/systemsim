@@ -26,12 +26,15 @@ export default function ReviewMode() {
   const [rederiving, setRederiving] = useState(false);
   const [rederiveError, setRederiveError] = useState<string | null>(null);
 
-  const sourceLabel = useMemo(() => {
-    if (!reviewState) return '';
+  const source = useMemo(() => {
+    if (!reviewState) return null;
     if (reviewState.sourceInput.image) {
-      return `← from ${reviewState.sourceInput.image.filename}`;
+      return { kind: 'image' as const, filename: reviewState.sourceInput.image.filename };
     }
-    return '← from your description';
+    if (reviewState.sourceInput.text) {
+      return { kind: 'text' as const, preview: reviewState.sourceInput.text.trim() };
+    }
+    return null;
   }, [reviewState]);
 
   const confidence = useMemo(
@@ -182,13 +185,15 @@ export default function ReviewMode() {
                 : 'Add at least one connection to generate'
               : undefined
           }
-          className="rounded-lg font-medium transition-all disabled:opacity-30"
+          className="rounded-lg font-medium transition-all"
           style={{
             padding: '8px 16px',
             fontSize: 14,
             letterSpacing: '-0.224px',
-            background: 'var(--accent)',
-            color: 'var(--text-on-accent)',
+            background: canGenerate ? 'var(--accent)' : 'var(--bg-card)',
+            color: canGenerate ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
+            border: canGenerate ? 'none' : '1px solid var(--border-color)',
+            cursor: canGenerate ? 'pointer' : 'not-allowed',
           }}
         >
           Generate diagram
@@ -202,16 +207,74 @@ export default function ReviewMode() {
           padding: '48px 24px 64px',
         }}
       >
-        <p
-          style={{
-            fontSize: 12,
-            color: 'var(--text-tertiary)',
-            letterSpacing: '-0.12px',
-            marginBottom: 24,
-          }}
-        >
-          {sourceLabel}
-        </p>
+        {source && (
+          <div
+            className="inline-flex items-center gap-2 rounded"
+            style={{
+              background: 'var(--bg-tertiary)',
+              border: '1px solid var(--border-color)',
+              padding: '5px 10px',
+              marginBottom: 24,
+              maxWidth: '100%',
+            }}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ color: 'var(--text-tertiary)', flexShrink: 0 }}
+              aria-hidden="true"
+            >
+              {source.kind === 'image' ? (
+                <>
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </>
+              ) : (
+                <>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="9" y1="13" x2="15" y2="13" />
+                  <line x1="9" y1="17" x2="13" y2="17" />
+                </>
+              )}
+            </svg>
+            <span
+              style={{
+                fontSize: 12,
+                color: 'var(--text-tertiary)',
+                letterSpacing: '-0.12px',
+                textTransform: 'uppercase',
+                fontWeight: 500,
+              }}
+            >
+              from
+            </span>
+            <span
+              className="truncate"
+              style={{
+                fontSize: 13,
+                color: 'var(--text-secondary)',
+                letterSpacing: '-0.224px',
+                fontFamily: source.kind === 'image' ? 'SF Mono, Menlo, monospace' : 'inherit',
+                maxWidth: 480,
+              }}
+              title={source.kind === 'image' ? source.filename : source.preview}
+            >
+              {source.kind === 'image'
+                ? source.filename
+                : source.preview.length > 80
+                  ? source.preview.slice(0, 80) + '…'
+                  : source.preview || 'your description'}
+            </span>
+          </div>
+        )}
 
         <section>
           <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>

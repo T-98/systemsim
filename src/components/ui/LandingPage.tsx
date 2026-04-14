@@ -169,12 +169,12 @@ export default function LandingPage() {
 
         {/* Templates (Phase 1 primary) */}
         <div className="mb-10 animate-fade-in-1">
-          <p
-            className="mb-4"
+          <h2
+            className="mb-4 font-normal"
             style={{ fontSize: '14px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
           >
             Or start from a template
-          </p>
+          </h2>
           <TemplatePicker />
         </div>
 
@@ -201,12 +201,12 @@ export default function LandingPage() {
                 Guided Scenario
               </span>
             </div>
-            <h4
+            <h3
               className="font-semibold mb-1"
               style={{ fontSize: '14px', color: 'var(--text-primary)', letterSpacing: '-0.224px' }}
             >
               {DISCORD_BRIEF.title}
-            </h4>
+            </h3>
             <p
               style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}
             >
