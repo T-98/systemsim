@@ -24,40 +24,11 @@ The followup PR landed the features below on top of the translator:
 - [x] **Re-derive from intent** — button on review screen re-calls describe-intent with edited intent text; refreshes components + connections
 - [x] **Full E2E matrix** — 9 new specs in `e2e/vision-to-intent-followup.spec.ts`
 
-### [V2I-FOLLOWUP] /design-review on live review mode screen
-**What:** Run /design-review on the rendered review mode within 24h of shipping.
-**Why:** Review mode is the bankrupt-and-fired risk surface. Post-ship rendered audit catches visual issues the CEO review spec couldn't.
-**Effort:** S
-**Priority:** P1
-**Depends on:** V2I translator shipped.
+### [V2I-FOLLOWUP] Remaining — needs human in the loop
 
-### [V2I-FOLLOWUP] /devex-review boomerang (TTHW measurement)
-**What:** Run `/devex-review` on the live vision-to-intent flow after 2 weeks of customer use. Measures real TTHW vs planned 90s, error rates, abandonment points.
-**Why:** Closes the loop. Plan said 90s — did reality match? Surfaces friction points the plan missed.
-**Effort:** S (~30 min)
-**Priority:** P2
-**Depends on:** V2I translator shipped + 2 weeks of customer use.
-
-### [V2I-FOLLOWUP] Formalize DESIGN.md via /design-consultation
-**What:** Run `/design-consultation` to extract the implicit design system from `src/index.css` into a documented DESIGN.md (tokens, typography, spacing scale, voice/tone rules, component conventions).
-**Why:** Future design reviews and PRs need a stated source of truth. The codebase IS the system today, but a formal doc unblocks onboarding, enables /design-review to score against named principles, and prevents drift.
-**Effort:** S (~30 min)
-**Priority:** P2
-**Depends on:** V2I translator shipped (so the new components are part of the system being documented).
-
-### [V2I-FOLLOWUP] Prompt eval suite for describe-intent
-**What:** Curated inputs (5 prose, 5 images across Miro/Figma/Excalidraw) + expected output shape + quality scoring rubric. Run on every prompt change.
-**Why:** Catches prompt drift. Without it, we'll regress silently when we tweak the system prompt.
-**Effort:** M (~1 hr curation + ~30 min scaffolding with CC)
-**Priority:** P1
-**Depends on:** V2I translator shipped.
-
-### [V2I-FOLLOWUP] Full E2E matrix
-**What:** Playwright coverage for all input modes (text, image, paste, drag-drop) × review actions (edit intent, edit spec, regenerate, back, generate).
-**Why:** Tonight's ship has 2 happy-path E2E only. Full matrix catches regressions during follow-up work.
-**Effort:** S (~30 min with CC)
-**Priority:** P2
-**Depends on:** V2I translator shipped + V2I-FOLLOWUP features landed (so the matrix is stable).
+- [ ] **Run `/design-review` on the live app.** Interactive skill, spins up the dev server, screenshots, scores against AI-slop blacklist. Recommended within 24h of shipping. Effort: ~20 min with you driving.
+- [ ] **Prompt eval suite — curate real inputs.** Harness + scoring rubric already shipped in `evals/describe-intent/`. Needs you to drop 5-10 real Miro/Figma/Excalidraw screenshots + matching `*.expected.json` under `evals/describe-intent/fixtures/`. Priority cases: the Nisa video pipeline screenshot that exposed the arrow-direction bug, a text-only founder interview sample, a hand-drawn Excalidraw sketch. Effort: ~1 hr curation. See `evals/README.md`.
+- [ ] **`/devex-review` boomerang** — measures TTHW vs planned 90s on the live app. Blocked on ~2 weeks of real customer usage.
 
 ---
 

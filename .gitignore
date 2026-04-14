@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 .gstack/
 .vercel
+
+# Eval runner outputs (raw Anthropic responses, per-run)
+evals/**/.evals-output/
