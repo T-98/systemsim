@@ -147,6 +147,33 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Rejected:** Reset everything including crashed (loses crash context). Reset only `rps` (leaves `p99` / CPU stale on quiet ticks — Codex caught this). Historical metrics like `queueDepth` are accumulators and intentionally not reset.
 - **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `tick()` reset loop.
 
+### 12d. Retry storms use previous-tick errorRate + same-tick bundling
+
+- **When:** SIMFID Phase 3.2 (2026-04-16)
+- **Context:** CEO plan §2.6 calls for `round N = round(N-1) × errorRate` geometric retry amplification. Open question: how to model retry timing in a 1-second tick engine?
+- **Decision:** New [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts). Retry config lives on the **upstream** component (`config.retryPolicy = { maxRetries, backoffMs?, backoffMultiplier? }`). `WireState` gains `lastObservedErrorRate: number`, updated after each forward. In `forwardOverWire`, if upstream has a retry policy, amplification factor = `1 + e + e² + … + e^maxRetries` using **previous tick's** `lastObservedErrorRate` (not this tick's). All retry waves bundle into the same tick's RPS to the downstream.
+- **Why:** We can't observe errorRate until after the downstream processes the request — can't retry within the same tick's processComponent call without re-entry. Using previous-tick observation matches the one-tick propagation delay planned for backpressure (3.3), is deterministic, and captures the "your DB is taking 3× nominal because of retry storms" capacity impact that's the whole point. Tick-0 has no history so amplification = 1 (no retry).
+- **Rejected:** Multi-pass within same tick (target metrics overwritten each call, loses aggregate). Spreading retries across ticks (matches reality but the model would diverge for maxRetries > tick duration). Per-request retry queue (full discrete-event simulator; overkill).
+- **Known side benefit:** `wire.lastObservedErrorRate` is **per-wire**, closing the multi-inbound breaker observability limitation from 3.1. Future refactor can also feed this into the breaker's failure signal for per-wire semantics.
+- **Source:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts), [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire` retry branch, `WireState.lastObservedErrorRate`.
+
+### 12e. Retry suppression during HALF_OPEN + stale-signal reset on OPEN→HALF_OPEN
+
+- **When:** SIMFID Phase 3.2, Codex review fix (2026-04-16)
+- **Context:** Initial 3.2 implementation had two bugs: (1) retry amplification still fired when the breaker was HALF_OPEN — a probe tick would get slammed with stale-error amplification, guaranteeing re-OPEN; (2) if a wire's `lastObservedErrorRate` was 0.8 when the breaker tripped, that value persisted through the cooldown and the first HALF_OPEN probe would amplify 3× based on 20s-old data.
+- **Decision:** (1) `forwardOverWire` skips retry amplification when `wire.breaker.status === 'half_open'`. (2) When `evaluateBreakers` transitions OPEN→HALF_OPEN, also reset `wire.lastObservedErrorRate = 0` so the probe forwards at nominal RPS.
+- **Why:** HALF_OPEN semantic is "send a small test request, don't overwhelm the recovering downstream." Amplifying defeats the purpose. Resetting the error signal on transition prevents stale data from polluting the recovery attempt.
+- **Rejected:** Decay `lastObservedErrorRate` over idle ticks (more complex, harder to reason about). Keep amplifying but reduce by some factor during HALF_OPEN (still wrong — any amplification at all on a probe can re-open the breaker).
+- **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire` `breakerHalfOpen` check + `evaluateBreakers` OPEN→HALF_OPEN reset.
+
+### 12f. readRetryPolicy rejects Infinity / NaN / fractional maxRetries
+
+- **When:** SIMFID Phase 3.2, Codex review fix (2026-04-16)
+- **Context:** Original `readRetryPolicy` accepted any positive number for `maxRetries`. `Infinity` would hang `computeAmplification`'s for-loop. Fractional values gave nonsense retry counts.
+- **Decision:** Validate `maxRetries` with `Number.isFinite(n) && Number.isInteger(n) && n > 0`. Reject arrays, null, functions. Also validate `backoffMs` / `backoffMultiplier` for finiteness.
+- **Why:** Defensive parsing at system boundaries (config is user-editable). An Infinity would freeze the simulation.
+- **Source:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts) `readRetryPolicy`.
+
 ### 12. Saturation callouts fire without upper bound on ρ
 
 - **When:** SIMFID Phase 3, Codex review fix (2026-04-16)

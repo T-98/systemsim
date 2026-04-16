@@ -676,6 +676,31 @@ M/M/1-per-instance approximation via Little's Law. See [Decisions.md #6](Decisio
 - `networkAwareCacheLatency(cacheSizeMb, ttlSeconds)`
     → `{ p50, p99 }`
 
+#### `RetryPolicy`
+
+**File:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts)
+
+Retry storm modeling. Upstream components opt-in via `config.retryPolicy`.
+
+**Types:**
+- `RetryPolicy` — `{ maxRetries: number, backoffMs?: number, backoffMultiplier?: number }`
+
+**Exports:**
+- `computeAmplification(errorRate: number, policy: RetryPolicy): number` — geometric sum `1 + e + e² + … + e^maxRetries`; returns 1.0 when errorRate = 0 or maxRetries = 0; clamps errorRate to [0, 1]
+- `readRetryPolicy(config: Record<string, unknown>): RetryPolicy | undefined` — parses `config.retryPolicy`, returns undefined on missing/malformed/maxRetries<=0
+
+**Engine integration** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
+- `WireState.lastObservedErrorRate: number` — updated after every forwardOverWire call; consumed by next tick's retry amplification
+- `forwardOverWire` reads the source's retry policy, computes amplification from `wire.lastObservedErrorRate`, forwards `rps × amplification`, then records `target.metrics.errorRate` for the next tick
+- One-shot callout emits to live log when amplification ≥ 1.5×
+
+**Config example** (on any component that forwards to a downstream):
+```ts
+{ ...existingConfig, retryPolicy: { maxRetries: 3, backoffMs: 100, backoffMultiplier: 2 } }
+```
+
+`backoffMs` and `backoffMultiplier` are display-only fields in 3.2; the same-tick bundling model doesn't delay ticks by backoff.
+
 #### `CircuitBreaker`
 
 **File:** [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts)

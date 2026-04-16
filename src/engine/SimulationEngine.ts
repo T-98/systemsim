@@ -43,6 +43,7 @@ import {
   makeBreakerState,
   resolveBreakerConfig,
 } from './CircuitBreaker';
+import { computeAmplification, readRetryPolicy } from './RetryPolicy';
 
 interface ComponentState {
   id: string;
@@ -73,6 +74,13 @@ interface WireState {
   breaker?: CircuitBreakerState;
   /** Resolved breaker config (with defaults applied). Present iff breaker present. */
   breakerConfig?: CircuitBreakerConfig;
+  /**
+   * Downstream errorRate observed after the most recent forward. Used by the
+   * NEXT tick's retry amplification (3.2) and — in the future — backpressure
+   * (3.3) so they can read the previous tick's outcome without peeking at
+   * the aggregate target.metrics.errorRate mid-tick.
+   */
+  lastObservedErrorRate: number;
 }
 
 // Seeded PRNG (mulberry32) for reproducible simulations in tests
@@ -165,6 +173,7 @@ export class SimulationEngine {
         currentRps: 0,
         breaker: hasBreaker ? makeBreakerState() : undefined,
         breakerConfig: hasBreaker ? resolveBreakerConfig(cfg.circuitBreaker) : undefined,
+        lastObservedErrorRate: 0,
       });
 
       if (!this.adjacency.has(edge.source)) this.adjacency.set(edge.source, []);
@@ -412,15 +421,60 @@ export class SimulationEngine {
     if (wire?.breaker?.status === 'open') {
       return; // fail fast: circuit open, drop at the source
     }
+
+    // Retry amplification: if the source has a retry policy and the downstream
+    // was erroring last tick, amplify the effective RPS by the geometric sum
+    // of the retry waves (1 + e + e² + … + e^maxRetries). This is how
+    // real retry storms inflate load on an already-struggling downstream.
+    //
+    // Using previous-tick errorRate avoids needing multiple recursion passes
+    // per tick and matches the one-tick propagation delay backpressure (3.3)
+    // will also use.
+    //
+    // HALF_OPEN exception: the whole point of HALF_OPEN is to send a small
+    // probe, not a replayed storm. Amplifying on a recovering downstream
+    // would slam it with stale errors and guarantee re-open. Skip retries
+    // during HALF_OPEN.
+    let effectiveRps = rps;
+    let amplification = 1;
+    const sourceState = this.components.get(sourceId);
+    const retryPolicy = sourceState ? readRetryPolicy(sourceState.config) : undefined;
+    const breakerHalfOpen = wire?.breaker?.status === 'half_open';
+    if (retryPolicy && wire && rps > 0 && wire.lastObservedErrorRate > 0 && !breakerHalfOpen) {
+      amplification = computeAmplification(wire.lastObservedErrorRate, retryPolicy);
+      effectiveRps = rps * amplification;
+    }
+
     // Record that this wire actually served traffic this tick. HALF_OPEN
     // recovery requires at least one real probe to succeed, not just the
     // absence of failure. Without this, a quiet tick would silently be
     // counted as success and recover the breaker without validation.
-    if (wire?.breaker && rps > 0) {
+    if (wire?.breaker && effectiveRps > 0) {
       wire.breaker.hadTrafficThisTick = true;
     }
+
     const wireLatency = this.getWireLatency(sourceId, targetId);
-    this.processComponent(targetId, rps, logs, accumulatedLatencyMs + wireLatency);
+    this.processComponent(targetId, effectiveRps, logs, accumulatedLatencyMs + wireLatency);
+
+    // Observe post-recursion errorRate for the next tick's retry decision.
+    // Multi-inbound caveat: this is the target's AGGREGATE errorRate after
+    // everyone's traffic, not this wire's slice. Close enough for the retry
+    // signal; good enough that steady-state stabilizes within a couple ticks.
+    if (wire) {
+      const target = this.components.get(targetId);
+      wire.lastObservedErrorRate = target?.metrics.errorRate ?? 0;
+    }
+
+    // One-shot callout when amplification crosses a meaningful threshold,
+    // so the user sees the retry storm in the live log.
+    if (amplification >= 1.5 && wire) {
+      this.fireCallout(
+        logs,
+        sourceId,
+        `retry-storm:${targetId}`,
+        `${sourceId} → ${targetId}: retry storm amplifying load ${amplification.toFixed(1)}× at t=${Math.round(this.time)}s (downstream errorRate=${(wire.lastObservedErrorRate * 100).toFixed(0)}%)`,
+      );
+    }
   }
 
   /**
@@ -451,6 +505,13 @@ export class SimulationEngine {
         };
         this.calloutEntries.add(entry);
         logs.push(entry);
+
+        // On OPEN → HALF_OPEN, clear the stale error signal. The downstream
+        // may have recovered during cooldown, and we don't want the probe
+        // request to trigger retry amplification based on an old failure.
+        if (transition.from === 'open' && transition.to === 'half_open') {
+          wire.lastObservedErrorRate = 0;
+        }
       }
     }
   }

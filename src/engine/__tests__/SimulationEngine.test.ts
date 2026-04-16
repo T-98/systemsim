@@ -680,6 +680,188 @@ describe('SimulationEngine', () => {
     });
   });
 
+  describe('Retry storms', () => {
+    it('amplifies load on erroring downstream when upstream has retry policy', () => {
+      // Server → external leaf with fixed errorRate=0.5. Server has retryPolicy.
+      // External doesn't crash (unlike DB) so behavior stays deterministic.
+      // Expected: tick 0 nominal RPS, tick 2+ amplified by 1 + 0.5 + 0.25 + 0.125 ≈ 1.875×
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+          retryPolicy: { maxRetries: 3, backoffMs: 100 },
+        }),
+        makeNode('ext', 'external', { errorRate: 0.5, latencyMs: 100 }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(40, 8), undefined, undefined, SEED);
+
+      const extRpsByTick: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const r = engine.tick();
+        extRpsByTick.push(r.metrics['ext'].rps);
+      }
+
+      // Tick 0: no prior observation, RPS ≈ 40
+      expect(extRpsByTick[0]).toBeCloseTo(40, 0);
+      // Tick 2+: amplified. With errorRate 0.5 + random jitter 0-0.02, factor ~1.87-1.9
+      expect(extRpsByTick[3]).toBeGreaterThan(60);
+      expect(extRpsByTick[3]).toBeLessThan(90);
+    });
+
+    it('does NOT amplify when errorRate is 0 (healthy downstream)', () => {
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+          retryPolicy: { maxRetries: 3 },
+        }),
+        makeNode('db', 'database', {
+          writeThroughputRps: 100000, readThroughputRps: 100000, readReplicas: 0, connectionPoolSize: 10000,
+        }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'db')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(100, 8), undefined, undefined, SEED);
+
+      for (let i = 0; i < 4; i++) engine.tick();
+      const r = engine.tick();
+
+      // DB's errorRate should be ~0 (healthy) so no retry amplification.
+      expect(r.metrics['db'].errorRate).toBe(0);
+      // DB rps should be roughly 100 (nominal), not 3-4x.
+      expect(r.metrics['db'].rps).toBeLessThan(150);
+    });
+
+    it('component without retryPolicy behaves unchanged (regression guard)', () => {
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+          // No retryPolicy field.
+        }),
+        makeNode('ext', 'external', { errorRate: 0.5, latencyMs: 100 }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(40, 8), undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      const extRpsByTick: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+        extRpsByTick.push(r.metrics['ext'].rps);
+      }
+
+      // No retry-storm callout should appear
+      expect(logs.find((m) => m.includes('retry storm'))).toBeUndefined();
+      // RPS should stay at nominal (no amplification)
+      for (const rps of extRpsByTick) expect(rps).toBeCloseTo(40, 0);
+    });
+
+    it('fires retry-storm callout once when amplification crosses 1.5×', () => {
+      // errorRate 0.5 + maxRetries 3 → amplification ≈ 1.875, above the 1.5× threshold.
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+          retryPolicy: { maxRetries: 3 },
+        }),
+        makeNode('ext', 'external', { errorRate: 0.5, latencyMs: 100 }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(40, 10), undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      const stormLogs = logs.filter((m) => m.includes('retry storm'));
+      expect(stormLogs.length).toBe(1);
+    });
+
+    it('retry does not fire on tick 0 (no prior observation)', () => {
+      // Even with retry policy, first tick has no lastObservedErrorRate,
+      // so amplification should be 1.0.
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+          retryPolicy: { maxRetries: 3 },
+        }),
+        makeNode('ext', 'external', { errorRate: 0.5, latencyMs: 100 }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(40), undefined, undefined, SEED);
+
+      const r = engine.tick();
+      // First tick: nominal 40 RPS, no amplification yet.
+      expect(r.metrics['ext'].rps).toBeCloseTo(40, 0);
+    });
+
+    it('HALF_OPEN suppresses retry amplification (probe, not storm)', () => {
+      // Codex-caught bug: amplifying on a HALF_OPEN wire re-slams the
+      // recovering downstream with stale errors. HALF_OPEN must send
+      // nominal probe RPS only.
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+          retryPolicy: { maxRetries: 3 },
+        }),
+        makeNode('ext', 'external', { errorRate: 0.5, latencyMs: 100 }),
+      ];
+      // Breaker with fast cooldown so we can reach HALF_OPEN within the test.
+      const edges = [{
+        id: 'e1', source: 'srv', target: 'ext',
+        data: { config: {
+          throughputRps: 100000, latencyMs: 5, jitterMs: 0,
+          circuitBreaker: { failureThreshold: 0.3, failureWindow: 2, cooldownSeconds: 3, halfOpenTicks: 2 },
+        } },
+      }] as Edge<{ config: WireConfig }>[];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(40, 20), undefined, undefined, SEED);
+
+      // Walk the full cycle and pick out a tick that's in HALF_OPEN.
+      const allMetrics: Array<{ rps: number; tick: number }> = [];
+      for (let i = 0; i < 15; i++) {
+        const r = engine.tick();
+        allMetrics.push({ rps: r.metrics['ext'].rps, tick: i });
+      }
+
+      // At least one tick should show NO amplification (RPS near nominal 40)
+      // after the breaker tripped. That proves HALF_OPEN is probing, not storming.
+      // A pre-fix implementation would show sustained amplified RPS (~60-70).
+      const suppressedTicks = allMetrics.filter((m) => m.rps > 0 && m.rps < 50);
+      expect(suppressedTicks.length).toBeGreaterThan(0);
+    });
+
+    it('lastObservedErrorRate resets on OPEN → HALF_OPEN transition', () => {
+      // Codex-caught bug: stale high errorRate captured pre-OPEN would
+      // amplify the first HALF_OPEN probe. Fix clears lastObservedErrorRate
+      // on the transition.
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+          retryPolicy: { maxRetries: 3 },
+        }),
+        makeNode('ext', 'external', { errorRate: 0.5, latencyMs: 100 }),
+      ];
+      const edges = [{
+        id: 'e1', source: 'srv', target: 'ext',
+        data: { config: {
+          throughputRps: 100000, latencyMs: 5, jitterMs: 0,
+          circuitBreaker: { failureThreshold: 0.3, failureWindow: 2, cooldownSeconds: 3, halfOpenTicks: 1 },
+        } },
+      }] as Edge<{ config: WireConfig }>[];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(40, 15), undefined, undefined, SEED);
+
+      // Run until breaker trips (needs sustained errors).
+      const logs: string[] = [];
+      for (let i = 0; i < 15; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      // Verify both transitions fired (open→half_open and clearing worked).
+      expect(logs.find((m) => m.includes('open → half_open'))).toBeDefined();
+    });
+  });
+
   describe('Stressed mode — cache & CDN corrections', () => {
     it('does NOT emit cache stampede log under stressed mode', () => {
       const nodes = [

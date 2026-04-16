@@ -390,6 +390,36 @@ tick() starts
 
 **Known limitation (documented):** breakers share their failure signal with siblings at multi-inbound targets. One noisy upstream can trip a well-behaved sibling's breaker. Per-wire error accounting is deferred to the ForwardResult refactor coming with retry storms (3.2).
 
+### Retry storms (Phase 3.2)
+
+**File:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts)
+
+**Purpose:** Model the real-world cascade where a slightly-unhealthy downstream gets hit with 3-5× its nominal load because every caller dutifully retries. This is one of the top causes of cascading failure in production.
+
+**Model:** upstream has `config.retryPolicy = { maxRetries, backoffMs?, backoffMultiplier? }`. When forwarding, amplification = `1 + e + e² + … + e^maxRetries` where `e` = **previous tick's** observed errorRate on this wire. Bundled into one recursive call to keep the model tractable.
+
+**Opt-in:** absent `retryPolicy` = no amplification, identical to pre-3.2 behavior.
+
+**Per-wire observability:** `WireState.lastObservedErrorRate` is set after every successful recurse in `forwardOverWire`. Reading per-wire rather than per-target sidesteps the multi-inbound aggregate problem for the retry signal (the breaker still uses target-aggregate — documented limitation).
+
+**Code flow:**
+
+```
+forwardOverWire(src, tgt, rps)
+    → if breaker OPEN: return
+    → read source's retryPolicy (may be undefined)
+    → if policy present AND wire.lastObservedErrorRate > 0:
+        amplification = computeAmplification(lastObservedErrorRate, policy)
+        effectiveRps = rps × amplification
+    → getWireLatency + processComponent(tgt, effectiveRps, ...)
+    → wire.lastObservedErrorRate = target.metrics.errorRate   [for next tick]
+    → if amplification ≥ 1.5: fireCallout("retry storm amplifying load 1.8×")
+```
+
+**Callout:** one-shot per (source, target) pair, fires when amplification crosses 1.5×. Surfaces in the live log so users see retries inflating load.
+
+**Interaction with circuit breakers:** breaker OPEN drops traffic before retry logic runs (fail-fast is the whole point). Breaker HALF_OPEN allows traffic through, retries apply normally.
+
 ### Simulation engine
 
 **File:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)
