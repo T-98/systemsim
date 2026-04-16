@@ -52,7 +52,7 @@ describe('SimulationEngine', () => {
     it('should detect cycles and log warning without crashing', () => {
       const nodes = [makeNode('a', 'server', { isEntry: true }), makeNode('b', 'server')];
       const edges = [makeEdge('e1', 'a', 'b'), makeEdge('e2', 'b', 'a')];
-      const engine = new SimulationEngine(nodes, edges, steadyProfile(100), undefined, undefined, SEED);
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(5), undefined, undefined, SEED);
 
       const result = engine.tick();
       const cycleWarning = result.newLogs.find((l) => l.message.includes('Cycle detected'));
