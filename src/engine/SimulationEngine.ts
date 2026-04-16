@@ -116,17 +116,19 @@ export class SimulationEngine {
       this.reverseAdj.get(edge.target)!.push(edge.source);
     }
 
-    // Find entry points (nodes with no incoming edges)
+    // Find entry points: explicit isEntry flag OR zero-indegree
+    const explicit: string[] = [];
+    const zeroIndegree: string[] = [];
     for (const node of nodes) {
+      if ((node.data as any)?.config?.isEntry === true) {
+        explicit.push(node.id);
+      }
       const incoming = this.reverseAdj.get(node.id);
       if (!incoming || incoming.length === 0) {
-        this.entryPoints.push(node.id);
+        zeroIndegree.push(node.id);
       }
     }
-    // If no entry points found, use the first node
-    if (this.entryPoints.length === 0 && nodes.length > 0) {
-      this.entryPoints.push(nodes[0].id);
-    }
+    this.entryPoints = explicit.length > 0 ? explicit : zeroIndegree;
   }
 
   private emptyMetrics(): ComponentMetrics {

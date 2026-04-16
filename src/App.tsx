@@ -3,9 +3,8 @@ import { useStore } from './store';
 import LandingPage from './components/ui/LandingPage';
 import DesignFlow from './components/panels/DesignFlow';
 import Canvas from './components/canvas/Canvas';
-import ComponentLibrary from './components/panels/ComponentLibrary';
+import CanvasSidebar from './components/panels/CanvasSidebar';
 import ConfigPanel from './components/panels/ConfigPanel';
-import TrafficEditor from './components/panels/TrafficEditor';
 import Toolbar from './components/ui/Toolbar';
 import LiveLog from './components/panels/LiveLog';
 import DebriefPanel from './components/debrief/DebriefPanel';
@@ -17,7 +16,6 @@ import IntentHeader from './components/canvas/IntentHeader';
 export default function App() {
   const appView = useStore((s) => s.appView);
   const setAppView = useStore((s) => s.setAppView);
-  const appMode = useStore((s) => s.appMode);
 
   if (appView === 'landing') {
     return (
@@ -53,10 +51,7 @@ export default function App() {
         <IntentHeader />
         <Toolbar />
         <div className="flex flex-1 overflow-hidden">
-          <div className="flex flex-col">
-            <ComponentLibrary />
-            {appMode === 'freeform' && <TrafficEditor />}
-          </div>
+          <CanvasSidebar />
           <Canvas />
           <ConfigPanel />
         </div>

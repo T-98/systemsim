@@ -12,6 +12,7 @@ import { useStore } from '../../store';
 import SimComponentNode from '../nodes/SimComponentNode';
 import SimWireEdge from './SimWireEdge';
 import ParticleOverlay from './ParticleOverlay';
+import PreflightBanner from './PreflightBanner';
 import type { ComponentType } from '../../types';
 import { MVP_VISIBLE_TYPES } from '../../types/components';
 
@@ -89,7 +90,9 @@ export default function Canvas() {
   }, [addComponent, undo, redo, isRunning]);
 
   return (
-    <div className="flex-1 relative" style={{ background: 'var(--canvas-bg)' }}>
+    <div className="flex-1 relative flex flex-col" style={{ background: 'var(--canvas-bg)' }}>
+      <PreflightBanner />
+      <div className="flex-1 relative">
       <ReactFlow
         key={graphVersion}
         nodes={nodes}
@@ -126,6 +129,7 @@ export default function Canvas() {
         />
         <ParticleOverlay />
       </ReactFlow>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useStore } from '../../store';
 import { COMPONENT_DEFS } from '../../types/components';
+import type { ApiContract } from '../../types';
 
 export default function ConfigPanel() {
   const selectedNodeId = useStore((s) => s.selectedNodeId);
@@ -145,6 +146,34 @@ export default function ConfigPanel() {
           return null;
         })}
 
+        {/* Entry point toggle */}
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id={`entry-${selectedNode.id}`}
+            checked={!!config.isEntry}
+            onChange={(e) => updateConfig('isEntry', e.target.checked)}
+            disabled={isRunning}
+            style={{ accentColor: 'var(--accent)' }}
+          />
+          <label htmlFor={`entry-${selectedNode.id}`} style={{ fontSize: 14, color: 'var(--text-primary)', letterSpacing: '-0.224px' }}>
+            This component receives external traffic
+          </label>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: -12 }}>
+          Indicates incoming requests directly originating from the outside
+        </div>
+
+        {/* Endpoints section (server/api_gateway/load_balancer only) */}
+        {(data.type === 'server' || data.type === 'api_gateway' || data.type === 'load_balancer') && (
+          <EndpointsSection nodeId={selectedNode.id} disabled={isRunning} />
+        )}
+
+        {/* Assigned tables section (database only) */}
+        {data.type === 'database' && (
+          <AssignedTablesSection nodeId={selectedNode.id} disabled={isRunning} />
+        )}
+
         {!isRunning && (
           <button
             onClick={() => removeComponent(selectedNode.id)}
@@ -264,6 +293,176 @@ function ConfigSelect({ label, value, options, onChange, disabled }: {
           <option key={opt} value={opt}>{opt}</option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function EndpointsSection({ nodeId, disabled }: { nodeId: string; disabled: boolean }) {
+  const apiContracts = useStore((s) => s.apiContracts);
+  const owned = apiContracts.filter((c) => c.ownerServiceId === nodeId);
+
+  return (
+    <div>
+      <h3
+        style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.224px', marginBottom: 8 }}
+      >
+        Endpoints
+      </h3>
+      {owned.length === 0 ? (
+        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}>
+          No endpoints yet. Add one to define what this service handles.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {owned.map((c) => (
+            <EndpointChip key={c.id} contract={c} disabled={disabled} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EndpointChip({ contract, disabled }: { contract: ApiContract; disabled: boolean }) {
+  const setApiContracts = useStore((s) => s.setApiContracts);
+  const apiContracts = useStore((s) => s.apiContracts);
+
+  const handleRemove = () => {
+    if (disabled) return;
+    setApiContracts(apiContracts.filter((c) => c.id !== contract.id));
+  };
+
+  return (
+    <span
+      className="inline-flex items-center gap-1"
+      style={{
+        padding: '4px 8px',
+        borderRadius: 6,
+        background: 'var(--bg-tertiary)',
+        border: '1px solid var(--border-color)',
+        fontSize: 13,
+        color: 'var(--text-primary)',
+        letterSpacing: '-0.224px',
+      }}
+    >
+      <span style={{ fontWeight: 500 }}>{contract.method}</span> {contract.path || '/'}
+      {!disabled && (
+        <button
+          onClick={handleRemove}
+          style={{ fontSize: 13, color: 'var(--destructive)', marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer' }}
+          aria-label={`Remove ${contract.method} ${contract.path}`}
+        >
+          &times;
+        </button>
+      )}
+    </span>
+  );
+}
+
+function AssignedTablesSection({ nodeId, disabled }: { nodeId: string; disabled: boolean }) {
+  const schemaMemory = useStore((s) => s.schemaMemory);
+  const setSchemaMemory = useStore((s) => s.setSchemaMemory);
+
+  if (!schemaMemory || schemaMemory.entities.length === 0) {
+    return (
+      <div>
+        <h3
+          style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.224px', marginBottom: 8 }}
+        >
+          Assigned Tables
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}>
+          No schema entities yet. Define entities in Design → Schema.
+        </p>
+      </div>
+    );
+  }
+
+  const assigned = schemaMemory.entities.filter((e) => e.assignedDbId === nodeId);
+  const unassigned = schemaMemory.entities.filter((e) => !e.assignedDbId);
+
+  const assignTable = (entityId: string) => {
+    if (disabled) return;
+    const updated = {
+      ...schemaMemory,
+      entities: schemaMemory.entities.map((e) =>
+        e.id === entityId ? { ...e, assignedDbId: nodeId } : e,
+      ),
+    };
+    setSchemaMemory(updated);
+  };
+
+  const unassignTable = (entityId: string) => {
+    if (disabled) return;
+    const updated = {
+      ...schemaMemory,
+      entities: schemaMemory.entities.map((e) =>
+        e.id === entityId ? { ...e, assignedDbId: null } : e,
+      ),
+    };
+    setSchemaMemory(updated);
+  };
+
+  return (
+    <div>
+      <h3
+        style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.224px', marginBottom: 8 }}
+      >
+        Assigned Tables
+      </h3>
+      {assigned.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {assigned.map((e) => (
+            <span
+              key={e.id}
+              className="inline-flex items-center gap-1"
+              style={{
+                padding: '4px 8px',
+                borderRadius: 6,
+                background: 'var(--bg-tertiary)',
+                border: '1px solid var(--border-color)',
+                fontSize: 13,
+                color: 'var(--text-primary)',
+                letterSpacing: '-0.224px',
+              }}
+            >
+              {e.name}
+              {!disabled && (
+                <button
+                  onClick={() => unassignTable(e.id)}
+                  style={{ fontSize: 13, color: 'var(--destructive)', marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer' }}
+                  aria-label={`Unassign ${e.name}`}
+                >
+                  &times;
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+      {unassigned.length > 0 && !disabled && (
+        <select
+          onChange={(e) => {
+            if (e.target.value) assignTable(e.target.value);
+            e.target.value = '';
+          }}
+          style={{
+            width: '100%',
+            padding: '8px 12px',
+            borderRadius: 8,
+            border: '1px solid var(--border-color)',
+            background: 'var(--bg-input)',
+            color: 'var(--text-secondary)',
+            fontSize: 13,
+            letterSpacing: '-0.224px',
+          }}
+        >
+          <option value="">Assign a table...</option>
+          {unassigned.map((e) => (
+            <option key={e.id} value={e.id}>{e.name}</option>
+          ))}
+        </select>
+      )}
     </div>
   );
 }
