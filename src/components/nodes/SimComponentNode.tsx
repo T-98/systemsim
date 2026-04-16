@@ -16,16 +16,18 @@ const healthBorderVar: Record<HealthState, string> = {
 function SimComponentNode({ id, data, selected }: NodeProps & { data: SimComponentData }) {
   const simulationStatus = useStore((s) => s.simulationStatus);
   const liveMetrics = useStore((s) => s.liveMetrics[id]);
+  const pulseTarget = useStore((s) => s.pulseTarget);
   const def = COMPONENT_DEFS[data.type];
   const health = data.health;
   const isRunning = simulationStatus === 'running' || simulationStatus === 'paused';
 
   const metrics = isRunning ? (liveMetrics ?? data.metrics) : null;
   const showShardDist = data.type === 'database' && metrics?.shardDistribution && metrics.shardDistribution.length > 1;
+  const isPulsing = pulseTarget === `node:${id}` || pulseTarget === 'canvas:all';
 
   return (
     <motion.div
-      className="relative min-w-[200px] cursor-pointer transition-all duration-200"
+      className={`relative min-w-[200px] cursor-pointer transition-all duration-200 ${isPulsing ? 'simfid-pulse' : ''}`}
       style={{
         borderRadius: '12px',
         border: `1px solid ${healthBorderVar[health]}`,

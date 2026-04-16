@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useStore } from '../../store';
 import ComponentLibrary from './ComponentLibrary';
 import TrafficEditor from './TrafficEditor';
@@ -8,7 +7,9 @@ type SidebarTab = 'components' | 'design' | 'traffic';
 
 export default function CanvasSidebar() {
   const appMode = useStore((s) => s.appMode);
-  const [tab, setTab] = useState<SidebarTab>('components');
+  const tab = useStore((s) => s.sidebarTab);
+  const setTab = useStore((s) => s.setSidebarTab);
+  const pulseTarget = useStore((s) => s.pulseTarget);
 
   const tabs: { id: SidebarTab; label: string; show: boolean }[] = [
     { id: 'components', label: 'Components', show: true },
@@ -25,26 +26,30 @@ export default function CanvasSidebar() {
           borderBottom: '1px solid var(--border-color)',
         }}
       >
-        {tabs.filter((t) => t.show).map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            style={{
-              padding: '6px 10px',
-              borderRadius: '6px 6px 0 0',
-              fontSize: 12,
-              fontWeight: 500,
-              letterSpacing: '-0.12px',
-              background: tab === t.id ? 'var(--bg-primary)' : 'transparent',
-              color: tab === t.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
-              border: 'none',
-              cursor: 'pointer',
-              borderBottom: tab === t.id ? '2px solid var(--accent)' : '2px solid transparent',
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
+        {tabs.filter((t) => t.show).map((t) => {
+          const pulsing = pulseTarget?.startsWith(`sidebar:${t.id}`);
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={pulsing ? 'simfid-pulse' : ''}
+              style={{
+                padding: '6px 10px',
+                borderRadius: '6px 6px 0 0',
+                fontSize: 12,
+                fontWeight: 500,
+                letterSpacing: '-0.12px',
+                background: tab === t.id ? 'var(--bg-primary)' : 'transparent',
+                color: tab === t.id ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                border: 'none',
+                cursor: 'pointer',
+                borderBottom: tab === t.id ? '2px solid var(--accent)' : '2px solid transparent',
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
       <div className="flex-1 overflow-y-auto">
         {tab === 'components' && <ComponentLibrary />}

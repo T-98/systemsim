@@ -61,6 +61,7 @@ export function runPreflight(input: PreflightInput): PreflightResult {
       message: 'Define a data schema',
       tooltip: 'Databases need tables to simulate. Define entities in Design \u2192 Schema.',
       target: 'design',
+      targetSubtab: 'schema',
     });
   }
 
@@ -87,6 +88,7 @@ export function runPreflight(input: PreflightInput): PreflightResult {
       message: 'Define API endpoints',
       tooltip: 'Servers need endpoints to route traffic. Define at least one API contract.',
       target: 'design',
+      targetSubtab: 'api',
     });
   }
 
@@ -97,6 +99,7 @@ export function runPreflight(input: PreflightInput): PreflightResult {
       message: `${orphanedContracts.length} endpoint${orphanedContracts.length > 1 ? 's' : ''} missing owner service`,
       tooltip: 'Endpoints connect API contracts to the components and tables they use. Without them, the engine can\u2019t route traffic.',
       target: 'design',
+      targetSubtab: 'api',
     });
   }
 
@@ -106,6 +109,7 @@ export function runPreflight(input: PreflightInput): PreflightResult {
       message: 'Define endpoint routes',
       tooltip: 'Endpoint routes map API contracts to component chains and tables. Without them, traffic has no path.',
       target: 'design',
+      targetSubtab: 'api',
     });
   }
 

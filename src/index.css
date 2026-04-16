@@ -170,3 +170,9 @@ input:focus, select:focus, textarea:focus {
 .animate-fade-in-1 { animation: fade-in 0.5s ease-out 0.06s both; }
 .animate-fade-in-2 { animation: fade-in 0.5s ease-out 0.12s both; }
 .animate-fade-in-3 { animation: fade-in 0.5s ease-out 0.18s both; }
+
+@keyframes simfid-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-ring); }
+  50% { box-shadow: 0 0 0 6px var(--accent-ring); }
+}
+.simfid-pulse { animation: simfid-pulse 0.75s ease-in-out 2; }

@@ -171,6 +171,12 @@ export interface AppState {
   setBottomPanelTab: (tab: 'log' | 'debrief') => void;
   bottomPanelOpen: boolean;
   setBottomPanelOpen: (open: boolean) => void;
+  sidebarTab: 'components' | 'design' | 'traffic';
+  setSidebarTab: (tab: 'components' | 'design' | 'traffic') => void;
+  designPanelTab: 'api' | 'schema';
+  setDesignPanelTab: (tab: 'api' | 'schema') => void;
+  pulseTarget: string | null;
+  setPulseTarget: (target: string | null) => void;
 
   // Graph versioning
   graphVersion: number;
@@ -474,6 +480,12 @@ export const useStore = create<AppState>((set, get) => ({
   setBottomPanelTab: (tab) => set({ bottomPanelTab: tab }),
   bottomPanelOpen: false,
   setBottomPanelOpen: (open) => set({ bottomPanelOpen: open }),
+  sidebarTab: 'components',
+  setSidebarTab: (tab) => set({ sidebarTab: tab }),
+  designPanelTab: 'api',
+  setDesignPanelTab: (tab) => set({ designPanelTab: tab }),
+  pulseTarget: null,
+  setPulseTarget: (target) => set({ pulseTarget: target }),
 
   // Graph versioning
   graphVersion: 0,

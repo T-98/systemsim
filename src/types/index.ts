@@ -237,12 +237,14 @@ export interface HintMessage {
 }
 
 export type PreflightTarget = 'traffic' | 'design' | 'canvas' | 'config';
+export type PreflightSubtab = 'api' | 'schema';
 
 export interface PreflightItem {
   id: string;
   message: string;
   tooltip: string;
   target: PreflightTarget;
+  targetSubtab?: PreflightSubtab;
   targetComponentId?: string;
 }
 

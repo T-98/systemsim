@@ -14,7 +14,8 @@ export default function DesignPanel() {
   const simulationStatus = useStore((s) => s.simulationStatus);
   const isRunning = simulationStatus === 'running' || simulationStatus === 'paused';
 
-  const [tab, setTab] = useState<'api' | 'schema'>('api');
+  const tab = useStore((s) => s.designPanelTab);
+  const setTab = useStore((s) => s.setDesignPanelTab);
 
   const serviceNodes = nodes.filter(
     (n) => n.data.type === 'server' || n.data.type === 'api_gateway' || n.data.type === 'load_balancer',
