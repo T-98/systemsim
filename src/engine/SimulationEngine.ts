@@ -44,6 +44,7 @@ import {
   resolveBreakerConfig,
 } from './CircuitBreaker';
 import { computeAmplification, readRetryPolicy } from './RetryPolicy';
+import { computeAcceptanceRate, readBackpressureConfig } from './Backpressure';
 
 interface ComponentState {
   id: string;
@@ -62,6 +63,13 @@ interface ComponentState {
   crashed: boolean;
   instanceCount: number;
   lastComputedLatencyMs: number;
+  /**
+   * Backpressure signal: acceptanceRate ∈ [0, 1], updated at end of tick
+   * if `config.backpressure.enabled`. Upstream callers read the PREVIOUS
+   * tick's value and scale forwarded RPS down by (1 - acceptanceRate).
+   * Initialized to 1.0 (fully accepting) — no backpressure until observed.
+   */
+  acceptanceRate: number;
 }
 
 interface WireState {
@@ -158,6 +166,7 @@ export class SimulationEngine {
         crashed: false,
         instanceCount: (node.data.config.instanceCount as number) ?? 1,
         lastComputedLatencyMs: 0,
+        acceptanceRate: 1.0,
       });
     }
 
@@ -364,6 +373,23 @@ export class SimulationEngine {
     // Advance per-wire circuit breakers based on this tick's downstream errorRate.
     this.evaluateBreakers(newLogs);
 
+    // Update per-component acceptanceRate (3.3 backpressure signal). Read
+    // by next tick's forwardOverWire so upstream callers scale their
+    // forwarded RPS down when the downstream is saturated. One-tick
+    // propagation delay matches real systems.
+    //
+    // No-traffic guard: if the component got 0 RPS this tick (upstream
+    // wire breaker OPEN, or simply quiet phase), we have NO fresh signal.
+    // Holding the previous value beats falsely healing to 1.0, which would
+    // happen because tick-start resets errorRate to 0. Missing data is not
+    // health.
+    this.components.forEach((state) => {
+      if (state.crashed) return;
+      if (!readBackpressureConfig(state.config)) return;
+      if (state.metrics.rps <= 0) return; // no traffic = no new signal
+      state.acceptanceRate = computeAcceptanceRate(state.metrics.errorRate);
+    });
+
     // Throttle logs: max 1 log per (component, severity) per 2 seconds of sim time.
     // Callout entries bypass this entirely — firedCallouts already guarantees one-shot.
     const throttled = newLogs.filter((entry) => {
@@ -445,6 +471,22 @@ export class SimulationEngine {
       effectiveRps = rps * amplification;
     }
 
+    // Backpressure: if the target is signaling it can't accept everything
+    // (its previous-tick acceptanceRate < 1), scale the forwarded RPS down.
+    // This happens AFTER retry amplification — upstream optimistically
+    // amplifies, downstream pushes back; net effect self-stabilizes.
+    //
+    // HALF_OPEN exception: same reasoning as retry suppression. A probe
+    // must flow at nominal rate so `hadTrafficThisTick` fires and the
+    // breaker can observe whether the downstream has recovered. Scaling
+    // a probe to 0 would lock the breaker in HALF_OPEN forever.
+    const targetStateForBp = this.components.get(targetId);
+    let appliedBackpressure = 1;
+    if (targetStateForBp && readBackpressureConfig(targetStateForBp.config) && !breakerHalfOpen) {
+      appliedBackpressure = targetStateForBp.acceptanceRate;
+      effectiveRps = effectiveRps * appliedBackpressure;
+    }
+
     // Record that this wire actually served traffic this tick. HALF_OPEN
     // recovery requires at least one real probe to succeed, not just the
     // absence of failure. Without this, a quiet tick would silently be
@@ -473,6 +515,21 @@ export class SimulationEngine {
         sourceId,
         `retry-storm:${targetId}`,
         `${sourceId} → ${targetId}: retry storm amplifying load ${amplification.toFixed(1)}× at t=${Math.round(this.time)}s (downstream errorRate=${(wire.lastObservedErrorRate * 100).toFixed(0)}%)`,
+      );
+    }
+
+    // One-shot callout when backpressure meaningfully reduces forwarded load
+    // (target rejecting ≥ 30% via acceptanceRate). Includes acceptanceRate=0
+    // (maximal rejection — the worst case we definitely want to surface).
+    // The guard on "<1" ensures we only log when backpressure actually fired;
+    // HALF_OPEN bypasses backpressure entirely so appliedBackpressure stays 1 there.
+    if (appliedBackpressure < 1 && appliedBackpressure <= 0.7) {
+      const scalePct = Math.round((1 - appliedBackpressure) * 100);
+      this.fireCallout(
+        logs,
+        sourceId,
+        `backpressure:${targetId}`,
+        `${targetId} signaling backpressure (acceptanceRate=${appliedBackpressure.toFixed(2)}) — ${sourceId} scaling forwarded load down ${scalePct}% at t=${Math.round(this.time)}s`,
       );
     }
   }

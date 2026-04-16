@@ -676,6 +676,34 @@ M/M/1-per-instance approximation via Little's Law. See [Decisions.md #6](Decisio
 - `networkAwareCacheLatency(cacheSizeMb, ttlSeconds)`
     → `{ p50, p99 }`
 
+#### `Backpressure`
+
+**File:** [src/engine/Backpressure.ts](src/engine/Backpressure.ts)
+
+Target-signaled backpressure. Opt-in via target's `config.backpressure = { enabled: true }`.
+
+**Types:**
+- `BackpressureConfig` — `{ enabled: boolean }` (extensible: future smoothing, hysteresis)
+
+**Exports:**
+- `readBackpressureConfig(config): BackpressureConfig | undefined` — returns config iff `enabled: true`; rejects null, arrays, non-objects
+- `computeAcceptanceRate(errorRate: number): number` — simple inverse `1 - errorRate`, clamped to `[0, 1]`
+
+**Engine integration** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
+- `ComponentState.acceptanceRate: number` — init 1.0, updated end-of-tick when backpressure enabled AND `state.metrics.rps > 0`
+- `forwardOverWire`: after retry amplification, if target's backpressure is enabled AND breaker is not HALF_OPEN, multiply `effectiveRps × target.acceptanceRate`
+- One-shot callout emits when `appliedBackpressure ≤ 0.7` (includes 0 — the worst case)
+
+**Config example:**
+```ts
+{ ...existingConfig, backpressure: { enabled: true } }
+```
+
+**Interaction rules:**
+- **Breaker OPEN:** traffic already dropped upstream → backpressure doesn't run
+- **Breaker HALF_OPEN:** backpressure suppressed (probe flows at nominal rate)
+- **Target received 0 RPS this tick:** `acceptanceRate` NOT updated (no fresh signal; holds prior value)
+
 #### `RetryPolicy`
 
 **File:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts)

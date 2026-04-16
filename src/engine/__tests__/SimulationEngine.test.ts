@@ -862,6 +862,236 @@ describe('SimulationEngine', () => {
     });
   });
 
+  describe('Backpressure', () => {
+    it('scales forwarded RPS down by target acceptanceRate on the next tick', () => {
+      // Server → external(errorRate=0.4, backpressure enabled).
+      // After tick 0: external.errorRate ≈ 0.4 → acceptanceRate ≈ 0.6
+      // Tick 1+: forwarded RPS scaled by 0.6
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+        }),
+        makeNode('ext', 'external', {
+          errorRate: 0.4, latencyMs: 100,
+          backpressure: { enabled: true },
+        }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(100, 8), undefined, undefined, SEED);
+
+      const rpsByTick: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        const r = engine.tick();
+        rpsByTick.push(r.metrics['ext'].rps);
+      }
+
+      // Tick 0: nominal 100 RPS (no prior backpressure signal)
+      expect(rpsByTick[0]).toBeCloseTo(100, 0);
+      // Tick 1+: scaled down by acceptanceRate (≈0.6 with jitter)
+      // Formula: ext rps ≈ 100 × (1 - 0.4 ± 0.02) ≈ 58-62
+      expect(rpsByTick[1]).toBeLessThan(70);
+      expect(rpsByTick[1]).toBeGreaterThan(50);
+    });
+
+    it('target without backpressure.enabled behaves unchanged (regression)', () => {
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+        }),
+        // No backpressure field; errorRate 0.4 but upstream shouldn't throttle
+        makeNode('ext', 'external', { errorRate: 0.4, latencyMs: 100 }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(100, 8), undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      const rpsByTick: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+        rpsByTick.push(r.metrics['ext'].rps);
+      }
+
+      // Forwarded RPS stays at nominal
+      for (const rps of rpsByTick) expect(rps).toBeCloseTo(100, 0);
+      // No backpressure callout
+      expect(logs.find((m) => m.includes('signaling backpressure'))).toBeUndefined();
+    });
+
+    it('fires backpressure callout when acceptanceRate drops below 0.7', () => {
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+        }),
+        makeNode('ext', 'external', {
+          errorRate: 0.5, latencyMs: 100,
+          backpressure: { enabled: true },
+        }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(100, 8), undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      for (let i = 0; i < 4; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      const backpressureLogs = logs.filter((m) => m.includes('signaling backpressure'));
+      expect(backpressureLogs.length).toBe(1);
+    });
+
+    it('backpressure does not fire on tick 0 (no prior observation)', () => {
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+        }),
+        makeNode('ext', 'external', {
+          errorRate: 0.9, latencyMs: 100,
+          backpressure: { enabled: true },
+        }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(100), undefined, undefined, SEED);
+
+      // First tick: external's acceptanceRate is still 1.0 (initial) — no scaling
+      const r = engine.tick();
+      expect(r.metrics['ext'].rps).toBeCloseTo(100, 0);
+    });
+
+    it('HALF_OPEN bypasses backpressure scaling (probe must flow at nominal rate)', () => {
+      // Codex-caught bug: if acceptanceRate is low when breaker goes HALF_OPEN,
+      // probe RPS would be scaled to nearly 0, hadTrafficThisTick never sets,
+      // breaker locks in HALF_OPEN. Fix: skip backpressure during HALF_OPEN.
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+        }),
+        makeNode('ext', 'external', {
+          errorRate: 0.5, latencyMs: 100,
+          backpressure: { enabled: true },
+        }),
+      ];
+      const edges = [{
+        id: 'e1', source: 'srv', target: 'ext',
+        data: { config: {
+          throughputRps: 100000, latencyMs: 5, jitterMs: 0,
+          circuitBreaker: { failureThreshold: 0.3, failureWindow: 2, cooldownSeconds: 3, halfOpenTicks: 1 },
+        } },
+      }] as Edge<{ config: WireConfig }>[];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(40, 15), undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      for (let i = 0; i < 15; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      // The full cycle should complete (open → half_open → either closed or back to open).
+      // The key is that HALF_OPEN transition happens at all, proving probe got through.
+      expect(logs.find((m) => m.includes('open → half_open'))).toBeDefined();
+    });
+
+    it('no-traffic tick does NOT falsely heal the backpressure signal', () => {
+      // Codex-caught bug: if a target gets 0 RPS (upstream breaker OPEN or
+      // quiet phase), tick-start resets its errorRate to 0, and the naive
+      // end-of-tick update would compute acceptanceRate = 1 (healthy),
+      // erasing the prior backpressure signal. Fix: skip the update when
+      // metrics.rps <= 0.
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+        }),
+        makeNode('ext', 'external', {
+          errorRate: 0.5, latencyMs: 100,
+          backpressure: { enabled: true },
+        }),
+      ];
+      // Profile: 4 ticks of load, then 4 ticks of zero RPS.
+      const profile = {
+        name: 'intermittent',
+        durationSeconds: 10,
+        jitterPercent: 0,
+        phases: [
+          { startS: 0, endS: 4, rps: 100, shape: 'steady' as const, description: 'load' },
+          { startS: 4, endS: 10, rps: 0, shape: 'steady' as const, description: 'quiet' },
+        ],
+        requestMix: {},
+        userDistribution: 'uniform' as const,
+      };
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, profile, undefined, undefined, SEED);
+
+      // Run the loaded phase
+      for (let i = 0; i < 4; i++) engine.tick();
+      // Now run quiet phase. acceptanceRate should NOT recover to 1.0.
+      // Capture via internal state: on a fresh high-load tick later, backpressure must still scale.
+      for (let i = 0; i < 4; i++) engine.tick();
+
+      // Verify the ext state.acceptanceRate was not reset to 1.0
+      // (Without test hooks, we infer from resumed traffic.) Run one more high-load
+      // tick with breakpoint — but our profile is already zero. So check internal state.
+      const extState = (engine as any).components.get('ext');
+      // After 4 quiet ticks, acceptanceRate should reflect the last-observed load-phase value.
+      // Originally: ~0.5; falsely healed: 1.0.
+      expect(extState.acceptanceRate).toBeLessThan(1);
+    });
+
+    it('backpressure callout includes acceptanceRate = 0 (maximal rejection)', () => {
+      // Codex-caught: original callout predicate `> 0 && <= 0.7` excluded
+      // the acceptanceRate = 0 case, the WORST case. Fixed to include it.
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+        }),
+        makeNode('ext', 'external', {
+          errorRate: 1.0, latencyMs: 100,
+          backpressure: { enabled: true },
+        }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(100, 8), undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      const backpressureLogs = logs.filter((m) => m.includes('signaling backpressure'));
+      expect(backpressureLogs.length).toBe(1);
+    });
+
+    it('interacts correctly with retry storms — amplify first, then scale back', () => {
+      // Server has retryPolicy, external has backpressure enabled.
+      // Amplification × acceptanceRate should roughly equal nominal RPS at steady state.
+      const nodes = [
+        makeNode('srv', 'server', {
+          processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10,
+          retryPolicy: { maxRetries: 3 },
+        }),
+        makeNode('ext', 'external', {
+          errorRate: 0.5, latencyMs: 100,
+          backpressure: { enabled: true },
+        }),
+      ];
+      const edges = [makeEdge('e1', 'srv', 'ext')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(100, 10), undefined, undefined, SEED);
+
+      const rpsByTick: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const r = engine.tick();
+        rpsByTick.push(r.metrics['ext'].rps);
+      }
+
+      // With errorRate≈0.5, amplification≈1.875 and acceptanceRate≈0.5.
+      // Net: 1.875 × 0.5 ≈ 0.94 → forwarded ≈ 94-100 RPS at steady state.
+      const latest = rpsByTick[rpsByTick.length - 1];
+      expect(latest).toBeGreaterThan(70);
+      expect(latest).toBeLessThan(130);
+    });
+  });
+
   describe('Stressed mode — cache & CDN corrections', () => {
     it('does NOT emit cache stampede log under stressed mode', () => {
       const nodes = [

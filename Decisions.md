@@ -174,6 +174,24 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Why:** Defensive parsing at system boundaries (config is user-editable). An Infinity would freeze the simulation.
 - **Source:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts) `readRetryPolicy`.
 
+### 12g. Backpressure: opt-in, `acceptanceRate = 1 - errorRate`, one-tick delay
+
+- **When:** SIMFID Phase 3.3 (2026-04-16)
+- **Context:** CEO plan §2.7 calls for components to signal `acceptanceRate` per tick; upstream reads it to scale forwarded RPS. One-tick delay to match real propagation.
+- **Decision:** New [src/engine/Backpressure.ts](src/engine/Backpressure.ts) with `computeAcceptanceRate(errorRate)` + `readBackpressureConfig(config)`. `ComponentState` gains `acceptanceRate: number` (init 1.0). End-of-tick hook updates the signal for non-crashed components with `config.backpressure = { enabled: true }`. `forwardOverWire`, after retry amplification, multiplies by `target.acceptanceRate` when the target opted in.
+- **Why:** Symmetric with CircuitBreaker + RetryPolicy (opt-in via config field, evaluated end-of-tick, consumed next tick). Simple inverse `1 - errorRate` keeps the mental model clear: "what fraction of requests did the target succeed on last tick?"
+- **Rejected:** Always-on (breaks existing scenarios). Per-wire backpressure (backpressure is a property of the target's state, not the wire; fan-in should share it). Smoothed EWMA (future enhancement; adds hysteresis).
+- **Source:** [src/engine/Backpressure.ts](src/engine/Backpressure.ts), [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire` backpressure branch + end-of-tick update loop.
+
+### 12h. Backpressure no-traffic guard + HALF_OPEN bypass
+
+- **When:** SIMFID Phase 3.3, Codex review fix (2026-04-16)
+- **Context:** Three real bugs Codex caught: (1) End-of-tick reset zeros `errorRate` for all non-crashed components. If the target gets 0 RPS this tick, the naive update computes `acceptanceRate = 1 - 0 = 1` and falsely heals the backpressure signal. (2) HALF_OPEN probe was getting scaled by stale `acceptanceRate` — if that was 0, the probe never landed and the breaker locked in HALF_OPEN forever. (3) Callout predicate `> 0 && <= 0.7` excluded `acceptanceRate = 0`, the worst case.
+- **Decision:** (1) Skip the end-of-tick `acceptanceRate` update when `state.metrics.rps <= 0` (no fresh data → hold prior value). (2) Skip backpressure scaling in `forwardOverWire` when the breaker is HALF_OPEN (same reasoning as retry suppression — probes must flow at nominal rate). (3) Callout predicate `< 1 && <= 0.7` correctly includes 0.
+- **Why:** Missing data is not health. Probes must actually land to validate recovery. Callouts must cover the worst case.
+- **Rejected:** Decaying `acceptanceRate` over idle ticks (more complex). Forcing a minimum probe RPS during HALF_OPEN (opaque, better to just skip both upstream controls).
+- **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire` `breakerHalfOpen` guards + no-rps guard in end-of-tick update.
+
 ### 12. Saturation callouts fire without upper bound on ρ
 
 - **When:** SIMFID Phase 3, Codex review fix (2026-04-16)

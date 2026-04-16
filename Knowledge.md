@@ -420,6 +420,45 @@ forwardOverWire(src, tgt, rps)
 
 **Interaction with circuit breakers:** breaker OPEN drops traffic before retry logic runs (fail-fast is the whole point). Breaker HALF_OPEN allows traffic through, retries apply normally.
 
+### Backpressure (Phase 3.3)
+
+**File:** [src/engine/Backpressure.ts](src/engine/Backpressure.ts)
+
+**Purpose:** Close the feedback loop from downstream saturation to upstream flow control. When a target's `errorRate` rises, its `acceptanceRate` drops; upstream callers reading that signal scale down their forwarded RPS.
+
+**Config:** opt-in on the target via `config.backpressure = { enabled: true }`.
+
+**State:**
+- `ComponentState.acceptanceRate: number` — initialized to 1.0, updated end-of-tick when `state.metrics.rps > 0` (no traffic = no new signal)
+- `acceptanceRate = clamp01(1 - errorRate)`
+
+**Code flow:**
+
+```
+forwardOverWire(src, tgt, rps)
+    → check breaker OPEN: drop
+    → apply retry amplification (unless HALF_OPEN)
+    → check target's backpressure config
+       → if enabled AND breaker not HALF_OPEN:
+           effectiveRps *= target.acceptanceRate  (previous tick's value)
+    → mark wire.breaker.hadTrafficThisTick if rps > 0
+    → processComponent(tgt, effectiveRps)
+    → observe target.metrics.errorRate for retry signal
+    → fire callout if appliedBackpressure ≤ 0.7 (one-shot)
+
+end of tick:
+    → for each non-crashed, backpressure-enabled component with rps > 0:
+       → acceptanceRate = 1 - errorRate
+```
+
+**Composition with retry storms:** retry amplifies first (optimistic caller), backpressure scales down (downstream's pushback). At steady state with shared `errorRate e`: `amplification × acceptance = (1 + e + e² + …) × (1 - e) ≈ 1` → self-stabilizing in the single-inbound case.
+
+**HALF_OPEN exception:** same as retry — probes must flow at nominal rate. If backpressure were applied, a recovering downstream with `acceptanceRate=0` would never receive a probe, and the breaker would lock in HALF_OPEN forever.
+
+**No-traffic guard:** if the target got 0 RPS this tick (upstream wire breaker OPEN, quiet phase), its `errorRate` was reset to 0 at tick start — recomputing `acceptanceRate = 1` would falsely heal the signal. The update is skipped on no-traffic ticks; prior value persists.
+
+**Known limitation (shared with 3.2):** multi-inbound fan-in causes order-dependent `acceptanceRate` because processor metrics are not aggregated per tick. Proper fix requires refactoring processors to accumulate. Documented; deferred to a future architectural pass.
+
 ### Simulation engine
 
 **File:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)
