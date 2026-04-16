@@ -33,5 +33,12 @@
     "source": "Standard 3-tier web application",
     "tags": ["simple", "beginner", "classic"],
     "description": "Load balancer → server → database. The simplest production architecture."
+  },
+  {
+    "id": "resilience_showcase",
+    "name": "Resilience Showcase",
+    "source": "Phase 3 demo: circuit breaker + retry storm + backpressure on one graph",
+    "tags": ["resilience", "circuit-breaker", "retry", "backpressure"],
+    "description": "LB → API → DB with a throttled DB. Runs traffic heavy enough to trip the breaker, trigger retry storms, and activate backpressure."
   }
 ]

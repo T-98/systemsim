@@ -676,6 +676,37 @@ M/M/1-per-instance approximation via Little's Law. See [Decisions.md #6](Decisio
 - `networkAwareCacheLatency(cacheSizeMb, ttlSeconds)`
     → `{ p50, p99 }`
 
+#### Phase 3 UI surface
+
+**Store additions** (in [src/store/index.ts](src/store/index.ts)):
+- `liveWireStates: Record<string, { breakerStatus: 'closed' | 'open' | 'half_open' | null; lastObservedErrorRate: number }>`
+- `setLiveWireStates(states)` — action, called each tick by `useSimulation`
+
+**Engine return type** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
+- `WireLiveState` exported interface
+- `tick()` now returns `{ ..., wireStates: Record<string, WireLiveState> }`
+
+**ConfigPanel sections** ([src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx)):
+- `CircuitBreakerSection(edgeId, wireConfig, disabled)` — wire-selection panel, rendered in every wire-config view
+- `RetryPolicySection(nodeId, config, disabled)` — node-selection panel, rendered for `canRetry(type)` types
+- `BackpressureSection(nodeId, config, disabled)` — node-selection panel, rendered for `canBackpressure(type)` types
+- Helpers: `canRetry(type)`, `canBackpressure(type)`, `safeFiniteNumber`, `safePositiveInt`, `clampFinite`
+
+**SimWireEdge** ([src/components/canvas/SimWireEdge.tsx](src/components/canvas/SimWireEdge.tsx)):
+- Reads `useStore((s) => s.liveWireStates[id])` for per-wire breaker state
+- Color precedence: selection > breaker state > default
+- Breaker colors only render when `simulationStatus === 'running' || 'paused'` (post-completion shows default to avoid stale paint)
+
+**Graph-version teardown** ([src/engine/useSimulation.ts](src/engine/useSimulation.ts)):
+- `useEffect` on `graphVersion` from the store
+- On change (after initial mount), clears `timerRef`, nulls `engineRef`, clears `metricsHistoryRef`
+- Invoked by `replaceGraph` (the only action that bumps `graphVersion`)
+
+**Showcase template** ([public/templates/resilience_showcase.json](public/templates/resilience_showcase.json)):
+- 4-node graph: LB → API Gateway (rateLimit=60) → Server (retryPolicy) → DB (backpressure)
+- Circuit breaker on LB→gateway wire (threshold 0.3, window 5 ticks)
+- Expected traffic profile: 120 RPS × 25s overloads gateway → breaker trips, DB saturation → retry + backpressure fire
+
 #### `Backpressure`
 
 **File:** [src/engine/Backpressure.ts](src/engine/Backpressure.ts)

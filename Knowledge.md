@@ -420,6 +420,41 @@ forwardOverWire(src, tgt, rps)
 
 **Interaction with circuit breakers:** breaker OPEN drops traffic before retry logic runs (fail-fast is the whole point). Breaker HALF_OPEN allows traffic through, retries apply normally.
 
+### Phase 3 UI surface (ConfigPanel + SimWireEdge + showcase template)
+
+**Files:**
+- [src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx) — `CircuitBreakerSection`, `RetryPolicySection`, `BackpressureSection`
+- [src/components/canvas/SimWireEdge.tsx](src/components/canvas/SimWireEdge.tsx) — reads `liveWireStates[id]` to color edges by breaker state
+- [public/templates/resilience_showcase.json](public/templates/resilience_showcase.json) — one-click demo
+- [src/engine/useSimulation.ts](src/engine/useSimulation.ts) — graph-version teardown + `setLiveWireStates`
+- [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) — `WireLiveState` + tick() return
+
+**User flow (manual testing):**
+
+```
+User lands on app → clicks "Resilience Showcase" template
+    → replaceGraph loads 4 nodes + 3 edges with Phase 3 features pre-wired
+    → traffic profile pre-set for 120 RPS × 25s
+User clicks Run (preflight still needs schema/API contract)
+    → useSimulation starts timer + SimulationEngine
+    → each tick emits wireStates which populate store.liveWireStates
+    → SimWireEdge reads liveWireStates and paints:
+        - LB → gateway wire: amber dashed (HALF_OPEN) or red dashed (OPEN)
+    → Live Log tab shows:
+        - "server-2 → database-3: retry storm amplifying load 1.8×"
+        - "database-3 signaling backpressure (acceptanceRate=0.42)"
+        - "Circuit breaker load_balancer-0 → api_gateway-1: closed → open"
+User clicks a wire → ConfigPanel shows breaker fields (threshold, window, cooldown, halfOpenTicks)
+User clicks a node → ConfigPanel shows retry + backpressure toggles (on eligible types)
+```
+
+**Key rules:**
+- Wire breaker colors render only while `simulationStatus === 'running' || 'paused'`
+- Graph replaced mid-run → `useSimulation`'s `useEffect` on `graphVersion` tears down timer + engineRef
+- Opt-in toggles add/remove the config field; spreading `undefined` leaves a ghost key but all readers treat undefined as absent
+- Retry UI only shows on components that forward (server, LB, API gateway, cache, queue, fanout, CDN)
+- Backpressure UI only shows on components whose processors emit errorRate (server, database, queue, API gateway, external, load_balancer)
+
 ### Backpressure (Phase 3.3)
 
 **File:** [src/engine/Backpressure.ts](src/engine/Backpressure.ts)

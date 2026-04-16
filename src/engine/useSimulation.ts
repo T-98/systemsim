@@ -13,7 +13,7 @@
  * the debrief can compute peaks.
  */
 
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import { useStore } from '../store';
 import { SimulationEngine } from './SimulationEngine';
 import { generateDebrief } from '../ai/debrief';
@@ -32,9 +32,11 @@ export function useSimulation() {
   const engineRef = useRef<SimulationEngine | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const metricsHistoryRef = useRef<Record<string, import('../types').ComponentMetrics[]>>({});
+  const graphVersionRef = useRef<number | null>(null);
 
   const nodes = useStore((s) => s.nodes);
   const edges = useStore((s) => s.edges);
+  const graphVersion = useStore((s) => s.graphVersion);
   const schemaMemory = useStore((s) => s.schemaMemory);
   const setSimulationStatus = useStore((s) => s.setSimulationStatus);
   const setSimulationTime = useStore((s) => s.setSimulationTime);
@@ -44,9 +46,30 @@ export function useSimulation() {
   const clearLiveLog = useStore((s) => s.clearLiveLog);
   const updateLiveMetrics = useStore((s) => s.updateLiveMetrics);
   const updateComponentHealth = useStore((s) => s.updateComponentHealth);
+  const setLiveWireStates = useStore((s) => s.setLiveWireStates);
   const addSimulationRun = useStore((s) => s.addSimulationRun);
   const setCurrentRunId = useStore((s) => s.setCurrentRunId);
   const resetSimulationState = useStore((s) => s.resetSimulationState);
+
+  // Graph-swap teardown: if the graph is replaced (graphVersion bumped) while
+  // an engine instance is live, tear it down so stale ticks don't write
+  // metrics/wireStates from the OLD topology onto the NEW one.
+  // See Codex finding #1 on Phase 3 UI review.
+  useEffect(() => {
+    if (graphVersionRef.current === null) {
+      graphVersionRef.current = graphVersion;
+      return;
+    }
+    if (graphVersion !== graphVersionRef.current) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      engineRef.current = null;
+      metricsHistoryRef.current = {};
+      graphVersionRef.current = graphVersion;
+    }
+  }, [graphVersion]);
 
   // Shared tick body — used by both startSimulation and resumeSimulation
   // Returns true if simulation is complete
@@ -70,13 +93,16 @@ export function useSimulation() {
       updateComponentHealth(componentId, health as HealthState);
     }
 
+    // Publish per-wire breaker + error state for UI edge rendering
+    setLiveWireStates(result.wireStates);
+
     // Add new log entries
     for (const log of result.newLogs) {
       addLogEntry(log);
     }
 
     return engineRef.current.isComplete();
-  }, [setSimulationTime, setParticles, updateLiveMetrics, updateComponentHealth, addLogEntry]);
+  }, [setSimulationTime, setParticles, updateLiveMetrics, updateComponentHealth, setLiveWireStates, addLogEntry]);
 
   const stressedRef = useRef<boolean>(false);
 

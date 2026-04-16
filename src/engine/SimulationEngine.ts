@@ -37,6 +37,7 @@ import type { Node, Edge } from '@xyflow/react';
 import { computeQueueing } from './QueueingModel';
 import { computeCacheModel, networkAwareCacheLatency } from './WorkingSetCache';
 import {
+  type BreakerStatus,
   type CircuitBreakerConfig,
   type CircuitBreakerState,
   evaluateBreaker,
@@ -70,6 +71,15 @@ interface ComponentState {
    * Initialized to 1.0 (fully accepting) — no backpressure until observed.
    */
   acceptanceRate: number;
+}
+
+/**
+ * Per-wire live state surfaced at end of each tick for UI consumption.
+ * `breakerStatus` is null when no breaker is configured on the wire.
+ */
+export interface WireLiveState {
+  breakerStatus: BreakerStatus | null;
+  lastObservedErrorRate: number;
 }
 
 interface WireState {
@@ -311,6 +321,7 @@ export class SimulationEngine {
     newLogs: LogEntry[];
     particles: Particle[];
     time: number;
+    wireStates: Record<string, WireLiveState>;
   } {
     const newLogs: LogEntry[] = [];
     const currentRps = this.getCurrentRps();
@@ -404,7 +415,16 @@ export class SimulationEngine {
     this.log.push(...throttled);
     this.time += this.tickInterval;
 
-    return { metrics, healths, newLogs: throttled, particles: [...this.particles], time: this.time };
+    // Emit per-wire live state for UI rendering (breaker color, etc.)
+    const wireStates: Record<string, WireLiveState> = {};
+    this.wires.forEach((wire) => {
+      wireStates[wire.id] = {
+        breakerStatus: wire.breaker ? wire.breaker.status : null,
+        lastObservedErrorRate: wire.lastObservedErrorRate,
+      };
+    });
+
+    return { metrics, healths, newLogs: throttled, particles: [...this.particles], time: this.time, wireStates };
   }
 
   private getWireLatency(sourceId: string, targetId: string): number {

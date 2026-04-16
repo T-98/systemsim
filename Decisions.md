@@ -192,6 +192,51 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Rejected:** Decaying `acceptanceRate` over idle ticks (more complex). Forcing a minimum probe RPS during HALF_OPEN (opaque, better to just skip both upstream controls).
 - **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire` `breakerHalfOpen` guards + no-rps guard in end-of-tick update.
 
+### 12i. Phase 3 UI: ConfigPanel toggles + wire color + showcase template
+
+- **When:** SIMFID Phase 3 UI pass (2026-04-16)
+- **Context:** Phase 3 engine work shipped entirely opt-in via config fields. Without UI surface, users could only enable features via devtools-console snippets — useless for manual validation or demos.
+- **Decision:** Added four UI pieces in one pass:
+  1. **Engine → store → UI** plumbing: `tick()` returns `wireStates: Record<edgeId, { breakerStatus, lastObservedErrorRate }>`. Store gains `liveWireStates` field, populated by `useSimulation` each tick.
+  2. **ConfigPanel** gains three resilience sections: `CircuitBreakerSection` (on wire selection), `RetryPolicySection` (on forwarding components), `BackpressureSection` (on components whose processors emit errorRate).
+  3. **SimWireEdge** renders breaker state: OPEN = destructive-red dashed, HALF_OPEN = amber dashed, CLOSED/null = default. Only during actively-running sim (avoids stale paint post-completion).
+  4. **`resilience_showcase.json` template** pre-wires all three features on a 4-node graph (LB → API Gateway rate-limit → server w/ retries → DB w/ backpressure + breaker on the LB → gateway wire). One click from landing page; traffic profile designed to trip all three callouts in under 10s.
+- **Why:** Opt-in is great for test stability, but features that can't be toggled via UI aren't really shipped. Adding UI makes the engine features dogfoodable, supports a real demo flow, and lets the design review process start critiquing resilience UX.
+- **Rejected:** Single modal for wire config (floating modal adds UI complexity; extending the existing right-dock ConfigPanel handles both nodes and wires cleanly). Visual wire state in a separate overlay (easier but wastes the existing edge rendering hook).
+- **Source:** commits on `feat/simfid-phase3-resilience` branch; [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `WireLiveState` + tick() return; [src/components/canvas/SimWireEdge.tsx](src/components/canvas/SimWireEdge.tsx) breaker colors; [src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx) `CircuitBreakerSection` / `RetryPolicySection` / `BackpressureSection`; [public/templates/resilience_showcase.json](public/templates/resilience_showcase.json).
+
+### 12j. Graph-version teardown: useSimulation stops the timer when the graph is replaced
+
+- **When:** SIMFID Phase 3 UI, Codex review fix (2026-04-16)
+- **Context:** `replaceGraph` only called `resetSimulationState()` which clears the store, but the simulation timer and `SimulationEngine` instance both live in `useRef` inside `useSimulation`. If the graph was replaced mid-run, the old engine would keep ticking and writing stale metrics/wireStates onto the newly-loaded graph. Codex caught this during Phase 3 UI review (finding #1).
+- **Decision:** Added a `useEffect` in `useSimulation` that watches `graphVersion` (bumped by `replaceGraph`). On change (after the initial mount), it clears the interval, nulls out `engineRef` and `metricsHistoryRef`, and updates its stored version.
+- **Why:** Correctness. Store state and engine state must stay in sync. The alternative (exposing `stopSimulation` through the store so `replaceGraph` can call it) would introduce a circular dependency between the store and the hook's lifecycle.
+- **Source:** [src/engine/useSimulation.ts](src/engine/useSimulation.ts) `useEffect` on `graphVersion`.
+
+### 12k. UI-level validation for retry + breaker numeric inputs
+
+- **When:** SIMFID Phase 3 UI, Codex review fix (2026-04-16)
+- **Context:** The new ConfigPanel sections let users type any value into numeric fields. `maxRetries: Infinity` hangs `computeAmplification`'s for-loop. The engine already rejects invalid policies via `readRetryPolicy`, but silently — so the toggle could look enabled while retries did nothing. Codex finding #3 + #5.
+- **Decision:** Added UI helpers (`safeFiniteNumber`, `safePositiveInt`, `clampFinite`) and applied them to every numeric field in `CircuitBreakerSection` and `RetryPolicySection`. Fractional `maxRetries` → floored. Infinity/NaN → fallback. `failureThreshold` clamped to [0, 1]. Counts clamped to min 1.
+- **Why:** Defense in depth. Engine validation is still the ground truth, but UI validation means the toggle's state reflects reality.
+- **Source:** [src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx) helper functions + updated `onChange` handlers.
+
+### 12l. Backpressure toggle gated to components that emit errorRate
+
+- **When:** SIMFID Phase 3 UI, Codex review fix (2026-04-16)
+- **Context:** Backpressure toggle was shown on all component types, but several processors never set `state.metrics.errorRate` (fanout, websocket_gateway, cdn, autoscaler, cache). Enabling backpressure on those did silently nothing. Codex finding #4.
+- **Decision:** Added `canBackpressure(type)` helper returning true only for processors that meaningfully emit errorRate: `server`, `database`, `queue`, `api_gateway`, `external`, `load_balancer`. `BackpressureSection` is conditional on this check.
+- **Why:** Don't expose a control that doesn't do anything. Hides the toggle instead of letting users click it and wonder why nothing happens.
+- **Source:** [src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx) `canBackpressure` + conditional render.
+
+### 12m. SimWireEdge shows breaker color only during actively-running sim
+
+- **When:** SIMFID Phase 3 UI, Codex review fix (2026-04-16)
+- **Context:** `liveWireStates` persists after simulation completes (it's useful for the debrief view). But edges were painted with breaker colors even on `completed` status, so a user editing the graph post-run would see stale colors from the old topology. Codex finding #2.
+- **Decision:** SimWireEdge gates breaker color rendering on `simulationStatus === 'running' || 'paused'`. Once 'completed' or 'idle', edges render as normal regardless of `liveWireStates`.
+- **Why:** Stale paint misleads. Post-run users are in edit mode; showing breaker colors suggests the wire is still in that state.
+- **Source:** [src/components/canvas/SimWireEdge.tsx](src/components/canvas/SimWireEdge.tsx) `showBreakerState` check.
+
 ### 12. Saturation callouts fire without upper bound on ρ
 
 - **When:** SIMFID Phase 3, Codex review fix (2026-04-16)
