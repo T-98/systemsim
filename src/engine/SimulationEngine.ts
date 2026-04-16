@@ -9,6 +9,8 @@ import type {
   WireConfig,
 } from '../types';
 import type { Node, Edge } from '@xyflow/react';
+import { computeQueueing } from './QueueingModel';
+import { computeCacheModel, networkAwareCacheLatency } from './WorkingSetCache';
 
 interface ComponentState {
   id: string;
@@ -26,6 +28,7 @@ interface ComponentState {
   totalRequests: number;
   crashed: boolean;
   instanceCount: number;
+  lastComputedLatencyMs: number;
 }
 
 interface WireState {
@@ -96,6 +99,7 @@ export class SimulationEngine {
         totalRequests: 0,
         crashed: false,
         instanceCount: (node.data.config.instanceCount as number) ?? 1,
+        lastComputedLatencyMs: 0,
       });
     }
 
@@ -230,7 +234,7 @@ export class SimulationEngine {
     const rpsPerEntry = rpsPerTick / Math.max(this.entryPoints.length, 1);
 
     for (const entryId of this.entryPoints) {
-      this.processComponent(entryId, rpsPerEntry, newLogs);
+      this.processComponent(entryId, rpsPerEntry, newLogs, 0);
     }
 
     // Update particles
@@ -261,7 +265,26 @@ export class SimulationEngine {
     return { metrics, healths, newLogs: throttled, particles: [...this.particles], time: this.time };
   }
 
-  private processComponent(id: string, incomingRps: number, logs: LogEntry[]) {
+  private getWireLatency(sourceId: string, targetId: string): number {
+    for (const wire of this.wires.values()) {
+      if (wire.source === sourceId && wire.target === targetId) {
+        const jitter = (this.random() - 0.5) * 2 * wire.config.jitterMs;
+        return Math.max(0, wire.config.latencyMs + jitter);
+      }
+    }
+    return 0;
+  }
+
+  private forwardToDownstreams(sourceId: string, rps: number, accumulatedLatencyMs: number, logs: LogEntry[]) {
+    const downstreams = this.adjacency.get(sourceId) ?? [];
+    const rpsEach = rps / Math.max(downstreams.length, 1);
+    for (const downstream of downstreams) {
+      const wireLatency = this.getWireLatency(sourceId, downstream);
+      this.processComponent(downstream, rpsEach, logs, accumulatedLatencyMs + wireLatency);
+    }
+  }
+
+  private processComponent(id: string, incomingRps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const state = this.components.get(id);
     if (!state || state.crashed) {
       return;
@@ -284,53 +307,49 @@ export class SimulationEngine {
 
     switch (state.type) {
       case 'load_balancer':
-        this.processLoadBalancer(state, incomingRps, logs);
+        this.processLoadBalancer(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'api_gateway':
-        this.processApiGateway(state, incomingRps, logs);
+        this.processApiGateway(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'server':
-        this.processServer(state, incomingRps, logs);
+        this.processServer(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'cache':
-        this.processCache(state, incomingRps, logs);
+        this.processCache(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'queue':
-        this.processQueue(state, incomingRps, logs);
+        this.processQueue(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'database':
-        this.processDatabase(state, incomingRps, logs);
+        this.processDatabase(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'websocket_gateway':
-        this.processWebSocketGateway(state, incomingRps, logs);
+        this.processWebSocketGateway(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'fanout':
-        this.processFanout(state, incomingRps, logs);
+        this.processFanout(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'cdn':
-        this.processCdn(state, incomingRps, logs);
+        this.processCdn(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'external':
-        this.processExternal(state, incomingRps, logs);
+        this.processExternal(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'autoscaler':
-        this.processAutoscaler(state, incomingRps, logs);
+        this.processAutoscaler(state, incomingRps, logs, accumulatedLatencyMs);
         break;
     }
 
     this.callStack.delete(id);
   }
 
-  private processLoadBalancer(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processLoadBalancer(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const downstreams = this.adjacency.get(state.id) ?? [];
     if (downstreams.length === 0) return;
 
     state.metrics.rps = rps / this.tickInterval;
-    state.metrics.p50 = 1;
-    state.metrics.p99 = 3;
 
-    // Distribute based on algorithm
-    const algorithm = state.config.algorithm as string;
     const healthyDownstreams = downstreams.filter((d) => {
       const ds = this.components.get(d);
       return ds && !ds.crashed;
@@ -339,6 +358,8 @@ export class SimulationEngine {
     if (healthyDownstreams.length === 0) {
       state.metrics.errorRate = 1.0;
       state.accumulatedErrors += rps;
+      state.metrics.p50 = 0;
+      state.metrics.p99 = 0;
       if (rps > 0) {
         logs.push({ time: this.time, message: `${state.id}: No healthy backends. All requests failing.`, severity: 'critical', componentId: state.id });
       }
@@ -347,11 +368,26 @@ export class SimulationEngine {
 
     const rpsEach = rps / healthyDownstreams.length;
     for (const downstream of healthyDownstreams) {
-      this.processComponent(downstream, rpsEach, logs);
+      const wireLatency = this.getWireLatency(state.id, downstream);
+      this.processComponent(downstream, rpsEach, logs, accumulatedLatencyMs + wireLatency);
     }
+
+    const lbProcessingMs = 0.5;
+    let maxDownstreamLatency = 0;
+    for (const dsId of healthyDownstreams) {
+      const ds = this.components.get(dsId);
+      if (ds) {
+        const wireLatency = this.getWireLatency(state.id, dsId);
+        maxDownstreamLatency = Math.max(maxDownstreamLatency, ds.lastComputedLatencyMs + wireLatency);
+      }
+    }
+
+    state.metrics.p50 = lbProcessingMs + maxDownstreamLatency * 0.7;
+    state.metrics.p99 = lbProcessingMs + maxDownstreamLatency * 1.3;
+    state.lastComputedLatencyMs = state.metrics.p50;
   }
 
-  private processApiGateway(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processApiGateway(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const rateLimit = (state.config.rateLimitRps as number) ?? 10000;
     const rateLimitPerTick = rateLimit * this.tickInterval;
 
@@ -365,8 +401,9 @@ export class SimulationEngine {
 
     state.metrics.rps = rps / this.tickInterval;
     state.metrics.errorRate = rps > 0 ? rejected / rps : 0;
-    state.metrics.p50 = 2;
-    state.metrics.p99 = this.addJitter(10, 30);
+    state.metrics.p50 = 2 + accumulatedLatencyMs;
+    state.metrics.p99 = this.addJitter(10, 30) + accumulatedLatencyMs;
+    state.lastComputedLatencyMs = state.metrics.p50;
 
     if (rejected > 0 && state.metrics.errorRate > 0.1) {
       logs.push({
@@ -377,102 +414,95 @@ export class SimulationEngine {
       });
     }
 
-    const downstreams = this.adjacency.get(state.id) ?? [];
-    const rpsEach = passthrough / Math.max(downstreams.length, 1);
-    for (const downstream of downstreams) {
-      this.processComponent(downstream, rpsEach, logs);
-    }
+    this.forwardToDownstreams(state.id, passthrough, accumulatedLatencyMs + 2, logs);
   }
 
-  private processServer(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processServer(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const maxConcurrent = (state.config.maxConcurrent as number) ?? 1000;
     const processingTime = (state.config.processingTimeMs as number) ?? 50;
     const instances = state.instanceCount;
-    const totalCapacity = maxConcurrent * instances;
-    const rpsCapacity = (totalCapacity / processingTime) * 1000 * this.tickInterval;
 
-    state.currentConnections += rps;
-    state.currentConnections = Math.max(0, state.currentConnections - rpsCapacity);
+    const arrivalRateRps = rps / this.tickInterval;
 
-    const utilization = Math.min(1, state.currentConnections / totalCapacity);
-    state.metrics.cpuPercent = utilization * 100;
-    state.metrics.memoryPercent = utilization * 60 + this.random() * 10;
-    state.metrics.rps = rps / this.tickInterval;
+    const q = computeQueueing({
+      arrivalRateRps,
+      processingTimeMs: processingTime,
+      instanceCount: instances,
+      maxConcurrentPerInstance: maxConcurrent,
+    });
 
-    // Latency increases with utilization
-    const baseLatency = processingTime;
-    const loadMultiplier = 1 + Math.pow(utilization, 3) * 20;
-    state.metrics.p50 = baseLatency * loadMultiplier * 0.5;
-    state.metrics.p95 = baseLatency * loadMultiplier * 1.5;
-    state.metrics.p99 = baseLatency * loadMultiplier * 3;
+    state.metrics.cpuPercent = q.utilization * 100;
+    state.metrics.memoryPercent = q.utilization * 60 + this.random() * 10;
+    state.metrics.rps = arrivalRateRps;
 
-    // Drop requests when overloaded
+    state.metrics.p50 = q.p50Ms + accumulatedLatencyMs;
+    state.metrics.p95 = q.p95Ms + accumulatedLatencyMs;
+    state.metrics.p99 = q.p99Ms + accumulatedLatencyMs;
+    state.lastComputedLatencyMs = q.p50Ms;
+
     let passthrough = rps;
-    if (utilization > 0.95) {
-      const dropRate = (utilization - 0.95) / 0.05;
-      const dropped = rps * dropRate * 0.5;
+    if (q.dropRate > 0) {
+      const dropped = rps * q.dropRate;
       passthrough = rps - dropped;
-      state.metrics.errorRate = dropped / Math.max(rps, 1);
+      state.metrics.errorRate = q.dropRate;
       state.accumulatedErrors += dropped;
     } else {
       state.metrics.errorRate = 0;
     }
 
-    const downstreams = this.adjacency.get(state.id) ?? [];
-    const rpsEach = passthrough / Math.max(downstreams.length, 1);
-    for (const downstream of downstreams) {
-      this.processComponent(downstream, rpsEach, logs);
-    }
+    this.forwardToDownstreams(state.id, passthrough, accumulatedLatencyMs + q.p50Ms, logs);
   }
 
-  private processCache(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processCache(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const maxMemoryMb = (state.config.maxMemoryMb as number) ?? 1024;
     const ttlSeconds = (state.config.ttlSeconds as number) ?? 300;
-    const writeStrategy = state.config.writeStrategy as string;
+    const evictionPolicy = (state.config.evictionPolicy as 'lru' | 'lfu' | 'ttl-only') ?? 'lru';
 
-    // Simulate cache entries growing
-    state.cacheEntries += rps * 0.3;
-    // Evict based on TTL
-    state.cacheEntries -= state.cacheEntries * (this.tickInterval / ttlSeconds);
-    state.cacheEntries = Math.max(0, state.cacheEntries);
+    const arrivalRateRps = rps / this.tickInterval;
+    const keyCardinality = 100000;
+    const avgValueBytes = 512;
 
-    state.memoryUsed = (state.cacheEntries / 100000) * maxMemoryMb * 0.001;
-    state.metrics.memoryPercent = Math.min(100, (state.memoryUsed / maxMemoryMb) * 100);
+    const cacheResult = computeCacheModel({
+      rps: arrivalRateRps,
+      cacheSizeMb: maxMemoryMb,
+      ttlSeconds,
+      evictionPolicy,
+      keyCardinality,
+      avgValueBytes,
+      simTimeSeconds: this.time,
+    });
 
-    // Cache hit rate - starts high, drops under memory pressure or cold start
-    let hitRate = 0.85 + this.random() * 0.1;
-    if (state.cacheEntries < 100) hitRate = 0.1; // Cold cache
-    if (state.metrics.memoryPercent > 90) hitRate *= 0.7; // Under pressure
+    let hitRate = cacheResult.hitRate;
 
-    // Cache stampede detection: if many entries expired simultaneously
-    const phaseTime = this.time % ttlSeconds;
-    if (phaseTime < 1 && state.cacheEntries > 1000) {
-      hitRate = 0.2; // Mass TTL expiry
-      if (!state.crashed) {
-        logs.push({
-          time: this.time,
-          message: `${state.id}: Cache stampede detected. Mass TTL expiry causing DB flood.`,
-          severity: 'critical',
-          componentId: state.id,
-        });
+    if (cacheResult.stampedeRisk) {
+      const phaseTime = this.time % ttlSeconds;
+      if (phaseTime < 2) {
+        hitRate *= 0.3;
+        if (!state.crashed) {
+          logs.push({
+            time: this.time,
+            message: `${state.id}: Cache stampede detected. Mass TTL expiry causing DB flood.`,
+            severity: 'critical',
+            componentId: state.id,
+          });
+        }
       }
     }
 
     state.metrics.cacheHitRate = hitRate;
-    state.metrics.rps = rps / this.tickInterval;
-    state.metrics.p50 = 1;
-    state.metrics.p99 = hitRate > 0.5 ? 5 : 50;
+    state.metrics.rps = arrivalRateRps;
+    state.metrics.memoryPercent = Math.min(100, (cacheResult.memoryUsedMb / maxMemoryMb) * 100);
 
-    // Misses go to downstream (DB)
+    const latency = networkAwareCacheLatency(maxMemoryMb, ttlSeconds);
+    state.metrics.p50 = latency.p50 + accumulatedLatencyMs;
+    state.metrics.p99 = (hitRate > 0.5 ? latency.p99 : latency.p99 * 10) + accumulatedLatencyMs;
+    state.lastComputedLatencyMs = latency.p50;
+
     const missRps = rps * (1 - hitRate);
-    const downstreams = this.adjacency.get(state.id) ?? [];
-    const rpsEach = missRps / Math.max(downstreams.length, 1);
-    for (const downstream of downstreams) {
-      this.processComponent(downstream, rpsEach, logs);
-    }
+    this.forwardToDownstreams(state.id, missRps, accumulatedLatencyMs + latency.p50, logs);
   }
 
-  private processQueue(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processQueue(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const maxDepth = (state.config.maxDepth as number) ?? 10000000;
     const consumersPerGroup = (state.config.consumersPerGroup as number) ?? 5;
     const consumerGroups = (state.config.consumerGroupCount as number) ?? 1;
@@ -524,15 +554,11 @@ export class SimulationEngine {
       });
     }
 
-    // Forward consumed messages downstream
-    const downstreams = this.adjacency.get(state.id) ?? [];
-    const rpsEach = consumed / Math.max(downstreams.length, 1);
-    for (const downstream of downstreams) {
-      this.processComponent(downstream, rpsEach, logs);
-    }
+    state.lastComputedLatencyMs = state.metrics.p50;
+    this.forwardToDownstreams(state.id, consumed, accumulatedLatencyMs + state.metrics.p50, logs);
   }
 
-  private processDatabase(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processDatabase(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const shardingEnabled = state.config.shardingEnabled as boolean;
     const shardCount = (state.config.shardCount as number) ?? 1;
     const connectionPoolSize = (state.config.connectionPoolSize as number) ?? 100;
@@ -608,9 +634,11 @@ export class SimulationEngine {
     const baseLatency = 5;
     const loadFactor = 1 + Math.pow(utilizationPct / 100, 4) * 50;
     const connectionPenalty = connectionUtilization > 0.8 ? (connectionUtilization - 0.8) * 500 : 0;
-    state.metrics.p50 = baseLatency * loadFactor + connectionPenalty;
-    state.metrics.p95 = state.metrics.p50 * 2;
-    state.metrics.p99 = state.metrics.p50 * 4 + replicationLag;
+    const dbLatency = baseLatency * loadFactor + connectionPenalty;
+    state.metrics.p50 = dbLatency + accumulatedLatencyMs;
+    state.metrics.p95 = dbLatency * 2 + accumulatedLatencyMs;
+    state.metrics.p99 = dbLatency * 4 + replicationLag + accumulatedLatencyMs;
+    state.lastComputedLatencyMs = dbLatency;
 
     // Connection pool exhaustion
     if (connectionUtilization > 1) {
@@ -631,7 +659,7 @@ export class SimulationEngine {
     }
   }
 
-  private processWebSocketGateway(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processWebSocketGateway(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const maxConnections = (state.config.maxConnections as number) ?? 100000;
 
     state.currentConnections += rps * 0.1;
@@ -640,8 +668,9 @@ export class SimulationEngine {
     state.metrics.rps = rps / this.tickInterval;
     state.metrics.activeConnections = Math.round(state.currentConnections);
     state.metrics.memoryPercent = (state.currentConnections / maxConnections) * 100;
-    state.metrics.p50 = 2;
-    state.metrics.p99 = 15;
+    state.metrics.p50 = 2 + accumulatedLatencyMs;
+    state.metrics.p99 = 15 + accumulatedLatencyMs;
+    state.lastComputedLatencyMs = 2;
 
     if (state.currentConnections > maxConnections * 0.9) {
       logs.push({
@@ -652,22 +681,20 @@ export class SimulationEngine {
       });
     }
 
-    const downstreams = this.adjacency.get(state.id) ?? [];
-    const rpsEach = rps / Math.max(downstreams.length, 1);
-    for (const downstream of downstreams) {
-      this.processComponent(downstream, rpsEach, logs);
-    }
+    this.forwardToDownstreams(state.id, rps, accumulatedLatencyMs + 2, logs);
   }
 
-  private processFanout(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processFanout(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const multiplier = (state.config.multiplier as number) ?? 500000;
     const deliveryMode = state.config.deliveryMode as string;
 
     const outputRps = rps * multiplier;
     state.metrics.rps = rps / this.tickInterval;
     state.metrics.cpuPercent = Math.min(100, (rps / this.tickInterval / 1000) * 80);
-    state.metrics.p50 = deliveryMode === 'parallel' ? 10 : multiplier * 0.001;
-    state.metrics.p99 = state.metrics.p50 * 5;
+    const fanoutLatency = deliveryMode === 'parallel' ? 10 : multiplier * 0.001;
+    state.metrics.p50 = fanoutLatency + accumulatedLatencyMs;
+    state.metrics.p99 = fanoutLatency * 5 + accumulatedLatencyMs;
+    state.lastComputedLatencyMs = fanoutLatency;
 
     if (outputRps > 0 && rps / this.tickInterval > 100) {
       logs.push({
@@ -678,41 +705,36 @@ export class SimulationEngine {
       });
     }
 
-    const downstreams = this.adjacency.get(state.id) ?? [];
-    const rpsEach = outputRps / Math.max(downstreams.length, 1);
-    for (const downstream of downstreams) {
-      this.processComponent(downstream, rpsEach, logs);
-    }
+    this.forwardToDownstreams(state.id, outputRps, accumulatedLatencyMs + fanoutLatency, logs);
   }
 
-  private processCdn(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processCdn(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const hitRate = (state.config.cacheHitRate as number) ?? 0.9;
     const originLatency = (state.config.originPullLatencyMs as number) ?? 200;
 
     state.metrics.rps = rps / this.tickInterval;
     state.metrics.cacheHitRate = hitRate;
-    state.metrics.p50 = hitRate * 5 + (1 - hitRate) * originLatency;
-    state.metrics.p99 = originLatency;
+    const cdnLatency = hitRate * 5 + (1 - hitRate) * originLatency;
+    state.metrics.p50 = cdnLatency + accumulatedLatencyMs;
+    state.metrics.p99 = originLatency + accumulatedLatencyMs;
+    state.lastComputedLatencyMs = cdnLatency;
 
     const missRps = rps * (1 - hitRate);
-    const downstreams = this.adjacency.get(state.id) ?? [];
-    const rpsEach = missRps / Math.max(downstreams.length, 1);
-    for (const downstream of downstreams) {
-      this.processComponent(downstream, rpsEach, logs);
-    }
+    this.forwardToDownstreams(state.id, missRps, accumulatedLatencyMs + cdnLatency, logs);
   }
 
-  private processExternal(state: ComponentState, rps: number, logs: LogEntry[]) {
+  private processExternal(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const latency = (state.config.latencyMs as number) ?? 100;
     const errorRate = (state.config.errorRate as number) ?? 0.01;
 
     state.metrics.rps = rps / this.tickInterval;
-    state.metrics.p50 = latency;
-    state.metrics.p99 = latency * 3;
+    state.metrics.p50 = latency + accumulatedLatencyMs;
+    state.metrics.p99 = latency * 3 + accumulatedLatencyMs;
     state.metrics.errorRate = errorRate + (this.random() * 0.02);
+    state.lastComputedLatencyMs = latency;
   }
 
-  private processAutoscaler(state: ComponentState, _rps: number, logs: LogEntry[]) {
+  private processAutoscaler(state: ComponentState, _rps: number, logs: LogEntry[], _accumulatedLatencyMs: number) {
     const targetCpu = (state.config.targetCpuThreshold as number) ?? 70;
     const maxInstances = (state.config.maxInstances as number) ?? 20;
     const minInstances = (state.config.minInstances as number) ?? 1;
