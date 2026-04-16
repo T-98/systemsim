@@ -98,22 +98,69 @@ async function runSimAndCapture(page: Page, testDir: string) {
   await runButton.click();
 
   await expect(page.locator('button:has-text("Pause")')).toBeVisible({ timeout: 5000 });
-  await expect(page.locator('button:has-text("Debrief")')).toBeVisible({ timeout: 120000 });
 
+  // Mid-sim screenshot: poll for trouble (critical/crashed health or error rate > 0)
+  let midSimCaptured = false;
+  for (let i = 0; i < 40; i++) {
+    await page.waitForTimeout(250);
+    const hasTrouble = await page.evaluate(() => {
+      const store = (window as any).__SYSTEMSIM_STORE__;
+      if (!store) return false;
+      const state = store.getState();
+      return state.nodes.some((n: any) =>
+        n.data.health === 'critical' || n.data.health === 'crashed' || n.data.metrics.errorRate > 0.1
+      );
+    });
+    if (hasTrouble && !midSimCaptured) {
+      // Close bottom panel for clean canvas shot
+      await page.evaluate(() => {
+        const store = (window as any).__SYSTEMSIM_STORE__;
+        if (store) store.getState().setBottomPanelOpen(false);
+      });
+      await page.waitForTimeout(200);
+      await page.screenshot({ path: path.join(testDir, 'canvas-mid-sim.png'), fullPage: false });
+      // Re-open bottom panel
+      await page.evaluate(() => {
+        const store = (window as any).__SYSTEMSIM_STORE__;
+        if (store) store.getState().setBottomPanelOpen(true);
+      });
+      midSimCaptured = true;
+      break;
+    }
+    // Check if sim already finished
+    const finished = await page.locator('button:has-text("Debrief")').isVisible().catch(() => false);
+    if (finished) break;
+  }
+
+  // Wait for completion — use the toolbar Debrief button (not the bottom panel tab)
+  const toolbarDebrief = page.locator('button:has-text("Debrief")').first();
+  await expect(toolbarDebrief).toBeVisible({ timeout: 120000 });
+
+  // Final canvas screenshot with bottom panel closed
+  await page.evaluate(() => {
+    const store = (window as any).__SYSTEMSIM_STORE__;
+    if (store) store.getState().setBottomPanelOpen(false);
+  });
+  await page.waitForTimeout(200);
   await page.screenshot({ path: path.join(testDir, 'canvas.png'), fullPage: false });
 
-  await page.click('button:has-text("Debrief")');
+  // Click toolbar Debrief to trigger debrief generation + switch bottom panel tab
+  await toolbarDebrief.click();
   await page.waitForTimeout(500);
 
+  // Download report from bottom panel debrief tab
   const downloadPromise = page.waitForEvent('download', { timeout: 10000 });
-  await page.click('button:has-text("Download Report")');
+  const downloadBtn = page.getByTestId('bottom-panel').locator('button:has-text("Download Report")');
+  await downloadBtn.click();
   const download = await downloadPromise;
   await download.saveAs(path.join(testDir, download.suggestedFilename()));
 
+  // Debrief screenshot
   await page.screenshot({ path: path.join(testDir, 'debrief.png'), fullPage: false });
 }
 
 test.describe('SIMFID Phase 2 — Engine Fidelity Validation', () => {
+  test.setTimeout(60000);
 
   test.beforeAll(() => ensureDir(RESULTS_DIR));
 

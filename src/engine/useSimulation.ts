@@ -97,6 +97,7 @@ export function useSimulation() {
     });
     useStore.getState().setDebrief(debrief);
     useStore.getState().setDebriefVisible(true);
+    useStore.getState().setBottomPanelTab('debrief');
 
     // Async AI debrief — merge questions when ready, fallback on failure
     useStore.getState().setDebriefLoading(true);
@@ -142,6 +143,8 @@ export function useSimulation() {
     const runId = uuid();
     setCurrentRunId(runId);
     setSimulationStatus('running');
+    useStore.getState().setBottomPanelOpen(true);
+    useStore.getState().setBottomPanelTab('log');
 
     const tickRate = 1000 / simulationSpeed;
 
