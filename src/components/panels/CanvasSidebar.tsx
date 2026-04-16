@@ -1,3 +1,14 @@
+/**
+ * @file components/panels/CanvasSidebar.tsx
+ *
+ * Left-side tabbed sidebar with Components / Design / Traffic tabs. Tab
+ * state lives in the store (`sidebarTab`) so preflight routing can switch
+ * tabs from outside this component. Traffic tab only shows in freeform mode.
+ *
+ * Pulses when `pulseTarget === 'sidebar:{tabId}'` (see Preflight routing flow
+ * in Knowledge.md).
+ */
+
 import { useStore } from '../../store';
 import ComponentLibrary from './ComponentLibrary';
 import TrafficEditor from './TrafficEditor';

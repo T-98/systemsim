@@ -1,3 +1,12 @@
+/**
+ * @file components/ui/RemixInput.tsx
+ *
+ * Inline remix input that posts the current canvas + new prompt to
+ * /api/generate-diagram with `mode: 'remix'`. The backend uses the current
+ * graph as context so "change X" works. Destructive; confirmed via
+ * ConfirmModal, undoable via UndoToast.
+ */
+
 import { useState, useRef, useEffect } from 'react';
 import { useStore } from '../../store';
 import { generateDiagram, type GenerateResult } from '../../ai/generateDiagram';

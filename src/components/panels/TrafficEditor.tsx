@@ -1,3 +1,12 @@
+/**
+ * @file components/panels/TrafficEditor.tsx
+ *
+ * Freeform-mode traffic profile editor. Lets the user define phases
+ * (startS / endS / rps / shape / description), jitter %, and user
+ * distribution. Scenario mode uses the scenario's hardcoded profile instead
+ * and hides this tab.
+ */
+
 import { useState } from 'react';
 import { useStore } from '../../store';
 import type { TrafficPhase, TrafficProfile } from '../../types';

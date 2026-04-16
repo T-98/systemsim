@@ -1,3 +1,14 @@
+/**
+ * @file components/ui/LandingPage.tsx
+ *
+ * First screen. Three entry paths:
+ * 1. Discord scenario (guided flow with hardcoded traffic + requirements)
+ * 2. Template picker (canonical graphs from /public/templates/)
+ * 3. UnifiedInput (text + image) → Vision-to-Intent review → canvas
+ *
+ * Text-to-diagram is gated behind `VITE_ENABLE_TEXT_TO_DIAGRAM`.
+ */
+
 import { useStore } from '../../store';
 import { DISCORD_BRIEF, DISCORD_TRAFFIC_PROFILE, DISCORD_DEFAULT_FUNCTIONAL_REQS, DISCORD_DEFAULT_NFRS, DISCORD_SCENARIO_ID } from '../../scenarios/discord';
 import TemplatePicker from './TemplatePicker';

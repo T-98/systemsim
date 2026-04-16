@@ -1,3 +1,15 @@
+/**
+ * @file preflight.ts
+ *
+ * Gates the Run button. Checks the current design against a set of structural
+ * rules and returns errors + warnings. Errors block Run; warnings render in
+ * the PreflightBanner but don't block.
+ *
+ * Each PreflightItem carries routing info (target tab, target node) so the
+ * banner can deep-link the user to the fix location with a visual pulse.
+ * See Decisions.md #22 and Knowledge.md Flow 6.
+ */
+
 import type {
   ApiContract,
   EndpointRoute,
@@ -17,6 +29,11 @@ interface PreflightInput {
   endpointRoutes: EndpointRoute[];
 }
 
+/**
+ * Run all preflight checks. Called in a useMemo in Toolbar every time the
+ * graph, traffic profile, or design artifacts change. The Run button is
+ * disabled when `errors.length > 0`.
+ */
 export function runPreflight(input: PreflightInput): PreflightResult {
   const errors: PreflightItem[] = [];
   const warnings: PreflightItem[] = [];

@@ -1,3 +1,15 @@
+/**
+ * @file ai/diagramPrompt.ts
+ *
+ * Prompt template for text-to-diagram + remix. Bump PROMPT_VERSION when the
+ * template changes so we can correlate old outputs with the prompt that
+ * generated them.
+ *
+ * The system prompt aggressively constrains output to the 6-type MVP
+ * allowlist (load_balancer, server, database, cache, queue, fanout) and
+ * provides a mapping table for common aliases (CDN → cache, Kafka → queue).
+ */
+
 export const PROMPT_VERSION = '1.0';
 
 const SYSTEM_PROMPT = `You are a distributed systems architect. Given a text description of a system, generate a component diagram using the generate_system_diagram tool.

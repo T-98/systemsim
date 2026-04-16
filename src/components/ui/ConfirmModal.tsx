@@ -1,3 +1,10 @@
+/**
+ * @file components/ui/ConfirmModal.tsx
+ *
+ * Modal dialog with title / body / confirm / cancel. Used before destructive
+ * actions (Remix that replaces the canvas).
+ */
+
 import { useEffect, useRef } from 'react';
 
 interface ConfirmModalProps {

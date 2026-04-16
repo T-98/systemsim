@@ -1,3 +1,12 @@
+/**
+ * @file components/canvas/IntentHeader.tsx
+ *
+ * Narrow header above the canvas in freeform mode. Displays the extracted
+ * intent goal (from Vision-to-Intent) and a "Re-derive components" button
+ * that replays the describe-intent → derive flow if the user edits the
+ * intent text.
+ */
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../store';
 

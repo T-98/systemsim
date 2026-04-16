@@ -1,3 +1,14 @@
+/**
+ * @file util/imageResize.ts
+ *
+ * Client-side canvas-based resize. Takes a File or base64 data URL, resizes
+ * to `MAX_LONG_EDGE_PX` (1568) and re-encodes as JPEG quality 0.85. Run
+ * before upload so the server never sees original-resolution screenshots.
+ *
+ * Keeps upload payload under the 6MB API limit and gets vision results back
+ * faster (smaller image → faster token extraction).
+ */
+
 export const ALLOWED_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp'] as const;
 export type AllowedImageMime = (typeof ALLOWED_IMAGE_MIMES)[number];
 

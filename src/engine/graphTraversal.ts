@@ -1,3 +1,13 @@
+/**
+ * @file graphTraversal.ts
+ *
+ * Graph helpers shared across engine, preflight, and store. Works on plain
+ * `{ source, target }` edges so callers don't need to pass full xyflow Edge types.
+ *
+ * Entry-point semantics: prefer explicit `config.isEntry === true`, fall back
+ * to zero-indegree. Only one set is used; no mixing.
+ */
+
 interface GraphNode {
   id: string;
   data?: { config?: Record<string, unknown> };
@@ -8,6 +18,7 @@ interface GraphEdge {
   target: string;
 }
 
+/** Build `source → [targets]` adjacency map from edges. */
 export function buildAdjacency(edges: GraphEdge[]): Map<string, string[]> {
   const adj = new Map<string, string[]>();
   for (const e of edges) {
@@ -17,6 +28,7 @@ export function buildAdjacency(edges: GraphEdge[]): Map<string, string[]> {
   return adj;
 }
 
+/** Build `target → [sources]` adjacency (used for indegree checks). */
 export function buildReverseAdjacency(edges: GraphEdge[]): Map<string, string[]> {
   const rev = new Map<string, string[]>();
   for (const e of edges) {
@@ -26,6 +38,7 @@ export function buildReverseAdjacency(edges: GraphEdge[]): Map<string, string[]>
   return rev;
 }
 
+/** Shortest-path BFS. Returns the path or `null` if unreachable. */
 export function bfs(
   adj: Map<string, string[]>,
   from: string,
@@ -52,6 +65,10 @@ export function bfs(
   return null;
 }
 
+/**
+ * Entry points for simulation traffic. Explicit `isEntry` flag wins if any
+ * node sets it; otherwise falls back to zero-indegree nodes.
+ */
 export function findEntryPoints(
   nodes: GraphNode[],
   edges: GraphEdge[],
@@ -74,6 +91,7 @@ export function findEntryPoints(
   return zeroIndegree;
 }
 
+/** Nodes with no incoming AND no outgoing edges. Flagged by preflight. */
 export function findDisconnected(
   nodes: GraphNode[],
   edges: GraphEdge[],
@@ -89,6 +107,7 @@ export function findDisconnected(
     .map((n) => n.id);
 }
 
+/** True when a path exists from → to. Convenience wrapper around bfs. */
 export function isReachable(
   adj: Map<string, string[]>,
   from: string,

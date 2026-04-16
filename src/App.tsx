@@ -1,3 +1,12 @@
+/**
+ * @file App.tsx
+ *
+ * Top-level view router. Reads `appView` from the store and mounts the right
+ * top-level component: landing / review / canvas. The design flow is
+ * currently a full-page view at `appView === 'design'`. Wraps the canvas
+ * tree in ReactFlowProvider so XyFlow hooks work inside nested components.
+ */
+
 import { ReactFlowProvider } from '@xyflow/react';
 import { useStore } from './store';
 import LandingPage from './components/ui/LandingPage';

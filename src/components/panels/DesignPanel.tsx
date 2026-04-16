@@ -1,3 +1,11 @@
+/**
+ * @file components/panels/DesignPanel.tsx
+ *
+ * Compact inline version of the design editor that lives inside the
+ * CanvasSidebar's Design tab. Sub-tabs: API and Schema (via `designPanelTab`
+ * store field so preflight routing can target them).
+ */
+
 import { useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useStore } from '../../store';

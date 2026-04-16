@@ -1,3 +1,11 @@
+/**
+ * @file components/panels/ComponentLibrary.tsx
+ *
+ * Draggable component chips. Filters to `MVP_VISIBLE_TYPES` (6 of 11). Drag
+ * sets `application/reactflow` data; Canvas reads it on drop and calls
+ * `addNode(type, position)`.
+ */
+
 import { useState } from 'react';
 import { COMPONENT_CATEGORIES, COMPONENT_DEFS, MVP_VISIBLE_TYPES } from '../../types/components';
 import { ComponentIcon } from '../nodes/icons';

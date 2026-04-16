@@ -1,3 +1,10 @@
+/**
+ * @file components/nodes/icons.tsx
+ *
+ * Per-component-type SVG icons. Kept inline (not imported from a lib) so
+ * they're tree-shakeable and themeable via currentColor.
+ */
+
 import type { ComponentType } from '../../types';
 
 const iconProps = { width: 24, height: 24, fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 };

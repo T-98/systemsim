@@ -1,3 +1,11 @@
+/**
+ * @file layout/dagre.ts
+ *
+ * Auto-layout wrapper around Dagre for generated diagrams (text-to-diagram,
+ * vision-to-intent, templates without explicit positions). Left-to-right
+ * flow with consistent spacing.
+ */
+
 import Dagre from '@dagrejs/dagre';
 import type { Node, Edge } from '@xyflow/react';
 import type { SimComponentData, WireConfig } from '../types';

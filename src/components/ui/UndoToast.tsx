@@ -1,3 +1,11 @@
+/**
+ * @file components/ui/UndoToast.tsx
+ *
+ * Bottom-center toast with message + auto-dismiss (4s). Used after Remix to
+ * show "Remixed. ⌘Z to restore." Keyboard undo is handled globally in the
+ * store's `undo()`.
+ */
+
 import { useEffect, useState, useRef } from 'react';
 
 interface UndoToastProps {

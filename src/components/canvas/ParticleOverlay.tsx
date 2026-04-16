@@ -1,3 +1,11 @@
+/**
+ * @file components/canvas/ParticleOverlay.tsx
+ *
+ * SVG overlay that animates `store.particles` along wires during a running
+ * simulation. Particles are emitted per tick by SimulationEngine based on
+ * current RPS; their `progress` advances from 0 to 1 along the wire path.
+ */
+
 import { useEffect, useRef } from 'react';
 import { useStore } from '../../store';
 import { useReactFlow } from '@xyflow/react';

@@ -1,3 +1,11 @@
+/**
+ * @file api/generate-diagram.ts
+ *
+ * Vercel Edge Function for text-to-diagram and remix. Claude Sonnet 4.6 with
+ * tool-use (`generate_system_diagram`), output validated + rewritten into
+ * our canonical graph shape via `validateAndRewrite`.
+ */
+
 import { createAnthropicHandler } from './_shared/handler';
 import { MODEL_ID } from './_shared/constants';
 import { TOOL_SCHEMA, validateAndRewrite } from '../src/ai/diagramSchema';

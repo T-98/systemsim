@@ -1,3 +1,11 @@
+/**
+ * @file ai/parseConnections.ts
+ *
+ * Parses the `connections` lines from an intent spec into canonical edges.
+ * Accepts `A --> B`, `A → B`, and `A --label--> B` formats. Matches labels
+ * fuzzily to detected components (case-insensitive, trimmed).
+ */
+
 import type { DetectedComponent } from './describeIntentSchema';
 import type { CanonicalGraph, CanonicalNode } from '../types';
 

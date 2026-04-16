@@ -1,3 +1,14 @@
+/**
+ * @file components/ui/ReviewMode.tsx
+ *
+ * Shown at `appView === 'review'` after Vision-to-Intent returns. User can
+ * edit the extracted intent (goal, scale, risks), components (label, type),
+ * and connections (source→target lines) before deriving the canvas graph.
+ *
+ * This review step exists because vision extraction is imperfect and users
+ * need a trusted "commit" moment before the diagram becomes real.
+ */
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../store';
 import { aggregateConfidence } from '../../ai/describeIntentSchema';

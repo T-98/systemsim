@@ -1,3 +1,12 @@
+/**
+ * @file ai/describeIntentSchema.ts
+ *
+ * Tool-use schema + validator for the `describe_intent` Anthropic tool.
+ * Shape is a discriminated union: components, intent (goal/scale/risks),
+ * connections (sourceLabel → targetLabel with optional edgeLabel), confidence
+ * breakdown per dimension.
+ */
+
 import type { ComponentType } from '../types';
 
 export type ConfidenceLevel = 'low' | 'med' | 'high';

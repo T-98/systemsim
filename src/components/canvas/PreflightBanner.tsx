@@ -1,3 +1,12 @@
+/**
+ * @file components/canvas/PreflightBanner.tsx
+ *
+ * Banner above the canvas that lists preflight errors + warnings. Each item
+ * is clickable; clicking deep-links to the fix location (tab, node, or
+ * canvas) and triggers the pulse animation to draw the eye. See
+ * Decisions.md #22.
+ */
+
 import { useMemo, useState } from 'react';
 import { useStore } from '../../store';
 import { runPreflight } from '../../engine/preflight';

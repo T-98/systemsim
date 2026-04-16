@@ -1,3 +1,14 @@
+/**
+ * @file ai/describeIntentPrompt.ts
+ *
+ * Prompt template for the vision-to-intent flow. The LLM's job is to
+ * faithfully transcribe an existing diagram (Miro/Figma/Excalidraw
+ * screenshot) OR a text description, NOT to invent plausible-sounding
+ * connections.
+ *
+ * Versioned via DESCRIBE_INTENT_PROMPT_VERSION for A/B correlation.
+ */
+
 export const DESCRIBE_INTENT_PROMPT_VERSION = '2.0';
 
 export const DESCRIBE_INTENT_SYSTEM_PROMPT = `You are a distributed-systems translator. The user is a non-technical startup founder. They give you (a) text describing what they want to build, (b) an image of a diagram they sketched in Miro/Figma/Excalidraw, or both.

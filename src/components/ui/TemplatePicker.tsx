@@ -1,3 +1,11 @@
+/**
+ * @file components/ui/TemplatePicker.tsx
+ *
+ * Grid of template thumbnails on the landing page. Loads canonical graphs
+ * from /public/templates/*.json. On click → `replaceGraph(canonical)` +
+ * `setAppView('canvas')`.
+ */
+
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../store';
 import type { CanonicalGraph } from '../../types';

@@ -1,3 +1,10 @@
+/**
+ * @file components/ui/ImagePreviewChip.tsx
+ *
+ * Compact chip shown after an image is attached to UnifiedInput: thumbnail +
+ * filename + remove button.
+ */
+
 interface ImagePreviewChipProps {
   filename: string;
   bytes: number;

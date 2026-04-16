@@ -1,3 +1,15 @@
+/**
+ * @file components/canvas/Canvas.tsx
+ *
+ * The XyFlow canvas. Renders `SimComponentNode` for each node, `SimWireEdge`
+ * for each edge, `ParticleOverlay` on top. Owns keyboard shortcuts (V =
+ * toggle view mode, Delete = remove selected, component-type hotkeys), drag-
+ * from-library drop, and onConnect wiring into the store.
+ *
+ * Shows PreflightBanner above the canvas. ConfigPanel opens in the right
+ * dock when a node is selected.
+ */
+
 import { useCallback, useRef, useEffect } from 'react';
 import {
   ReactFlow,

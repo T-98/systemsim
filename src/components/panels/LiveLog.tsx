@@ -1,3 +1,11 @@
+/**
+ * @file components/panels/LiveLog.tsx
+ *
+ * Standalone live-log component. Superseded by BottomPanel.tsx's inline
+ * LogContent. Kept for template backward-compatibility; don't add new
+ * consumers.
+ */
+
 import { useRef, useEffect } from 'react';
 import { useStore } from '../../store';
 

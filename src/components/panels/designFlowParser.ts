@@ -1,3 +1,12 @@
+/**
+ * @file components/panels/designFlowParser.ts
+ *
+ * Local (no-LLM) schema parser for the Design flow. Accepts SQL-ish text
+ * like `CREATE TABLE users (id UUID PRIMARY KEY, email VARCHAR)` and
+ * returns `SchemaEntity[]`. Preserves entity IDs across re-parses by
+ * matching on name.
+ */
+
 import { v4 as uuid } from 'uuid';
 import { useStore } from '../../store';
 import type { SchemaMemoryBlock, SchemaEntity, SchemaRelationship } from '../../types';

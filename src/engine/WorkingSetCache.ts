@@ -1,13 +1,20 @@
 /**
- * Zipfian working-set cache model.
+ * @file WorkingSetCache.ts
  *
- * Instead of rolling dice for cache hits, models:
- * - Working set size from key cardinality + RPS
- * - Hit rate = min(1, cacheSize / workingSetSize) adjusted by Zipf skew
- * - LRU penalty for scan-heavy workloads
- * - Stampede as function of TTL variance
+ * Zipfian working-set cache model. Replaces the old `0.85 + random() × 0.1`
+ * dice roll with something that actually explains why caches fail.
+ *
+ * Models:
+ * - Working set = min(keyCardinality, rps × ttlSeconds)
+ * - Hit rate = min(1, (cacheSize / workingSet)^(1/zipfSkew)) with zipfSkew = 1.2
+ * - Cold-start warmup: linear ramp over ttl × 0.5
+ * - LRU scan penalty: × 0.85 when keyCardinality > 2 × cache capacity
+ * - Stampede risk: rps > 1000 AND ttl < 60 AND hitRate > 0.7
+ *
+ * See Decisions.md #7.
  */
 
+/** Input shape for computeCacheModel. */
 export interface CacheModelInput {
   rps: number;
   cacheSizeMb: number;
@@ -29,6 +36,10 @@ export interface CacheModelResult {
 const DEFAULT_ZIPF_SKEW = 1.2;
 const BYTES_PER_MB = 1024 * 1024;
 
+/**
+ * Compute cache hit rate, memory pressure, and stampede risk from the current
+ * load and configuration. Called each tick in processCache.
+ */
 export function computeCacheModel(input: CacheModelInput): CacheModelResult {
   const {
     rps,
@@ -82,6 +93,10 @@ export function computeCacheModel(input: CacheModelInput): CacheModelResult {
   };
 }
 
+/**
+ * Derive cache access latency from shape. CDN-scale (long TTL) is slower
+ * than single-node in-memory. Used by processCache + processCdn.
+ */
 export function networkAwareCacheLatency(cacheSizeMb: number, ttlSeconds: number): { p50: number; p99: number } {
   if (ttlSeconds > 3600) {
     return { p50: 20, p99: 100 };

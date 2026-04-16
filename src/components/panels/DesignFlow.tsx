@@ -1,3 +1,14 @@
+/**
+ * @file components/panels/DesignFlow.tsx
+ *
+ * Full-page design editor shown at `appView === 'design'`. Sections:
+ * Requirements (functional + NFRs), API Contracts (method/path/auth/owner),
+ * Schema (SQL-ish paste → parsed to SchemaEntity[]).
+ *
+ * On completion (`onComplete()`), routes to the canvas view. A compact
+ * inline version lives in DesignPanel.tsx (used inside the CanvasSidebar).
+ */
+
 import { useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useStore } from '../../store';

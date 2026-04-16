@@ -1,3 +1,11 @@
+/**
+ * @file components/debrief/DebriefPanel.tsx
+ *
+ * DEAD CODE. Not imported anywhere. Superseded by BottomPanel.tsx's
+ * inline `DebriefContent` (tabbed bottom panel replaced the old modal
+ * overlay). Keep for reference / potential deletion in a future cleanup.
+ */
+
 import { useStore } from '../../store';
 import { downloadDebriefHtml } from '../../ai/generateDebriefHtml';
 

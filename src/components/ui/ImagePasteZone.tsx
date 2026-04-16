@@ -1,3 +1,11 @@
+/**
+ * @file components/ui/ImagePasteZone.tsx
+ *
+ * Handles image paste (Cmd+V), drag-drop, and file picker. Resizes to 1568px
+ * longest edge as JPEG via util/imageResize before passing to the caller as
+ * a base64 data URL.
+ */
+
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { ALLOWED_IMAGE_MIMES, isAllowedMime } from '../../util/imageResize';
 

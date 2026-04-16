@@ -1,3 +1,15 @@
+/**
+ * @file api/debrief.ts
+ *
+ * Vercel Edge Function that returns Socratic debrief questions for a
+ * completed simulation. Client sends a compressed ~4K-token summary; we
+ * call Claude Sonnet 4.6 with a "senior-engineer-post-mortem" system prompt
+ * and parse 3-5 questions from the response.
+ *
+ * Errors fall back gracefully on the client side (deterministic debrief
+ * stays visible). See Decisions.md #4, #30.
+ */
+
 import { createAnthropicHandler } from './_shared/handler';
 import { MODEL_ID } from './_shared/constants';
 

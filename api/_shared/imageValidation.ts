@@ -1,6 +1,15 @@
+/**
+ * @file api/_shared/imageValidation.ts
+ *
+ * Server-side image defense: MIME allowlist + magic-byte signature check.
+ * Prevents MIME-lying (attacker sends `image/png` header with a shell script
+ * body) and catches corrupted uploads early.
+ */
+
 export const ALLOWED_MIMES = ['image/png', 'image/jpeg', 'image/webp'] as const;
 export type AllowedMime = (typeof ALLOWED_MIMES)[number];
 
+/** True when `mime` is one of the allowed image types. */
 export function isAllowedMime(mime: string): mime is AllowedMime {
   return (ALLOWED_MIMES as readonly string[]).includes(mime);
 }
@@ -42,6 +51,7 @@ export function validateImageMagicBytes(buffer: Buffer, mime: AllowedMime): bool
   return false;
 }
 
+/** Strip any `data:...;base64,` prefix and decode to a Buffer. */
 export function decodeBase64Image(base64: string): Buffer {
   const cleaned = base64.replace(/^data:[^;]+;base64,/, '');
   return Buffer.from(cleaned, 'base64');

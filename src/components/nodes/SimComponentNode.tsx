@@ -1,3 +1,13 @@
+/**
+ * @file components/nodes/SimComponentNode.tsx
+ *
+ * XyFlow custom node. Renders the component box: icon + label + description,
+ * health-colored border, live metrics when sim is running (RPS, p99, error%,
+ * CPU, MEM, queue, cache-hit), shard distribution bars for DBs, crash mark.
+ *
+ * Pulses when `pulseTarget === 'node:${id}'` or `pulseTarget === 'canvas:all'`.
+ */
+
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { motion } from 'framer-motion';
