@@ -36,6 +36,13 @@ import type {
 import type { Node, Edge } from '@xyflow/react';
 import { computeQueueing } from './QueueingModel';
 import { computeCacheModel, networkAwareCacheLatency } from './WorkingSetCache';
+import {
+  type CircuitBreakerConfig,
+  type CircuitBreakerState,
+  evaluateBreaker,
+  makeBreakerState,
+  resolveBreakerConfig,
+} from './CircuitBreaker';
 
 interface ComponentState {
   id: string;
@@ -62,6 +69,10 @@ interface WireState {
   target: string;
   config: WireConfig;
   currentRps: number;
+  /** Present iff wire.config.circuitBreaker was set. */
+  breaker?: CircuitBreakerState;
+  /** Resolved breaker config (with defaults applied). Present iff breaker present. */
+  breakerConfig?: CircuitBreakerConfig;
 }
 
 // Seeded PRNG (mulberry32) for reproducible simulations in tests
@@ -144,12 +155,16 @@ export class SimulationEngine {
 
     // Initialize wire states and adjacency
     for (const edge of edges) {
+      const cfg = edge.data!.config;
+      const hasBreaker = cfg.circuitBreaker !== undefined;
       this.wires.set(edge.id, {
         id: edge.id,
         source: edge.source,
         target: edge.target,
-        config: edge.data!.config,
+        config: cfg,
         currentRps: 0,
+        breaker: hasBreaker ? makeBreakerState() : undefined,
+        breakerConfig: hasBreaker ? resolveBreakerConfig(cfg.circuitBreaker) : undefined,
       });
 
       if (!this.adjacency.has(edge.source)) this.adjacency.set(edge.source, []);
@@ -295,6 +310,28 @@ export class SimulationEngine {
       }
     }
 
+    // Reset per-tick instantaneous metrics on non-crashed components. Processors
+    // that run this tick will overwrite with real values; components whose
+    // inbound traffic is blocked (breaker OPEN) will show truthful zeros instead
+    // of stale values. Crashed components retain their last-known metrics so
+    // users see WHY they crashed.
+    //
+    // Also reset per-wire "had traffic this tick" flag — set by forwardOverWire
+    // when traffic actually flows, consumed by evaluateBreakers at end of tick.
+    this.components.forEach((state) => {
+      if (state.crashed) return;
+      state.metrics.rps = 0;
+      state.metrics.errorRate = 0;
+      state.metrics.p50 = 0;
+      state.metrics.p95 = 0;
+      state.metrics.p99 = 0;
+      state.metrics.cpuPercent = 0;
+      state.metrics.memoryPercent = 0;
+    });
+    this.wires.forEach((wire) => {
+      if (wire.breaker) wire.breaker.hadTrafficThisTick = false;
+    });
+
     // Distribute traffic to entry points
     const rpsPerEntry = rpsPerTick / Math.max(this.entryPoints.length, 1);
 
@@ -314,6 +351,9 @@ export class SimulationEngine {
       metrics[id] = { ...state.metrics };
       healths[id] = state.health;
     });
+
+    // Advance per-wire circuit breakers based on this tick's downstream errorRate.
+    this.evaluateBreakers(newLogs);
 
     // Throttle logs: max 1 log per (component, severity) per 2 seconds of sim time.
     // Callout entries bypass this entirely — firedCallouts already guarantees one-shot.
@@ -346,17 +386,73 @@ export class SimulationEngine {
     return 0;
   }
 
+  /** Find the wire (if any) running from source to target. */
+  private findWire(sourceId: string, targetId: string): WireState | undefined {
+    for (const wire of this.wires.values()) {
+      if (wire.source === sourceId && wire.target === targetId) return wire;
+    }
+    return undefined;
+  }
+
   /**
    * Single choke point for any traffic flowing from one component to another
-   * over a wire. All circuit-breaker / retry / backpressure logic will hook
-   * in here so processor code doesn't need to know about them.
+   * over a wire. Phase 3 resilience logic hooks in here so processor code
+   * doesn't need to know about them.
    *
-   * Today: wire latency + recurse. Phase 3 adds: circuit-breaker gate,
-   * retry re-forwarding on downstream errors, backpressure rate scaling.
+   * Circuit breaker gate:
+   * - OPEN: drop traffic entirely. No recurse, no latency, no cost.
+   * - HALF_OPEN: let traffic flow. If the tick ends with the target healthy,
+   *   breaker moves back toward CLOSED.
+   * - CLOSED: normal forwarding.
+   *
+   * Retry + backpressure will extend this in 3.2 / 3.3.
    */
   private forwardOverWire(sourceId: string, targetId: string, rps: number, accumulatedLatencyMs: number, logs: LogEntry[]) {
+    const wire = this.findWire(sourceId, targetId);
+    if (wire?.breaker?.status === 'open') {
+      return; // fail fast: circuit open, drop at the source
+    }
+    // Record that this wire actually served traffic this tick. HALF_OPEN
+    // recovery requires at least one real probe to succeed, not just the
+    // absence of failure. Without this, a quiet tick would silently be
+    // counted as success and recover the breaker without validation.
+    if (wire?.breaker && rps > 0) {
+      wire.breaker.hadTrafficThisTick = true;
+    }
     const wireLatency = this.getWireLatency(sourceId, targetId);
     this.processComponent(targetId, rps, logs, accumulatedLatencyMs + wireLatency);
+  }
+
+  /**
+   * End-of-tick breaker evaluation. Every wire with a breaker inspects its
+   * target's current errorRate and advances its state machine. Transitions
+   * are logged as warnings so users can see the breaker open/close.
+   */
+  private evaluateBreakers(logs: LogEntry[]) {
+    for (const wire of this.wires.values()) {
+      if (!wire.breaker || !wire.breakerConfig) continue;
+      const target = this.components.get(wire.target);
+      if (!target) continue;
+      const transition = evaluateBreaker(
+        wire.breaker,
+        wire.breakerConfig,
+        target.metrics.errorRate,
+        this.time,
+      );
+      if (transition) {
+        // Breaker transitions are already deduped by the state machine itself.
+        // Bypass the per-tick throttle so close-together transitions (e.g.,
+        // open → half_open followed by half_open → closed) both make it out.
+        const entry: LogEntry = {
+          time: this.time,
+          message: `Circuit breaker ${wire.source} → ${wire.target}: ${transition.from} → ${transition.to}`,
+          severity: transition.to === 'open' ? 'critical' : 'warning',
+          componentId: wire.source,
+        };
+        this.calloutEntries.add(entry);
+        logs.push(entry);
+      }
+    }
   }
 
   private forwardToDownstreams(sourceId: string, rps: number, accumulatedLatencyMs: number, logs: LogEntry[]) {
@@ -433,9 +529,15 @@ export class SimulationEngine {
 
     state.metrics.rps = rps / this.tickInterval;
 
+    // Exclude crashed downstreams AND downstreams whose incoming wire has an
+    // OPEN circuit breaker. The LB shouldn't route to something we've already
+    // decided to fail-fast.
     const healthyDownstreams = downstreams.filter((d) => {
       const ds = this.components.get(d);
-      return ds && !ds.crashed;
+      if (!ds || ds.crashed) return false;
+      const wire = this.findWire(state.id, d);
+      if (wire?.breaker?.status === 'open') return false;
+      return true;
     });
 
     if (healthyDownstreams.length === 0) {
@@ -444,7 +546,7 @@ export class SimulationEngine {
       state.metrics.p50 = 0;
       state.metrics.p99 = 0;
       if (rps > 0) {
-        logs.push({ time: this.time, message: `${state.id}: No healthy backends. All requests failing. All downstream servers crashed — check their capacity in the live log above.`, severity: 'critical', componentId: state.id });
+        logs.push({ time: this.time, message: `${state.id}: No healthy backends. All requests failing. Downstreams crashed or circuit breakers open.`, severity: 'critical', componentId: state.id });
       }
       return;
     }

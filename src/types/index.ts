@@ -67,6 +67,17 @@ export interface WireConfig {
   throughputRps: number;
   latencyMs: number;
   jitterMs: number;
+  /**
+   * Optional circuit breaker config. Presence enables the breaker on this
+   * wire; absence means the wire forwards unconditionally (pre-Phase 3
+   * behavior). See engine/CircuitBreaker.ts.
+   */
+  circuitBreaker?: {
+    failureThreshold?: number;
+    failureWindow?: number;
+    cooldownSeconds?: number;
+    halfOpenTicks?: number;
+  };
 }
 
 export interface TrafficPhase {

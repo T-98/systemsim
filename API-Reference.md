@@ -676,6 +676,50 @@ M/M/1-per-instance approximation via Little's Law. See [Decisions.md #6](Decisio
 - `networkAwareCacheLatency(cacheSizeMb, ttlSeconds)`
     → `{ p50, p99 }`
 
+#### `CircuitBreaker`
+
+**File:** [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts)
+
+Per-wire circuit breaker state machine. Opt-in via `WireConfig.circuitBreaker`.
+
+**Types:**
+- `BreakerStatus` — `'closed' | 'open' | 'half_open'`
+- `CircuitBreakerState` — `{ status, consecutiveFailureTicks, consecutiveSuccessTicks, cooldownUntilTime, hadTrafficThisTick }`
+- `CircuitBreakerConfig` — `{ failureThreshold, failureWindow, cooldownSeconds, halfOpenTicks }`
+- `BreakerTransition` — `{ from: BreakerStatus, to: BreakerStatus }`
+
+**Defaults** (`DEFAULT_BREAKER_CONFIG`):
+- `failureThreshold: 0.5` (errorRate above which a tick counts as failure)
+- `failureWindow: 3` (consecutive failure ticks to trip CLOSED → OPEN)
+- `cooldownSeconds: 10` (time in OPEN before trying HALF_OPEN)
+- `halfOpenTicks: 2` (consecutive healthy probe ticks to return to CLOSED)
+
+**Exports:**
+- `makeBreakerState(): CircuitBreakerState` — fresh CLOSED state
+- `resolveBreakerConfig(partial?): CircuitBreakerConfig` — applies defaults
+- `evaluateBreaker(state, config, errorRate, currentTime): BreakerTransition | null` — advance the state machine by one tick; returns transition or null
+
+**Engine integration** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
+- `WireState` gets optional `breaker` + `breakerConfig` (present iff `WireConfig.circuitBreaker` was set)
+- `forwardOverWire(src, tgt, rps, accumulated, logs)` gates on breaker state — OPEN drops traffic; sets `hadTrafficThisTick = true` on the breaker when rps > 0
+- `evaluateBreakers(logs)` runs at end of every tick; logs transitions bypass the throttle via `calloutEntries`
+- `processLoadBalancer` excludes breaker-OPEN wires from its healthy-backend filter
+
+**Type extension:**
+```ts
+interface WireConfig {
+  throughputRps: number;
+  latencyMs: number;
+  jitterMs: number;
+  circuitBreaker?: {                 // <-- NEW in Phase 3.1
+    failureThreshold?: number;
+    failureWindow?: number;
+    cooldownSeconds?: number;
+    halfOpenTicks?: number;
+  };
+}
+```
+
 #### `graphTraversal`
 
 **File:** [src/engine/graphTraversal.ts](src/engine/graphTraversal.ts)

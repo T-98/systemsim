@@ -341,6 +341,55 @@ User clicks "Download Report" in BottomPanel debrief tab
 
 ## Subsystem map
 
+### Circuit breakers (Phase 3.1)
+
+**File:** [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts)
+
+**Purpose:** Per-wire fail-fast gating. When a downstream is erroring consistently, the breaker trips and upstream traffic is dropped at the wire rather than piling onto a dying component.
+
+**State machine:**
+
+```
+    CLOSED ──(N consecutive failed ticks)──→ OPEN
+       ▲                                      │
+       │                               (cooldownSeconds elapsed)
+       │                                      ▼
+       │                                 HALF_OPEN
+       │                                      │
+       └──(M healthy probe ticks)─────────────┘
+                                              │
+                             (any failure)────┘
+                                              ↓
+                                             OPEN
+```
+
+**Opt-in:** Breakers only run on wires whose `WireConfig.circuitBreaker` is set. Absent config = no breaker, zero regression for existing scenarios.
+
+**Failure signal:** target component's `errorRate` at end of tick. Above `failureThreshold` (default 0.5) = "failed tick."
+
+**HALF_OPEN probe requirement:** Success ticks only count when traffic *actually* flowed through the wire (`hadTrafficThisTick` set by `forwardOverWire`). A quiet phase cannot silently recover the breaker.
+
+**Code flow:**
+
+```
+tick() starts
+    → reset non-crashed metrics (rps, errorRate, p50, p95, p99, cpuPercent, memoryPercent)
+    → reset all wire.breaker.hadTrafficThisTick = false
+    → processComponent(entry) → ... → forwardOverWire(src, tgt, rps)
+        → if breaker.status === 'open': return (drop at wire)
+        → if breaker && rps > 0: breaker.hadTrafficThisTick = true
+        → getWireLatency + processComponent(tgt)
+    → end-of-tick: evaluateBreakers(newLogs)
+        → for each wire with a breaker:
+            - evaluateBreaker(state, config, target.metrics.errorRate, this.time)
+            - transition logged (bypasses throttle via calloutEntries)
+    → tick++
+```
+
+**LB integration:** `processLoadBalancer` filters out downstreams with incoming wire in OPEN state. "All backends down or breaker-open" → same critical log as "no healthy backends."
+
+**Known limitation (documented):** breakers share their failure signal with siblings at multi-inbound targets. One noisy upstream can trip a well-behaved sibling's breaker. Per-wire error accounting is deferred to the ForwardResult refactor coming with retry storms (3.2).
+
 ### Simulation engine
 
 **File:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)
@@ -484,3 +533,4 @@ User clicks "Download Report" in BottomPanel debrief tab
 | Add a store field | [src/store/index.ts](src/store/index.ts) + type in [src/types/index.ts](src/types/index.ts) |
 | Add a new LLM endpoint | New file under `api/` + [api/_shared/handler.ts](api/_shared/handler.ts) pattern |
 | Add a new template | New JSON in `/public/templates/` matching `CanonicalGraph` shape |
+| Add a new resilience pattern (e.g. rate limiter, bulkhead) | Same shape as [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts): types + evaluate fn + opt-in via `WireConfig` + hook into `forwardOverWire` |

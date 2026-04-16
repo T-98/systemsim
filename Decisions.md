@@ -120,6 +120,33 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Rejected:** Message-prefix in throttle key (spam risk). Direct push to `this.log` bypassing `newLogs` (breaks UI which reads `newLogs`).
 - **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `calloutEntries`, regression test in [src/engine/__tests__/SimulationEngine.test.ts](src/engine/__tests__/SimulationEngine.test.ts).
 
+### 12a. Circuit breakers live per-wire, opt-in via WireConfig.circuitBreaker
+
+- **When:** SIMFID Phase 3.1 (2026-04-16)
+- **Context:** CEO plan §2.8 calls for per-wire circuit breakers. Existing tests and scenarios must not regress when the feature ships.
+- **Decision:** New [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts) with a three-state machine (`CLOSED → OPEN → HALF_OPEN → CLOSED`). `WireConfig.circuitBreaker?` is optional: presence enables, absence skips all breaker logic for that wire. `forwardOverWire` gates on breaker state. End-of-tick `evaluateBreakers` advances the state machine from the target component's errorRate. Transitions emit logs that bypass the per-tick throttle via `calloutEntries` WeakSet. Load Balancer's healthy-backend filter also excludes breaker-OPEN wires.
+- **Why:** Opt-in preserves ~283 existing tests unchanged. Per-wire state matches the CEO plan's "refactor processComponent to iterate wires." Transition bypass prevents close-together `open → half_open → closed` events from being swallowed by the component-level throttle.
+- **Rejected:** Always-on with defaults (would trip on existing overload scenarios and add spurious test noise). Component-level breakers (CEO plan explicitly says per-wire). Probe-rate sampling in HALF_OPEN (real breakers let only N% through — simplified to full traffic for simulation clarity; documented as a known approximation).
+- **Source:** commits on `feat/simfid-phase3-resilience` branch; [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts), [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire`, `evaluateBreakers`.
+
+### 12b. HALF_OPEN requires actual probe traffic to count as success
+
+- **When:** SIMFID Phase 3.1, Codex review fix (2026-04-16)
+- **Context:** Initial 3.1 implementation treated "no failure this tick" as "success." A quiet phase (low or zero RPS) would silently tick the breaker back to CLOSED without a single real request validating the downstream.
+- **Decision:** Added `hadTrafficThisTick: boolean` on `CircuitBreakerState`. `forwardOverWire` sets it true whenever traffic actually flows through the wire. In HALF_OPEN, `evaluateBreaker` only increments `consecutiveSuccessTicks` if `hadTrafficThisTick === true`. Reset at start of each tick.
+- **Why:** Correctness. A breaker's whole purpose is to gate traffic around a failing downstream — recovering without a probe defeats it. Codex caught this in 3.1 review.
+- **Rejected:** Probe-limit sampling (more complex, not needed for correctness). Counting quiet ticks as "success but with half credit" (opaque).
+- **Source:** [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts) `hadTrafficThisTick`, [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire`.
+
+### 12c. Full instantaneous-metrics reset at start of every tick
+
+- **When:** SIMFID Phase 3.1 (2026-04-16)
+- **Context:** With breaker OPEN, downstream processors are skipped. Without a reset, `state.metrics.rps`, `errorRate`, `p99`, etc. would retain pre-trip values — the canvas and debrief would show 100 RPS on a component actually receiving 0.
+- **Decision:** At the start of each tick, zero out `rps`, `errorRate`, `p50`, `p95`, `p99`, `cpuPercent`, `memoryPercent` on every NON-crashed component. Crashed components keep their last-known metrics so users see why they crashed. Processors overwrite with real values when they run.
+- **Why:** Live metrics must reflect this tick's reality, not last tick's. Critical for breaker UX — OPEN means the component is visibly quiet.
+- **Rejected:** Reset everything including crashed (loses crash context). Reset only `rps` (leaves `p99` / CPU stale on quiet ticks — Codex caught this). Historical metrics like `queueDepth` are accumulators and intentionally not reset.
+- **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `tick()` reset loop.
+
 ### 12. Saturation callouts fire without upper bound on ρ
 
 - **When:** SIMFID Phase 3, Codex review fix (2026-04-16)

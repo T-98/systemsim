@@ -538,6 +538,148 @@ describe('SimulationEngine', () => {
     });
   });
 
+  describe('Circuit breakers', () => {
+    function makeEdgeWithBreaker(id: string, source: string, target: string, breakerPartial: {
+      failureThreshold?: number;
+      failureWindow?: number;
+      cooldownSeconds?: number;
+      halfOpenTicks?: number;
+    }): Edge<{ config: WireConfig }> {
+      return {
+        id,
+        source,
+        target,
+        data: { config: { throughputRps: 100000, latencyMs: 5, jitterMs: 0, circuitBreaker: breakerPartial } },
+      } as Edge<{ config: WireConfig }>;
+    }
+
+    it('trips the breaker after failureWindow failed ticks and drops downstream traffic', () => {
+      // Saturate the server so its errorRate > 0.5 consistently (100 RPS, 1 instance × 20 RPS capacity = ρ=5 → ~80% drop).
+      const nodes = [
+        makeNode('lb', 'load_balancer'),
+        makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 }),
+      ];
+      const edges = [makeEdgeWithBreaker('e1', 'lb', 's', { failureThreshold: 0.3, failureWindow: 2, cooldownSeconds: 20 })];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(100, 10), undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      for (let i = 0; i < 8; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      // We should see the breaker trip (closed → open)
+      const openTransition = logs.find((m) => m.includes('closed → open') && m.includes('lb → s'));
+      expect(openTransition).toBeDefined();
+    });
+
+    it('does NOT trip when target errorRate stays below threshold', () => {
+      // Low load → no errors.
+      const nodes = [
+        makeNode('lb', 'load_balancer'),
+        makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 5 }),
+      ];
+      const edges = [makeEdgeWithBreaker('e1', 'lb', 's', { failureThreshold: 0.3, failureWindow: 2 })];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(10, 10), undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      const breakerTransition = logs.find((m) => m.includes('Circuit breaker'));
+      expect(breakerTransition).toBeUndefined();
+    });
+
+    it('OPEN breaker drops traffic at the wire — downstream gets no RPS', () => {
+      // Overload server to trip the breaker, then check that after the trip the server stops seeing traffic.
+      const nodes = [
+        makeNode('lb', 'load_balancer'),
+        makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 }),
+      ];
+      const edges = [makeEdgeWithBreaker('e1', 'lb', 's', { failureThreshold: 0.3, failureWindow: 2, cooldownSeconds: 60 })];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(100, 20), undefined, undefined, SEED);
+
+      // Run enough ticks to trip the breaker
+      for (let i = 0; i < 4; i++) engine.tick();
+
+      // Now capture the server's RPS in the next tick — breaker should be OPEN so RPS drops to 0
+      const tickAfterTrip = engine.tick();
+      expect(tickAfterTrip.metrics['s'].rps).toBe(0);
+    });
+
+    it('recovers through HALF_OPEN after cooldown when failures stop', () => {
+      // Use a profile where first phase overloads the server, later phase is light load.
+      const profile = {
+        name: 'multi-phase',
+        durationSeconds: 40,
+        jitterPercent: 0,
+        phases: [
+          { startS: 0, endS: 6, rps: 100, shape: 'steady' as const, description: 'overload' },
+          { startS: 6, endS: 40, rps: 5, shape: 'steady' as const, description: 'recovery' },
+        ],
+        requestMix: {},
+        userDistribution: 'uniform' as const,
+      };
+      const nodes = [
+        makeNode('lb', 'load_balancer'),
+        makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 }),
+      ];
+      const edges = [makeEdgeWithBreaker('e1', 'lb', 's', { failureThreshold: 0.3, failureWindow: 2, cooldownSeconds: 8, halfOpenTicks: 1 })];
+      const engine = new SimulationEngine(nodes, edges, profile, undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      for (let i = 0; i < 40; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      // Expect the full recovery cycle: closed → open, open → half_open, half_open → closed
+      expect(logs.find((m) => m.includes('closed → open'))).toBeDefined();
+      expect(logs.find((m) => m.includes('open → half_open'))).toBeDefined();
+      expect(logs.find((m) => m.includes('half_open → closed'))).toBeDefined();
+    });
+
+    it('LB excludes breaker-OPEN wires from healthy backends', () => {
+      // LB → 2 servers. Only one wire has a breaker. Overload s1 (1 instance, 50ms cap=20 RPS)
+      // hard enough to trigger drops: at ρ=5 (100 RPS each), dropRate ≈ 0.8 → errorRate > threshold.
+      const nodes = [
+        makeNode('lb', 'load_balancer'),
+        makeNode('s1', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 }),
+        makeNode('s2', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 20 }),
+      ];
+      const edges = [
+        makeEdgeWithBreaker('e1', 'lb', 's1', { failureThreshold: 0.3, failureWindow: 2, cooldownSeconds: 60 }),
+        makeEdge('e2', 'lb', 's2'),
+      ];
+      // 200 RPS → LB splits ~100 each. s1 (cap 20) → overloaded; s2 (cap 400) → fine.
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(200, 20), undefined, undefined, SEED);
+
+      // Run long enough for s1's breaker to trip.
+      for (let i = 0; i < 6; i++) engine.tick();
+
+      // Now s2 should get all 200 RPS since s1's breaker is OPEN.
+      const t = engine.tick();
+      expect(t.metrics['s1'].rps).toBe(0); // breaker OPEN, LB skips
+      expect(t.metrics['s2'].rps).toBeGreaterThan(150); // s2 takes all the load
+    });
+
+    it('wires without circuitBreaker config behave exactly as before (default off)', () => {
+      // Regression guard: existing scenarios without breaker config must not see new behavior.
+      const nodes = [makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 })];
+      const engine = new SimulationEngine(nodes, [], steadyProfile(100, 10), undefined, undefined, SEED);
+
+      const logs: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      expect(logs.find((m) => m.includes('Circuit breaker'))).toBeUndefined();
+    });
+  });
+
   describe('Stressed mode — cache & CDN corrections', () => {
     it('does NOT emit cache stampede log under stressed mode', () => {
       const nodes = [
