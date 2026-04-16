@@ -1,3 +1,15 @@
+/**
+ * @file components/ui/Toolbar.tsx
+ *
+ * Top toolbar above the canvas. Owns all simulation controls (Run / Run
+ * Stressed / Pause / Resume / Reset / Debrief), speed selector, view toggle,
+ * remix, save, theme.
+ *
+ * Preflight gating: `runPreflight` is memoized on every store change; the
+ * Run button is disabled when `preflight.errors.length > 0`. The tooltip on
+ * hover reads "Resolve preflight items first."
+ */
+
 import { useState, useCallback, useMemo } from 'react';
 import { useStore } from '../../store';
 import { useSimulation } from '../../engine/useSimulation';
@@ -8,6 +20,10 @@ import RemixInput from './RemixInput';
 import ConfirmModal from './ConfirmModal';
 import UndoToast from './UndoToast';
 
+/**
+ * The top toolbar. Pure view — all state lives in the Zustand store. Wires
+ * simulation-control buttons to `useSimulation` and gates Run on preflight.
+ */
 export default function Toolbar() {
   const appMode = useStore((s) => s.appMode);
   const scenarioId = useStore((s) => s.scenarioId);
@@ -83,7 +99,15 @@ export default function Toolbar() {
     hints.forEach((h) => addHint(h));
     const profile = scenarioId === 'discord_notification_fanout' ? DISCORD_TRAFFIC_PROFILE : trafficProfile;
     if (!profile) return;
-    startSimulation(profile);
+    startSimulation(profile, false);
+  };
+
+  const handleRunStressed = () => {
+    const hints = checkForHints(nodes, edges, scenarioId);
+    hints.forEach((h) => addHint(h));
+    const profile = scenarioId === 'discord_notification_fanout' ? DISCORD_TRAFFIC_PROFILE : trafficProfile;
+    if (!profile) return;
+    startSimulation(profile, true);
   };
 
   const handleStop = () => {
@@ -223,25 +247,44 @@ export default function Toolbar() {
 
         {/* Sim controls */}
         {simulationStatus === 'idle' && (
-          <button
-            onClick={handleRun}
-            disabled={!hasNodes || !preflightClean}
-            className="rounded-lg font-medium transition-all"
-            title={!preflightClean ? 'Resolve preflight items first' : undefined}
-            style={{
-              padding: '6px 16px',
-              fontSize: '14px',
-              letterSpacing: '-0.224px',
-              background: hasNodes && preflightClean ? 'var(--accent)' : 'var(--bg-card)',
-              color: hasNodes && preflightClean ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
-              border: hasNodes && preflightClean ? 'none' : '1px solid var(--border-color)',
-              cursor: hasNodes && preflightClean ? 'pointer' : 'not-allowed',
-              transform: hasNodes && preflightClean ? 'scale(1.02)' : 'scale(1)',
-              transition: 'all 100ms ease',
-            }}
-          >
-            Run
-          </button>
+          <>
+            <button
+              onClick={handleRun}
+              disabled={!hasNodes || !preflightClean}
+              className="rounded-lg font-medium transition-all"
+              title={!preflightClean ? 'Resolve preflight items first' : undefined}
+              style={{
+                padding: '6px 16px',
+                fontSize: '14px',
+                letterSpacing: '-0.224px',
+                background: hasNodes && preflightClean ? 'var(--accent)' : 'var(--bg-card)',
+                color: hasNodes && preflightClean ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
+                border: hasNodes && preflightClean ? 'none' : '1px solid var(--border-color)',
+                cursor: hasNodes && preflightClean ? 'pointer' : 'not-allowed',
+                transform: hasNodes && preflightClean ? 'scale(1.02)' : 'scale(1)',
+                transition: 'all 100ms ease',
+              }}
+            >
+              Run
+            </button>
+            <button
+              onClick={handleRunStressed}
+              disabled={!hasNodes || !preflightClean}
+              className="rounded-lg font-medium transition-all"
+              title="Peak RPS held + cold cache + wire p99. Worst-case stress test."
+              style={{
+                padding: '6px 14px',
+                fontSize: '12px',
+                letterSpacing: '-0.12px',
+                background: 'transparent',
+                color: hasNodes && preflightClean ? 'var(--warning)' : 'var(--text-tertiary)',
+                border: `1px solid ${hasNodes && preflightClean ? 'var(--warning)' : 'var(--border-color)'}`,
+                cursor: hasNodes && preflightClean ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Run Stressed
+            </button>
+          </>
         )}
         {isRunning && (
           <button

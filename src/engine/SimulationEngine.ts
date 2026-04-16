@@ -1,3 +1,28 @@
+/**
+ * @file SimulationEngine.ts
+ *
+ * The tick-based stochastic engine that IS the product. A per-second simulator
+ * for the user's component graph: walks the graph from entry points, routes
+ * traffic through components (server, cache, queue, DB, LB, etc), computes
+ * per-component p50/p99/ρ/queueDepth each tick, and emits warnings before
+ * things collapse.
+ *
+ * Core modeling:
+ * - M/M/1-per-instance queueing via Little's Law (see QueueingModel.ts)
+ * - Zipfian working-set cache model (see WorkingSetCache.ts)
+ * - Wire latency propagation (latency compounds per hop)
+ * - Hot shard Pareto distribution when shard key is low-cardinality or user_id
+ *
+ * Runs entirely in the browser. No backend simulation. The only server-side
+ * code (api/*) is for LLM calls.
+ *
+ * Reproducibility: optional `seed` param uses a seeded PRNG (mulberry32) for
+ * deterministic tests. When omitted, uses Math.random.
+ *
+ * Stressed mode: one-shot worst-case run. Peak RPS held, cold cache, wire p99.
+ * See Decisions.md #10.
+ */
+
 import { v4 as uuid } from 'uuid';
 import type {
   TrafficProfile,
@@ -50,6 +75,14 @@ function mulberry32(seed: number): () => number {
   };
 }
 
+/**
+ * Tick-based distributed-systems simulator. Instantiate with the graph +
+ * traffic profile, then call `.tick()` each sim-second (driven by useSimulation).
+ *
+ * State is mutable across ticks: each `ComponentState` carries accumulated
+ * queueDepth, errors, connections, etc., plus a one-shot `firedCallouts` set
+ * so saturation warnings fire exactly once per run.
+ */
 export class SimulationEngine {
   private components: Map<string, ComponentState> = new Map();
   private wires: Map<string, WireState> = new Map();
@@ -67,6 +100,10 @@ export class SimulationEngine {
   private lastLogTime: Map<string, number> = new Map(); // throttle logs per component
   private random: () => number; // seeded PRNG for reproducibility
   private callStack: Set<string> = new Set(); // path-based cycle detection
+  private firedCallouts: Set<string> = new Set(); // saturation warnings, once per component per run
+  private calloutEntries: WeakSet<LogEntry> = new WeakSet(); // entries that bypass the per-tick throttle
+  private peakCacheHitRate: Map<string, number> = new Map(); // track peak hitRate per cache for miss-storm detection
+  private stressedMode = false; // worst-case run: peak RPS held, cold cache, wire p99
 
   constructor(
     nodes: Node<SimComponentData>[],
@@ -75,11 +112,13 @@ export class SimulationEngine {
     schemaShardKey?: string,
     schemaShardKeyCardinality?: 'low' | 'medium' | 'high',
     seed?: number,
+    stressedMode = false,
   ) {
     this.random = seed != null ? mulberry32(seed) : Math.random;
     this.trafficProfile = trafficProfile;
     this.schemaShardKey = schemaShardKey ?? null;
     this.schemaShardKeyCardinality = schemaShardKeyCardinality ?? 'high';
+    this.stressedMode = stressedMode;
 
     // Initialize component states
     for (const node of nodes) {
@@ -139,6 +178,17 @@ export class SimulationEngine {
     return { rps: 0, p50: 0, p95: 0, p99: 0, errorRate: 0, cpuPercent: 0, memoryPercent: 0 };
   }
 
+  private fireCallout(logs: LogEntry[], componentId: string, calloutType: string, message: string) {
+    const key = `${componentId}:${calloutType}`;
+    if (this.firedCallouts.has(key)) return;
+    this.firedCallouts.add(key);
+    const entry: LogEntry = { time: this.time, message, severity: 'warning', componentId };
+    // Bypass the per-tick throttle: firedCallouts already guarantees one-shot,
+    // and we don't want a competing warning on the same component to swallow it.
+    this.calloutEntries.add(entry);
+    logs.push(entry);
+  }
+
   private throttledLog(logs: LogEntry[], entry: LogEntry, intervalSeconds = 2): boolean {
     const key = entry.componentId ?? entry.message.slice(0, 30);
     const last = this.lastLogTime.get(key) ?? -Infinity;
@@ -181,6 +231,14 @@ export class SimulationEngine {
   }
 
   private getCurrentRps(): number {
+    if (this.stressedMode) {
+      // Stressed mode: hold the peak RPS for the full run
+      let peak = 0;
+      for (const phase of this.trafficProfile.phases) {
+        if (phase.rps > peak) peak = phase.rps;
+      }
+      return peak;
+    }
     for (const phase of this.trafficProfile.phases) {
       if (this.time >= phase.startS && this.time < phase.endS) {
         if (phase.shape === 'steady' || phase.shape === 'instant_spike') return phase.rps;
@@ -207,6 +265,13 @@ export class SimulationEngine {
     return Math.max(0, value + jitter);
   }
 
+  /**
+   * Advance the simulation by one tick (1 sim-second). Runs one full graph
+   * traversal from every entry point, updates every component's metrics and
+   * health, emits throttled log entries, and advances particle visuals.
+   *
+   * Called by useSimulation's setInterval at `1000 / simulationSpeed` ms.
+   */
   tick(): {
     metrics: Record<string, ComponentMetrics>;
     healths: Record<string, HealthState>;
@@ -250,8 +315,10 @@ export class SimulationEngine {
       healths[id] = state.health;
     });
 
-    // Throttle logs: max 1 log per component per 2 seconds of sim time
+    // Throttle logs: max 1 log per (component, severity) per 2 seconds of sim time.
+    // Callout entries bypass this entirely — firedCallouts already guarantees one-shot.
     const throttled = newLogs.filter((entry) => {
+      if (this.calloutEntries.has(entry)) return true;
       const key = (entry.componentId ?? '') + ':' + entry.severity;
       const last = this.lastLogTime.get(key) ?? -Infinity;
       if (this.time - last < 2) return false;
@@ -268,6 +335,10 @@ export class SimulationEngine {
   private getWireLatency(sourceId: string, targetId: string): number {
     for (const wire of this.wires.values()) {
       if (wire.source === sourceId && wire.target === targetId) {
+        if (this.stressedMode) {
+          // Worst-case wire latency = base + full jitter
+          return Math.max(0, wire.config.latencyMs + wire.config.jitterMs);
+        }
         const jitter = (this.random() - 0.5) * 2 * wire.config.jitterMs;
         return Math.max(0, wire.config.latencyMs + jitter);
       }
@@ -440,6 +511,16 @@ export class SimulationEngine {
     state.metrics.p99 = q.p99Ms + accumulatedLatencyMs;
     state.lastComputedLatencyMs = q.p50Ms;
 
+    if (q.utilization >= 0.85) {
+      const headroom = Math.max(0, Math.round((1 - q.utilization) * 100));
+      this.fireCallout(
+        logs,
+        state.id,
+        'saturation',
+        `${state.id} hit ρ=${q.utilization.toFixed(2)} at t=${Math.round(this.time)}s — ${headroom}% headroom before queueing collapse`,
+      );
+    }
+
     let passthrough = rps;
     if (q.dropRate > 0) {
       const dropped = rps * q.dropRate;
@@ -487,7 +568,13 @@ export class SimulationEngine {
 
     let hitRate = cacheResult.hitRate;
 
-    if (cacheResult.stampedeRisk) {
+    if (this.stressedMode) {
+      // Worst case: cold cache, no hits. Skip stampede modeling entirely —
+      // a forced-cold cache is already the worst case, no "mass TTL expiry" applies.
+      hitRate = 0;
+    }
+
+    if (!this.stressedMode && cacheResult.stampedeRisk) {
       const phaseTime = this.time % ttlSeconds;
       if (phaseTime < 2) {
         hitRate *= 0.3;
@@ -505,6 +592,17 @@ export class SimulationEngine {
     state.metrics.cacheHitRate = hitRate;
     state.metrics.rps = arrivalRateRps;
     state.metrics.memoryPercent = Math.min(100, (cacheResult.memoryUsedMb / maxMemoryMb) * 100);
+
+    const peak = this.peakCacheHitRate.get(state.id) ?? 0;
+    if (hitRate > peak) this.peakCacheHitRate.set(state.id, hitRate);
+    if (hitRate <= 0.5 && peak >= 0.8) {
+      this.fireCallout(
+        logs,
+        state.id,
+        'miss-storm',
+        `${state.id} hit rate fell from ${Math.round(peak * 100)}% to ${Math.round(hitRate * 100)}% at t=${Math.round(this.time)}s — likely stampede or key churn`,
+      );
+    }
 
     const latency = networkAwareCacheLatency(maxMemoryMb, ttlSeconds);
     state.metrics.p50 = latency.p50 + accumulatedLatencyMs;
@@ -549,6 +647,16 @@ export class SimulationEngine {
     state.metrics.p99 = state.metrics.p50 * 3;
     state.metrics.memoryPercent = (state.queueDepth / maxDepth) * 100;
 
+    if (state.queueDepth >= maxDepth * 0.7) {
+      const pct = Math.round((state.queueDepth / maxDepth) * 100);
+      this.fireCallout(
+        logs,
+        state.id,
+        'filling',
+        `${state.id} queue at ${pct}% capacity (t=${Math.round(this.time)}s) — consumers not keeping up`,
+      );
+    }
+
     if (state.queueDepth > maxDepth * 0.8 && state.health !== 'critical') {
       logs.push({
         time: this.time,
@@ -591,6 +699,15 @@ export class SimulationEngine {
 
     const connectionUtilization = state.currentConnections / connectionPoolSize;
     state.metrics.activeConnections = Math.round(state.currentConnections);
+
+    if (connectionUtilization >= 0.8) {
+      this.fireCallout(
+        logs,
+        state.id,
+        'pool-pressure',
+        `${state.id} using ${Math.round(connectionUtilization * 100)}% of connection pool at t=${Math.round(this.time)}s — add replicas or pool size`,
+      );
+    }
 
     // Shard distribution
     if (shardingEnabled && shardCount > 1) {
@@ -722,7 +839,8 @@ export class SimulationEngine {
   }
 
   private processCdn(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
-    const hitRate = (state.config.cacheHitRate as number) ?? 0.9;
+    // Stressed: force cold CDN too, so every request hits origin.
+    const hitRate = this.stressedMode ? 0 : ((state.config.cacheHitRate as number) ?? 0.9);
     const originLatency = (state.config.originPullLatencyMs as number) ?? 200;
 
     state.metrics.rps = rps / this.tickInterval;

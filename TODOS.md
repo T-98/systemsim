@@ -98,4 +98,8 @@ Larger features building on the V2I foundation.
 This plan is tracked separately in `~/.gstack/projects/T-98-systemsim/ceo-plans/2026-04-13-simulation-fidelity.md`.
 Do NOT duplicate SIMFID work items here. That plan has its own 8-phase implementation schedule and its own review chain.
 
-Start date: likely 2026-04-17 or later (EOW+), after V2I translator + FOLLOWUP ship.
+Start date: 2026-04-15. Progress:
+- **Phase 1** shipped 2026-04-15 (PR #10 merged) — IR, preflight checker, schema assignment, canvas sidebar
+- **Phase 2** shipped 2026-04-15 (commit 66f6ec3) — Little's Law queueing, Zipfian cache, wire latency propagation
+- **Enhanced debrief + stressed mode + saturation callouts** shipped 2026-04-16 (overlaps with CEO Phase 8) — per-component peak table, numeric scores, Run Stressed button, saturation warnings at ρ≥0.85 / queue≥70% / cache stampede / DB pool≥80%
+- **Next: Phase 3** (resilience patterns — backpressure, retry storms, circuit breakers)

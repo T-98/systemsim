@@ -1,3 +1,21 @@
+/**
+ * @file ai/debrief.ts
+ *
+ * The deterministic half of the post-run debrief. Runs entirely in the
+ * browser, no LLM call, shows up instantly when the simulation completes.
+ *
+ * Exports:
+ * - `generateDebrief(ctx)`: the main entry — flags + questions + scores +
+ *   summary + per-component peaks
+ * - `computePerComponentPeaks(timeSeries, nodes)`: reduces the full metrics
+ *   time-series to peak p50/p99/ρ/errors/queue per component, sorted by p99
+ * - `checkForHints(nodes, edges, scenarioId)`: emits scenario-specific
+ *   warnings before the simulation runs
+ *
+ * AI-augmented questions merge in async via `ai/anthropicDebrief.ts`. If that
+ * times out, the deterministic debrief still stands on its own.
+ */
+
 import type { Node, Edge } from '@xyflow/react';
 import type {
   SimComponentData,
@@ -8,6 +26,9 @@ import type {
   SimulationRun,
   AIDebrief,
   Scores,
+  PerComponentSummary,
+  ComponentMetrics,
+  ComponentType,
 } from '../types';
 import { DISCORD_SOCRATIC_TEMPLATES } from '../scenarios/discord';
 
@@ -22,13 +43,79 @@ interface DesignContext {
   scenarioId: string | null;
 }
 
+/**
+ * Generate the full deterministic debrief from a completed simulation run.
+ * Synchronous, LLM-free. AI questions merge in later via `anthropicDebrief`.
+ */
 export function generateDebrief(ctx: DesignContext): AIDebrief {
   const flags = runDeterministicChecks(ctx);
   const questions = generateSocraticQuestions(ctx);
   const scores = calculateScores(ctx, flags);
   const summary = generateSummary(ctx);
+  const componentSummary = computePerComponentPeaks(
+    ctx.simulationRun.metricsTimeSeries,
+    ctx.nodes,
+  );
 
-  return { summary, questions, flags, scores, aiAvailable: false };
+  return { summary, questions, flags, scores, aiAvailable: false, componentSummary };
+}
+
+/**
+ * Reduce a metrics time-series to per-component peaks. Peaks are `max(series)`
+ * for each metric (not final-tick values). Rows sorted by p99 desc so the
+ * worst offender surfaces at the top of the debrief table.
+ *
+ * ρ (rho) is derived per type: cpuPercent/100 for server/db, memoryPercent/100
+ * for queue (= queueDepth/maxDepth), undefined for cache/LB (no natural
+ * utilization metric).
+ */
+export function computePerComponentPeaks(
+  metricsTimeSeries: Record<string, ComponentMetrics[]>,
+  nodes: Node<SimComponentData>[],
+): PerComponentSummary[] {
+  const result: PerComponentSummary[] = [];
+
+  for (const node of nodes) {
+    const series = metricsTimeSeries[node.id];
+    if (!series || series.length === 0) continue;
+
+    let p50 = 0;
+    let p99 = 0;
+    let cpu = 0;
+    let mem = 0;
+    let errorRate = 0;
+    let peakQueue = 0;
+
+    for (const m of series) {
+      if (m.p50 > p50) p50 = m.p50;
+      if (m.p99 > p99) p99 = m.p99;
+      if (m.cpuPercent > cpu) cpu = m.cpuPercent;
+      if (m.memoryPercent > mem) mem = m.memoryPercent;
+      if (m.errorRate > errorRate) errorRate = m.errorRate;
+      if (m.queueDepth !== undefined && m.queueDepth > peakQueue) peakQueue = m.queueDepth;
+    }
+
+    result.push({
+      id: node.id,
+      name: node.data.label,
+      type: node.data.type as ComponentType,
+      p50: Math.round(p50),
+      p99: Math.round(p99),
+      rho: computeRho(node.data.type as ComponentType, cpu, mem),
+      errorRate,
+      peakQueue: peakQueue > 0 ? peakQueue : undefined,
+    });
+  }
+
+  // Sort by p99 desc so the worst offender is on top
+  result.sort((a, b) => b.p99 - a.p99);
+  return result;
+}
+
+function computeRho(type: ComponentType, peakCpu: number, peakMem: number): number | undefined {
+  if (type === 'server' || type === 'database') return peakCpu / 100;
+  if (type === 'queue') return peakMem / 100; // memoryPercent = queueDepth/maxDepth
+  return undefined;
 }
 
 function runDeterministicChecks(ctx: DesignContext): string[] {
@@ -248,7 +335,11 @@ function generateSummary(ctx: DesignContext): string {
   return parts.join(' ');
 }
 
-// Hint generation during design phase
+/**
+ * Pre-simulation hints. Currently scoped to the Discord notification fanout
+ * scenario; catches common anti-patterns (fanout direct to DB without queue,
+ * user-id shard key with sharding enabled). Emitted as HintCards on canvas.
+ */
 export function checkForHints(
   nodes: Node<SimComponentData>[],
   edges: Edge<{ config: WireConfig }>[],

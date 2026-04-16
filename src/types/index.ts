@@ -1,3 +1,19 @@
+/**
+ * @file types/index.ts
+ *
+ * Shared TypeScript types that cross module boundaries. Every type that
+ * appears in more than one file should live here, not in component files.
+ *
+ * Categories:
+ * - Component registry + metrics
+ * - Wire config + traffic profiles
+ * - Design artifacts (NFRs, API contracts, schema, endpoint routes)
+ * - Simulation run artifacts (metrics time-series, log, debrief)
+ * - Preflight (errors + warnings + routing targets)
+ * - Session file format (save/load)
+ * - Canonical graph (template + remix format)
+ */
+
 export type ComponentType =
   | 'load_balancer'
   | 'api_gateway'
@@ -153,6 +169,7 @@ export interface SimulationRun {
   log: LogEntry[];
   aiDebrief?: AIDebrief;
   scores?: Scores;
+  stressedMode?: boolean;
 }
 
 export interface LogEntry {
@@ -162,6 +179,17 @@ export interface LogEntry {
   componentId?: string;
 }
 
+export interface PerComponentSummary {
+  id: string;
+  name: string;
+  type: ComponentType;
+  p50: number;
+  p99: number;
+  rho?: number;
+  errorRate: number;
+  peakQueue?: number;
+}
+
 export interface AIDebrief {
   summary: string;
   questions: string[];
@@ -169,6 +197,7 @@ export interface AIDebrief {
   flags: string[];
   scores: Scores;
   aiAvailable: boolean;
+  componentSummary?: PerComponentSummary[];
 }
 
 export interface Scores {

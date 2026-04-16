@@ -93,7 +93,7 @@ async function runSimAndCapture(page: Page, testDir: string) {
     await speedButton.click();
   }
 
-  const runButton = page.locator('button:has-text("Run")');
+  const runButton = page.getByRole('button', { name: 'Run', exact: true });
   await expect(runButton).toBeEnabled({ timeout: 5000 });
   await runButton.click();
 

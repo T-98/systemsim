@@ -337,4 +337,236 @@ describe('SimulationEngine', () => {
       expect(r1[4].metrics['s'].memoryPercent).toEqual(r2[4].metrics['s'].memoryPercent);
     });
   });
+
+  describe('Stressed mode', () => {
+    function phasesProfile(phases: Array<{ startS: number; endS: number; rps: number }>): TrafficProfile {
+      return {
+        name: 'multi-phase',
+        durationSeconds: phases[phases.length - 1].endS,
+        jitterPercent: 0,
+        phases: phases.map((p) => ({ ...p, shape: 'steady' as const, description: `${p.rps} rps` })),
+        requestMix: {},
+        userDistribution: 'uniform',
+      };
+    }
+
+    it('holds the peak RPS for the entire run', () => {
+      // Normal: ramp 10 → 100 → 10. Stressed: always 100.
+      const profile = phasesProfile([
+        { startS: 0, endS: 5, rps: 10 },
+        { startS: 5, endS: 10, rps: 100 },
+        { startS: 10, endS: 15, rps: 10 },
+      ]);
+      const nodes = [makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 10000, instanceCount: 20 })];
+
+      const normal = new SimulationEngine(nodes, [], profile, undefined, undefined, SEED, false);
+      const stressed = new SimulationEngine(nodes, [], profile, undefined, undefined, SEED, true);
+
+      const normalTick0 = normal.tick();
+      const stressedTick0 = stressed.tick();
+
+      // At t=0: normal runs 10 RPS, stressed runs 100 RPS
+      expect(stressedTick0.metrics['s'].rps).toBeGreaterThan(normalTick0.metrics['s'].rps);
+      expect(stressedTick0.metrics['s'].rps).toBeCloseTo(100, 0);
+    });
+
+    it('uses wire p99 (latency + jitter) not sampled jitter', () => {
+      const nodes = [makeNode('lb', 'load_balancer'), makeNode('s', 'server', { processingTimeMs: 10, maxConcurrent: 10000, instanceCount: 10 })];
+      const edges = [makeEdge('e1', 'lb', 's', { latencyMs: 50, jitterMs: 50 })];
+      const profile = steadyProfile(100);
+
+      const stressed = new SimulationEngine(nodes, edges, profile, undefined, undefined, SEED, true);
+      const normal = new SimulationEngine(nodes, edges, profile, undefined, undefined, SEED, false);
+
+      const s1 = stressed.tick();
+      const n1 = normal.tick();
+
+      // Stressed wire latency is always latency + jitter = 100ms. Normal averages ~50ms.
+      // Server p50 includes wire latency. Stressed should have meaningfully higher p50 than normal.
+      expect(s1.metrics['s'].p50).toBeGreaterThanOrEqual(n1.metrics['s'].p50);
+      // Wire contribution in stressed mode: ~100ms (base 50 + jitter 50).
+      // Server p50 ≈ q.p50Ms (small at low ρ) + 100ms wire. Expect p50 in the 90-115 range.
+      expect(s1.metrics['s'].p50).toBeGreaterThan(90);
+      expect(s1.metrics['s'].p50).toBeLessThan(120);
+    });
+
+    it('forces cache hitRate to 0 (cold cache)', () => {
+      const nodes = [
+        makeNode('c', 'cache', { maxMemoryMb: 4096, ttlSeconds: 300, evictionPolicy: 'lru' }),
+        makeNode('db', 'database'),
+      ];
+      const edges = [makeEdge('e1', 'c', 'db')];
+      const profile = steadyProfile(500);
+
+      const stressed = new SimulationEngine(nodes, edges, profile, undefined, undefined, SEED, true);
+      const r = stressed.tick();
+
+      expect(r.metrics['c'].cacheHitRate).toBe(0);
+    });
+
+    it('non-stressed run does NOT alter normal behavior', () => {
+      const nodes = [makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 10000, instanceCount: 5 })];
+      const profile = steadyProfile(20);
+
+      const a = new SimulationEngine(nodes, [], profile, undefined, undefined, SEED);
+      const b = new SimulationEngine(nodes, [], profile, undefined, undefined, SEED, false);
+
+      const ta = a.tick();
+      const tb = b.tick();
+
+      expect(ta.metrics['s'].rps).toBeCloseTo(tb.metrics['s'].rps, 3);
+      expect(ta.metrics['s'].p50).toBeCloseTo(tb.metrics['s'].p50, 3);
+    });
+  });
+
+  describe('Saturation callouts', () => {
+    function collectLogs(engine: SimulationEngine, ticks: number): string[] {
+      const all: string[] = [];
+      for (let i = 0; i < ticks; i++) {
+        const r = engine.tick();
+        for (const entry of r.newLogs) all.push(entry.message);
+      }
+      return all;
+    }
+
+    it('fires server saturation callout at ρ ≥ 0.85 exactly once', () => {
+      // Capacity: 1 instance × (1000 / 50) = 20 RPS. 18 RPS → ρ = 0.9
+      const nodes = [makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 })];
+      const engine = new SimulationEngine(nodes, [], steadyProfile(18), undefined, undefined, SEED);
+      const logs = collectLogs(engine, 8);
+
+      const saturationLogs = logs.filter((m) => m.includes('headroom before queueing collapse'));
+      expect(saturationLogs.length).toBe(1);
+      expect(saturationLogs[0]).toMatch(/ρ=0\.9\d/);
+    });
+
+    it('does NOT fire server saturation callout below ρ=0.85', () => {
+      // 10 RPS → ρ = 0.5
+      const nodes = [makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 })];
+      const engine = new SimulationEngine(nodes, [], steadyProfile(10), undefined, undefined, SEED);
+      const logs = collectLogs(engine, 8);
+
+      expect(logs.filter((m) => m.includes('headroom'))).toHaveLength(0);
+    });
+
+    it('fires queue capacity callout at 70% depth exactly once', () => {
+      // Queue with small maxDepth so we fill it past 70% quickly.
+      // maxDepth=100, consumers=1 × processingTimeMs=1000ms → throughput ≈ 1 msg/s
+      // Input 50 RPS → depth grows by ~49 per tick, crosses 70 at tick 2
+      const nodes = [
+        makeNode('q', 'queue', {
+          maxDepth: 100,
+          consumersPerGroup: 1,
+          consumerGroupCount: 1,
+          processingTimeMs: 1000,
+          dlqEnabled: false,
+        }),
+      ];
+      const engine = new SimulationEngine(nodes, [], steadyProfile(50), undefined, undefined, SEED);
+      const logs = collectLogs(engine, 10);
+
+      const fillingLogs = logs.filter((m) => m.includes('capacity') && m.includes('consumers not keeping up'));
+      expect(fillingLogs.length).toBe(1);
+    });
+
+    it('fires DB pool pressure callout at ≥80% utilization exactly once', () => {
+      // connectionPoolSize=10, we push ~8 RPS with write throughput of 20K so it backs up.
+      // currentConnections += rps, -= min(currentConnections, throughput). So if throughput > rps,
+      // currentConnections won't climb. Use smaller throughput.
+      const nodes = [
+        makeNode('db', 'database', {
+          connectionPoolSize: 10,
+          writeThroughputRps: 2,
+          readThroughputRps: 2,
+          readReplicas: 0,
+        }),
+      ];
+      const engine = new SimulationEngine(nodes, [], steadyProfile(5), undefined, undefined, SEED);
+      const logs = collectLogs(engine, 10);
+
+      const poolLogs = logs.filter((m) => m.includes('connection pool') && m.includes('add replicas or pool size'));
+      expect(poolLogs.length).toBe(1);
+    });
+
+    it('does NOT fire server saturation callout twice even when ρ stays high', () => {
+      const nodes = [makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 })];
+      const engine = new SimulationEngine(nodes, [], steadyProfile(18, 30), undefined, undefined, SEED);
+      const logs = collectLogs(engine, 30);
+
+      const saturationLogs = logs.filter((m) => m.includes('headroom before queueing collapse'));
+      expect(saturationLogs.length).toBe(1);
+    });
+
+    it('still fires saturation callout when ρ spikes past 1 (bypasses the "< 1" cliff)', () => {
+      // 100 RPS, 1 instance × 50ms = ρ = 5. Jumps straight past 1.
+      const nodes = [makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 })];
+      const engine = new SimulationEngine(nodes, [], steadyProfile(100), undefined, undefined, SEED);
+      const logs = collectLogs(engine, 5);
+
+      const saturationLogs = logs.filter((m) => m.includes('headroom before queueing collapse'));
+      expect(saturationLogs.length).toBe(1);
+    });
+
+    it('still fires DB pool callout when utilization exceeds 100%', () => {
+      // Push enough rps that currentConnections > connectionPoolSize
+      const nodes = [
+        makeNode('db', 'database', {
+          connectionPoolSize: 5,
+          writeThroughputRps: 1,
+          readThroughputRps: 1,
+          readReplicas: 0,
+        }),
+      ];
+      // 20 RPS / 5 pool with throughput of 2 RPS → currentConnections grows rapidly past 5
+      const engine = new SimulationEngine(nodes, [], steadyProfile(20), undefined, undefined, SEED);
+      const logs = collectLogs(engine, 5);
+
+      const poolLogs = logs.filter((m) => m.includes('connection pool') && m.includes('add replicas or pool size'));
+      expect(poolLogs.length).toBe(1);
+    });
+
+    it('saturation callout survives when another warning fires on the same component (throttle bypass)', () => {
+      // Overload scenario: server both hits ρ=5 (saturation) AND drops requests (drop warning).
+      // Both are warnings on the same component. With the old throttle key (componentId+severity)
+      // one would be swallowed. With the callout bypass, the saturation callout survives.
+      const nodes = [makeNode('s', 'server', { processingTimeMs: 50, maxConcurrent: 1000, instanceCount: 1 })];
+      const engine = new SimulationEngine(nodes, [], steadyProfile(100, 10), undefined, undefined, SEED);
+
+      const firstTick = engine.tick();
+      const hasSaturation = firstTick.newLogs.some((l) => l.message.includes('headroom before queueing collapse'));
+      expect(hasSaturation).toBe(true);
+    });
+  });
+
+  describe('Stressed mode — cache & CDN corrections', () => {
+    it('does NOT emit cache stampede log under stressed mode', () => {
+      const nodes = [
+        makeNode('c', 'cache', {
+          maxMemoryMb: 128,
+          ttlSeconds: 30, // short TTL + high RPS → stampedeRisk = true normally
+          evictionPolicy: 'lru',
+        }),
+        makeNode('db', 'database'),
+      ];
+      const edges = [makeEdge('e1', 'c', 'db')];
+      const stressed = new SimulationEngine(nodes, edges, steadyProfile(2000, 60), undefined, undefined, SEED, true);
+
+      const all: string[] = [];
+      for (let i = 0; i < 60; i++) {
+        const r = stressed.tick();
+        for (const entry of r.newLogs) all.push(entry.message);
+      }
+
+      const stampedes = all.filter((m) => m.includes('Cache stampede'));
+      expect(stampedes).toHaveLength(0);
+    });
+
+    it('forces CDN hit rate to 0 under stressed mode', () => {
+      const nodes = [makeNode('cdn', 'cdn', { cacheHitRate: 0.95, originPullLatencyMs: 100 })];
+      const stressed = new SimulationEngine(nodes, [], steadyProfile(100), undefined, undefined, SEED, true);
+      const r = stressed.tick();
+
+      expect(r.metrics['cdn'].cacheHitRate).toBe(0);
+    });
+  });
 });

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { generateDebrief } from '../debrief';
+import { generateDebrief, computePerComponentPeaks } from '../debrief';
 import { buildSimulationSummary } from '../buildSimulationSummary';
 import { generateDebriefHtml } from '../generateDebriefHtml';
-import type { SimComponentData, WireConfig, SimulationRun, TrafficProfile } from '../../types';
+import type { SimComponentData, WireConfig, SimulationRun, TrafficProfile, ComponentMetrics } from '../../types';
 import type { Node, Edge } from '@xyflow/react';
 
 function makeNode(id: string, type: string, config: Record<string, unknown> = {}): Node<SimComponentData> {
@@ -174,6 +174,114 @@ describe('buildSimulationSummary', () => {
     expect(summary).toContain('## Peak Metrics');
     expect(summary).toContain('## Failure Events');
     expect(summary).toContain('## Traffic');
+  });
+});
+
+describe('computePerComponentPeaks', () => {
+  function series(values: Partial<ComponentMetrics>[]): ComponentMetrics[] {
+    return values.map((v) => ({
+      rps: 0, p50: 0, p95: 0, p99: 0, errorRate: 0, cpuPercent: 0, memoryPercent: 0, ...v,
+    }));
+  }
+
+  it('returns max of each metric across the series', () => {
+    const nodes = [makeNode('s1', 'server')];
+    const peaks = computePerComponentPeaks(
+      {
+        s1: series([
+          { p50: 10, p99: 50, cpuPercent: 30 },
+          { p50: 40, p99: 200, cpuPercent: 85 },
+          { p50: 25, p99: 120, cpuPercent: 60 },
+        ]),
+      },
+      nodes,
+    );
+
+    expect(peaks).toHaveLength(1);
+    expect(peaks[0].p50).toBe(40);
+    expect(peaks[0].p99).toBe(200);
+    expect(peaks[0].rho).toBeCloseTo(0.85, 2);
+  });
+
+  it('sorts rows by p99 descending', () => {
+    const nodes = [makeNode('a', 'server'), makeNode('b', 'server'), makeNode('c', 'server')];
+    const peaks = computePerComponentPeaks(
+      {
+        a: series([{ p99: 100 }]),
+        b: series([{ p99: 800 }]),
+        c: series([{ p99: 400 }]),
+      },
+      nodes,
+    );
+
+    expect(peaks.map((r) => r.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('computes rho for server and database from cpuPercent', () => {
+    const nodes = [makeNode('s', 'server'), makeNode('db', 'database')];
+    const peaks = computePerComponentPeaks(
+      {
+        s: series([{ cpuPercent: 75, p99: 10 }]),
+        db: series([{ cpuPercent: 92, p99: 20 }]),
+      },
+      nodes,
+    );
+
+    const server = peaks.find((r) => r.id === 's')!;
+    const db = peaks.find((r) => r.id === 'db')!;
+    expect(server.rho).toBeCloseTo(0.75, 2);
+    expect(db.rho).toBeCloseTo(0.92, 2);
+  });
+
+  it('computes rho for queue from memoryPercent (queueDepth/maxDepth)', () => {
+    const nodes = [makeNode('q', 'queue')];
+    const peaks = computePerComponentPeaks(
+      { q: series([{ memoryPercent: 70, queueDepth: 7000, p99: 50 }]) },
+      nodes,
+    );
+
+    expect(peaks[0].rho).toBeCloseTo(0.7, 2);
+    expect(peaks[0].peakQueue).toBe(7000);
+  });
+
+  it('leaves rho undefined for components with no natural utilization metric', () => {
+    const nodes = [makeNode('c', 'cache'), makeNode('lb', 'load_balancer')];
+    const peaks = computePerComponentPeaks(
+      {
+        c: series([{ p99: 5, cacheHitRate: 0.9 }]),
+        lb: series([{ p99: 15 }]),
+      },
+      nodes,
+    );
+
+    expect(peaks.find((r) => r.id === 'c')!.rho).toBeUndefined();
+    expect(peaks.find((r) => r.id === 'lb')!.rho).toBeUndefined();
+  });
+
+  it('omits components with no time-series data', () => {
+    const nodes = [makeNode('s1', 'server'), makeNode('s2', 'server')];
+    const peaks = computePerComponentPeaks({ s1: series([{ p99: 10 }]) }, nodes);
+    expect(peaks.map((r) => r.id)).toEqual(['s1']);
+  });
+
+  it('attaches peaks onto AIDebrief from generateDebrief', () => {
+    const nodes = [makeNode('server-1', 'server')];
+    const debrief = generateDebrief({
+      nodes,
+      edges: [],
+      functionalReqs: [],
+      nonFunctionalReqs: [],
+      apiContracts: [],
+      schemaMemory: null,
+      simulationRun: makeRun(),
+      scenarioId: null,
+    });
+
+    expect(debrief.componentSummary).toBeDefined();
+    expect(debrief.componentSummary!.length).toBeGreaterThan(0);
+    const server = debrief.componentSummary!.find((r) => r.id === 'server-1');
+    expect(server).toBeDefined();
+    expect(server!.p99).toBe(300);
   });
 });
 

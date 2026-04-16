@@ -1,3 +1,13 @@
+/**
+ * @file ai/generateDebriefHtml.ts
+ *
+ * Generates a standalone, self-contained HTML report of a simulation debrief.
+ * All CSS inlined, simulation data embedded as JSON in a `<script>` tag so
+ * reviewers can post-process if they want. No external dependencies.
+ *
+ * Used by the "Download Report" button in the BottomPanel debrief tab.
+ */
+
 import type { AIDebrief, SimulationRun, SimComponentData, WireConfig } from '../types';
 import type { Node, Edge } from '@xyflow/react';
 
@@ -50,9 +60,10 @@ export function generateDebriefHtml(input: DebriefHtmlInput): string {
   }).join('\n');
 
   const scoreStatus = (score: number) => {
-    if (score > 70) return { label: 'Pass', color: '#34c759' };
-    if (score >= 40) return { label: 'Warn', color: '#ff9f0a' };
-    return { label: 'Fail', color: '#ff453a' };
+    const rounded = Math.round(score);
+    if (rounded > 70) return { label: String(rounded), color: '#34c759' };
+    if (rounded >= 40) return { label: String(rounded), color: '#ff9f0a' };
+    return { label: String(rounded), color: '#ff453a' };
   };
 
   const coherence = scoreStatus(debrief.scores.coherence);
