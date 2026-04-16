@@ -361,7 +361,7 @@ export class SimulationEngine {
       state.metrics.p50 = 0;
       state.metrics.p99 = 0;
       if (rps > 0) {
-        logs.push({ time: this.time, message: `${state.id}: No healthy backends. All requests failing.`, severity: 'critical', componentId: state.id });
+        logs.push({ time: this.time, message: `${state.id}: No healthy backends. All requests failing. All downstream servers crashed — check their capacity in the live log above.`, severity: 'critical', componentId: state.id });
       }
       return;
     }
@@ -446,6 +446,19 @@ export class SimulationEngine {
       passthrough = rps - dropped;
       state.metrics.errorRate = q.dropRate;
       state.accumulatedErrors += dropped;
+
+      const serviceRate = Math.round(1000 / processingTime);
+      const totalCapacity = serviceRate * instances;
+      const neededInstances = Math.ceil(arrivalRateRps / serviceRate);
+      this.throttledLog(logs, {
+        time: this.time,
+        message: `${state.id}: Dropping ${Math.round(q.dropRate * 100)}% of requests. ` +
+          `Capacity: ${totalCapacity} RPS (${instances} instance${instances > 1 ? 's' : ''} × ${serviceRate} RPS each). ` +
+          `Demand: ${Math.round(arrivalRateRps)} RPS. ` +
+          `Try increasing to ${neededInstances}+ instances.`,
+        severity: 'warning',
+        componentId: state.id,
+      });
     } else {
       state.metrics.errorRate = 0;
     }
@@ -777,9 +790,22 @@ export class SimulationEngine {
       if (maxUtil > 98 && this.random() < 0.3) {
         state.crashed = true;
         state.health = 'crashed';
+        const resource = cpu > mem ? 'CPU' : 'Memory';
+        let fix = '';
+        if (state.type === 'server') {
+          const procTime = (state.config.processingTimeMs as number) ?? 50;
+          const serviceRate = Math.round(1000 / procTime);
+          const rps = Math.round(state.metrics.rps);
+          const needed = Math.ceil(rps / serviceRate);
+          fix = ` At ${procTime}ms/request, each instance handles ${serviceRate} RPS. ` +
+            `You're sending ${rps} RPS to ${state.instanceCount} instance${state.instanceCount > 1 ? 's' : ''}. ` +
+            `Try ${needed}+ instances, or reduce processing time.`;
+        } else if (state.type === 'database') {
+          fix = ' Check connection pool size, add read replicas, or reduce upstream traffic.';
+        }
         logs.push({
           time: this.time,
-          message: `${state.id} CRASH. ${cpu > mem ? 'CPU' : 'Memory'} exhausted. Connection refused.`,
+          message: `${state.id} CRASH. ${resource} exhausted.${fix}`,
           severity: 'critical',
           componentId: state.id,
         });

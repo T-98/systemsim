@@ -93,6 +93,8 @@ export default function Toolbar() {
       const debrief = generateDebrief({ nodes: state.nodes, edges: state.edges, functionalReqs: state.functionalReqs, nonFunctionalReqs: state.nonFunctionalReqs, apiContracts: state.apiContracts, schemaMemory: state.schemaMemory, simulationRun: latestRun, scenarioId: state.scenarioId });
       setDebrief(debrief);
       setDebriefVisible(true);
+      useStore.getState().setBottomPanelOpen(true);
+      useStore.getState().setBottomPanelTab('debrief');
     }
   };
 

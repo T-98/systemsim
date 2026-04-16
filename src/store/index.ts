@@ -167,6 +167,10 @@ export interface AppState {
   // Log panel
   logPanelExpanded: boolean;
   setLogPanelExpanded: (expanded: boolean) => void;
+  bottomPanelTab: 'log' | 'debrief';
+  setBottomPanelTab: (tab: 'log' | 'debrief') => void;
+  bottomPanelOpen: boolean;
+  setBottomPanelOpen: (open: boolean) => void;
 
   // Graph versioning
   graphVersion: number;
@@ -466,6 +470,10 @@ export const useStore = create<AppState>((set, get) => ({
   // Log panel
   logPanelExpanded: false,
   setLogPanelExpanded: (expanded) => set({ logPanelExpanded: expanded }),
+  bottomPanelTab: 'log',
+  setBottomPanelTab: (tab) => set({ bottomPanelTab: tab }),
+  bottomPanelOpen: false,
+  setBottomPanelOpen: (open) => set({ bottomPanelOpen: open }),
 
   // Graph versioning
   graphVersion: 0,

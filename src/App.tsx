@@ -6,8 +6,7 @@ import Canvas from './components/canvas/Canvas';
 import CanvasSidebar from './components/panels/CanvasSidebar';
 import ConfigPanel from './components/panels/ConfigPanel';
 import Toolbar from './components/ui/Toolbar';
-import LiveLog from './components/panels/LiveLog';
-import DebriefPanel from './components/debrief/DebriefPanel';
+import BottomPanel from './components/panels/BottomPanel';
 import HintCard from './components/ui/HintCard';
 import ReviewMode from './components/ui/ReviewMode';
 import DesktopOnlyNotice from './components/ui/DesktopOnlyNotice';
@@ -55,8 +54,7 @@ export default function App() {
           <Canvas />
           <ConfigPanel />
         </div>
-        <LiveLog />
-        <DebriefPanel />
+        <BottomPanel />
         <HintCard />
       </div>
     </ReactFlowProvider>
