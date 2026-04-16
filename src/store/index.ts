@@ -578,3 +578,7 @@ export const useStore = create<AppState>((set, get) => ({
     });
   },
 }));
+
+if (typeof window !== 'undefined') {
+  (window as any).__SYSTEMSIM_STORE__ = useStore;
+}
