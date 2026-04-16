@@ -1,13 +1,20 @@
 /**
- * M/M/1-per-instance queueing approximation using Little's Law.
+ * @file QueueingModel.ts
+ *
+ * M/M/1-per-instance queueing approximation via Little's Law. The math that
+ * makes the simulation actually teach something: at ρ → 1, latency explodes.
  *
  * ρ = λ / (c × μ)  where λ = arrival rate, c = instances, μ = service rate per instance
- * waitTime = processingTime × ρ / (1 - ρ)  (M/M/1 wait formula)
+ * waitTime = processingTime × ρ / (1 - ρ)
  *
- * Clamps ρ at 0.99 to avoid infinity. Above ρ=1 the queue grows unboundedly,
- * which we model as request drops instead.
+ * Clamps effective ρ at 0.95 to keep latency finite. Above ρ = 1, models the
+ * overflow as request drops (dropRate = 1 - 1/ρ). Wait time capped at 5000ms
+ * to keep stressed runs bounded.
+ *
+ * Replaces the older polynomial heuristic. See Decisions.md #6.
  */
 
+/** Input shape for computeQueueing. */
 export interface QueueingInput {
   arrivalRateRps: number;
   processingTimeMs: number;
@@ -24,6 +31,10 @@ export interface QueueingResult {
   dropRate: number;
 }
 
+/**
+ * Compute queueing metrics (utilization, wait time, p50/p95/p99 latency,
+ * drop rate) for a server-like component from its arrival rate and capacity.
+ */
 export function computeQueueing(input: QueueingInput): QueueingResult {
   const { arrivalRateRps, processingTimeMs, instanceCount, maxConcurrentPerInstance } = input;
 

@@ -1,3 +1,14 @@
+/**
+ * @file components/panels/ConfigPanel.tsx
+ *
+ * Right-dock config editor for the currently selected component. Opens
+ * automatically when a node is clicked. Form fields are driven by the
+ * component's type (different fields for server vs cache vs DB).
+ *
+ * Preflight routing lands here via `pulseTarget === 'node:${id}'` when the
+ * user clicks an "Assign N tables" or similar config-level preflight item.
+ */
+
 import { useStore } from '../../store';
 import { COMPONENT_DEFS } from '../../types/components';
 import type { ApiContract } from '../../types';

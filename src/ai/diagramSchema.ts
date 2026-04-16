@@ -1,3 +1,14 @@
+/**
+ * @file ai/diagramSchema.ts
+ *
+ * Anthropic tool-use schema for the `generate_system_diagram` tool, plus
+ * `validateAndRewrite` which enforces our constraints (allowlist, node/edge
+ * caps, label length) on the LLM's output.
+ *
+ * The LLM occasionally wants to emit "API Gateway" as a distinct type or
+ * use 30-node graphs. We reject or rewrite rather than trust.
+ */
+
 import type { CanonicalGraph, CanonicalNode, CanonicalEdge } from '../types';
 
 const ALLOWED_TYPES = new Set([

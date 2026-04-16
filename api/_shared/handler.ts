@@ -1,3 +1,15 @@
+/**
+ * @file api/_shared/handler.ts
+ *
+ * Common plumbing for every /api/* Anthropic-backed endpoint. All three
+ * Edge Functions (debrief, generate-diagram, describe-intent) use
+ * `createAnthropicHandler` as their default export.
+ *
+ * Centralizes: method check, API-key presence, payload-size guard, Anthropic
+ * SDK client construction, and error-kind mapping (rate_limit / network /
+ * api_error / validation).
+ */
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import Anthropic from '@anthropic-ai/sdk';
 

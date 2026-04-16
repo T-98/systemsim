@@ -1,3 +1,25 @@
+/**
+ * @file store/index.ts
+ *
+ * Single Zustand store. Source of truth for every piece of app state: view
+ * routing, canvas graph, design artifacts, simulation state, debrief, and
+ * UX pulse targets.
+ *
+ * Exposed on `window.__SYSTEMSIM_STORE__` for Playwright tests (see
+ * Decisions.md #5). Tests inject scenarios directly without UI clicks.
+ *
+ * Key side-effecting setters:
+ * - `setApiContracts`: if any contract has `ownerServiceId`, BFS from that
+ *   service and rebuild `endpointRoutes`.
+ * - `setSchemaMemory`: pushes prior schema into `schemaHistory` for undo.
+ * - `replaceGraph`: atomically swaps nodes+edges (templates, remix, V2I).
+ * - `resetSimulationState`: clears metrics/log/particles but keeps graph
+ *   and design artifacts.
+ *
+ * Undo/redo skips snapshots while `simulationStatus !== 'idle'` to avoid
+ * history pollution during a sim run.
+ */
+
 import { create } from 'zustand';
 import {
   type Node,
@@ -171,6 +193,12 @@ export interface AppState {
   setBottomPanelTab: (tab: 'log' | 'debrief') => void;
   bottomPanelOpen: boolean;
   setBottomPanelOpen: (open: boolean) => void;
+  sidebarTab: 'components' | 'design' | 'traffic';
+  setSidebarTab: (tab: 'components' | 'design' | 'traffic') => void;
+  designPanelTab: 'api' | 'schema';
+  setDesignPanelTab: (tab: 'api' | 'schema') => void;
+  pulseTarget: string | null;
+  setPulseTarget: (target: string | null) => void;
 
   // Graph versioning
   graphVersion: number;
@@ -474,6 +502,12 @@ export const useStore = create<AppState>((set, get) => ({
   setBottomPanelTab: (tab) => set({ bottomPanelTab: tab }),
   bottomPanelOpen: false,
   setBottomPanelOpen: (open) => set({ bottomPanelOpen: open }),
+  sidebarTab: 'components',
+  setSidebarTab: (tab) => set({ sidebarTab: tab }),
+  designPanelTab: 'api',
+  setDesignPanelTab: (tab) => set({ designPanelTab: tab }),
+  pulseTarget: null,
+  setPulseTarget: (target) => set({ pulseTarget: target }),
 
   // Graph versioning
   graphVersion: 0,

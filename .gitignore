@@ -27,3 +27,5 @@ dist-ssr
 
 # Eval runner outputs (raw Anthropic responses, per-run)
 evals/**/.evals-output/
+
+test-results

@@ -1,3 +1,11 @@
+/**
+ * @file ai/generateDiagram.ts
+ *
+ * Client wrapper for the /api/generate-diagram Edge Function. Text-to-diagram
+ * and remix both use this. Returns a validated CanonicalGraph ready for
+ * replaceGraph, or a typed error.
+ */
+
 import type { CanonicalGraph } from '../types';
 import { callAIEndpoint, type AICallResult } from './_shared/aiClient';
 

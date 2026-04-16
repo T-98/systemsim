@@ -1,3 +1,11 @@
+/**
+ * @file ai/_shared/aiClient.ts
+ *
+ * Shared client for calling our /api/* Anthropic-backed endpoints. Maps
+ * fetch/HTTP errors onto the discriminated `AICallResult` union so UI code
+ * can do exhaustive switch statements instead of try/catch.
+ */
+
 export type AICallResult<TData> =
   | { ok: true; data: TData }
   | { ok: false; kind: 'network' | 'rate_limit' | 'validation' | 'api_error' | 'aborted'; message: string };

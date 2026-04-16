@@ -1,3 +1,15 @@
+/**
+ * @file scenarios/discord.ts
+ *
+ * The Discord Notification Fanout scenario — our canonical MVP teaching
+ * example. Hardcoded traffic profile (3-phase: steady → instant spike →
+ * ramp-down), functional + non-functional requirements, and Socratic
+ * question templates for the deterministic debrief.
+ *
+ * Exercises the whole teaching surface: fanout multiplier, queue overflow,
+ * cache stampede, hot shard, connection pool exhaustion.
+ */
+
 import type { TrafficProfile } from '../types';
 
 export const DISCORD_SCENARIO_ID = 'discord_notification_fanout';

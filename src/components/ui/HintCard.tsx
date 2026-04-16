@@ -1,3 +1,11 @@
+/**
+ * @file components/ui/HintCard.tsx
+ *
+ * Floating card shown during canvas work. Hints come from `store.hints`,
+ * emitted by `checkForHints` before a Run (e.g., "fanout → DB with no
+ * queue?"). Each hint dismissible with a close button.
+ */
+
 import { useStore } from '../../store';
 
 export default function HintCard() {

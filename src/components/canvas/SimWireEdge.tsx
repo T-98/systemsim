@@ -1,3 +1,10 @@
+/**
+ * @file components/canvas/SimWireEdge.tsx
+ *
+ * XyFlow custom edge. Renders wires with config-driven style (thicker line
+ * for higher throughput, dashed for queue wires, color by health).
+ */
+
 import { memo } from 'react';
 import { BaseEdge, getSmoothStepPath, type EdgeProps } from '@xyflow/react';
 import { useStore } from '../../store';

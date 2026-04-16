@@ -1,3 +1,11 @@
+/**
+ * @file components/ui/ConfidencePanel.tsx
+ *
+ * Collapsible panel in ReviewMode that shows per-dimension confidence
+ * (overall / intent / components / connections) returned by the LLM. Used
+ * as a signal: low confidence → encourage the user to edit before deriving.
+ */
+
 import { useState } from 'react';
 import type { ConfidenceItem, ConfidenceLevel } from '../../ai/describeIntentSchema';
 

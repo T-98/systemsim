@@ -1,5 +1,14 @@
-// Mirrors the pattern of api/generate-diagram.ts — vision + tool_use + discriminated-union response.
-// Accepts optional text and optional base64 image. Returns { intent, systemSpec, confidence }.
+/**
+ * @file api/describe-intent.ts
+ *
+ * Vercel Edge Function for Vision-to-Intent. Accepts text and/or a base64
+ * image. Validates the image (MIME allowlist + magic bytes) before calling
+ * Claude Opus 4.6 with the `describe_intent` tool. Returns structured
+ * { intent, systemSpec, confidence } or a typed error.
+ *
+ * Opus over Sonnet for this endpoint only — better diagram reading accuracy
+ * justifies the ~1.67x cost per input token. See constants.ts.
+ */
 import { createAnthropicHandler } from './_shared/handler';
 import { MODEL_ID_VISION } from './_shared/constants';
 import {

@@ -1,6 +1,22 @@
+/**
+ * @file components/panels/BottomPanel.tsx
+ *
+ * VS Code-style tabbed bottom panel. Lives below the canvas. Replaces the old
+ * modal overlay debrief so users can flip between the live log and the
+ * post-run debrief without losing either.
+ *
+ * Tabs:
+ * - **Live Log** — streams LogEntry[] from the store (auto-scroll, severity colors)
+ * - **Debrief** — appears after sim completion: stressed badge (if stressed),
+ *   numeric score badges, per-component peak table, summary, questions, flags.
+ *
+ * See Decisions.md #21, #25, #26.
+ */
+
 import { useRef, useEffect } from 'react';
 import { useStore } from '../../store';
 import { downloadDebriefHtml } from '../../ai/generateDebriefHtml';
+import type { PerComponentSummary, ComponentType } from '../../types';
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -8,6 +24,10 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+/**
+ * The panel itself. Hidden when sim is idle and panel is closed; otherwise
+ * visible with tabs for Live Log and Debrief.
+ */
 export default function BottomPanel() {
   const simulationStatus = useStore((s) => s.simulationStatus);
   const bottomPanelOpen = useStore((s) => s.bottomPanelOpen);
@@ -167,9 +187,31 @@ function LogContent() {
 function DebriefContent() {
   const debrief = useStore((s) => s.debrief)!;
   const debriefLoading = useStore((s) => s.debriefLoading);
+  const simulationRuns = useStore((s) => s.simulationRuns);
+  const latestRun = simulationRuns[simulationRuns.length - 1];
+  const isStressed = latestRun?.stressedMode === true;
 
   return (
     <div style={{ padding: '16px 16px 32px' }} className="max-w-3xl">
+      {isStressed && (
+        <div
+          data-testid="stressed-badge"
+          style={{
+            marginBottom: 12,
+            padding: '6px 10px',
+            borderRadius: 6,
+            background: 'rgba(255,159,10,0.08)',
+            border: '1px solid rgba(255,159,10,0.3)',
+            color: 'var(--warning)',
+            fontSize: 11,
+            fontWeight: 500,
+            letterSpacing: '-0.12px',
+            display: 'inline-block',
+          }}
+        >
+          Stressed run · peak RPS held + cold cache + wire p99
+        </div>
+      )}
       <div className="flex items-center gap-3 mb-4">
         <div className="flex gap-2">
           <ScoreBadge label="Coherence" score={debrief.scores.coherence} />
@@ -202,6 +244,18 @@ function DebriefContent() {
           {debrief.summary}
         </p>
       </div>
+
+      {debrief.componentSummary && debrief.componentSummary.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <h3
+            className="uppercase font-medium"
+            style={{ fontSize: 10, letterSpacing: '0.2em', color: 'var(--text-tertiary)', marginBottom: 8 }}
+          >
+            Per-Component Peaks
+          </h3>
+          <PerComponentTable rows={debrief.componentSummary} />
+        </div>
+      )}
 
       {(debrief.questions.length > 0 || (debrief.aiQuestions && debrief.aiQuestions.length > 0)) && (
         <div style={{ marginBottom: 20 }}>
@@ -265,16 +319,111 @@ function DebriefContent() {
 }
 
 function ScoreBadge({ label, score }: { label: string; score: number }) {
+  // Color and displayed number must agree. Round once, then threshold the rounded value.
+  const rounded = Math.round(score);
   const getStatus = () => {
-    if (score > 70) return { label: 'Pass', bg: 'rgba(52,199,89,0.1)', text: 'var(--success)' };
-    if (score >= 40) return { label: 'Warn', bg: 'rgba(255,159,10,0.1)', text: 'var(--warning)' };
-    return { label: 'Fail', bg: 'rgba(255,59,48,0.1)', text: 'var(--destructive)' };
+    if (rounded > 70) return { bg: 'rgba(52,199,89,0.1)', text: 'var(--success)' };
+    if (rounded >= 40) return { bg: 'rgba(255,159,10,0.1)', text: 'var(--warning)' };
+    return { bg: 'rgba(255,59,48,0.1)', text: 'var(--destructive)' };
   };
   const status = getStatus();
   return (
-    <div className="flex items-center gap-1" style={{ padding: '3px 8px', borderRadius: 6, background: status.bg }}>
+    <div className="flex items-center gap-1.5" style={{ padding: '3px 8px', borderRadius: 6, background: status.bg }}>
       <span style={{ fontSize: 11, color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>{label}</span>
-      <span style={{ fontSize: 11, fontWeight: 600, color: status.text, fontFamily: "'Geist Mono', monospace" }}>{status.label}</span>
+      <span style={{ fontSize: 11, fontWeight: 600, color: status.text, fontFamily: "'Geist Mono', monospace" }}>{rounded}</span>
+    </div>
+  );
+}
+
+const P99_GREEN = 200;
+const P99_AMBER = 500;
+const RHO_GREEN = 0.7;
+const RHO_AMBER = 0.9;
+const ERR_GREEN = 0.01;
+const ERR_AMBER = 0.05;
+
+function severityColor(value: number | undefined, green: number, amber: number): string {
+  if (value === undefined) return 'var(--text-tertiary)';
+  if (value < green) return 'var(--success)';
+  if (value < amber) return 'var(--warning)';
+  return 'var(--destructive)';
+}
+
+function typeLabel(type: ComponentType): string {
+  switch (type) {
+    case 'load_balancer': return 'LB';
+    case 'api_gateway': return 'API GW';
+    case 'server': return 'Server';
+    case 'cache': return 'Cache';
+    case 'queue': return 'Queue';
+    case 'database': return 'DB';
+    case 'websocket_gateway': return 'WS';
+    case 'fanout': return 'Fanout';
+    case 'cdn': return 'CDN';
+    case 'external': return 'External';
+    case 'autoscaler': return 'Autoscaler';
+  }
+}
+
+function PerComponentTable({ rows }: { rows: PerComponentSummary[] }) {
+  const th: React.CSSProperties = {
+    fontSize: 10,
+    fontWeight: 500,
+    color: 'var(--text-tertiary)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.12em',
+    padding: '6px 8px',
+    textAlign: 'right',
+    borderBottom: '1px solid var(--border-color)',
+  };
+  const thLeft: React.CSSProperties = { ...th, textAlign: 'left' };
+  const td: React.CSSProperties = {
+    fontSize: 12,
+    fontFamily: "'Geist Mono', monospace",
+    padding: '5px 8px',
+    textAlign: 'right',
+    letterSpacing: '-0.12px',
+  };
+  const tdLeft: React.CSSProperties = { ...td, textAlign: 'left', fontFamily: 'inherit' };
+
+  return (
+    <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, overflow: 'hidden' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }} data-testid="per-component-table">
+        <thead>
+          <tr>
+            <th style={thLeft}>Component</th>
+            <th style={th}>p50</th>
+            <th style={th}>p99</th>
+            <th style={th}>ρ</th>
+            <th style={th}>Errors</th>
+            <th style={th}>Peak Queue</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const rhoPct = r.rho !== undefined ? r.rho * 100 : undefined;
+            return (
+              <tr key={r.id} data-component-id={r.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                <td style={tdLeft}>
+                  <span style={{ color: 'var(--text-primary)' }}>{r.name}</span>
+                  <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-tertiary)' }}>{typeLabel(r.type)}</span>
+                </td>
+                <td style={{ ...td, color: severityColor(r.p50, P99_GREEN, P99_AMBER) }}>{r.p50}ms</td>
+                <td style={{ ...td, color: severityColor(r.p99, P99_GREEN, P99_AMBER) }}>{r.p99}ms</td>
+                <td style={{ ...td, color: severityColor(r.rho, RHO_GREEN, RHO_AMBER) }}>
+                  {rhoPct !== undefined ? `${rhoPct.toFixed(0)}%` : '—'}
+                </td>
+                <td style={{ ...td, color: severityColor(r.errorRate, ERR_GREEN, ERR_AMBER) }}>
+                  {r.errorRate > 0 ? `${(r.errorRate * 100).toFixed(1)}%` : '—'}
+                </td>
+                <td style={{ ...td, color: 'var(--text-secondary)' }}>
+                  {r.peakQueue !== undefined ? r.peakQueue.toLocaleString() : '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

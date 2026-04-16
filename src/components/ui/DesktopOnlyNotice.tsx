@@ -1,3 +1,11 @@
+/**
+ * @file components/ui/DesktopOnlyNotice.tsx
+ *
+ * Mobile blocker. SystemSim's canvas is desktop-only in MVP. Shows a notice
+ * and blocks interaction on narrow viewports. Remove when mobile is in scope
+ * (tracked in TODOS as V2I Phase 2 touch-target work).
+ */
+
 import { useEffect, useState } from 'react';
 
 const MIN_DESKTOP_WIDTH = 900;

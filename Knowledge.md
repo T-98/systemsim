@@ -1,0 +1,486 @@
+# SystemSim — Knowledge Base
+
+Business logic to code mapping. If you want to know "where does X happen in the codebase," start here.
+
+Treat this as the **onboarding doc**. It maps product intent to file paths, function names, and the flow of control between them. When behavior changes, update this file too (or the map rots).
+
+---
+
+## Table of Contents
+
+1. [What SystemSim is](#what-systemsim-is)
+2. [High-level architecture](#high-level-architecture)
+3. [Business logic flows](#business-logic-flows)
+    - [User opens the app](#flow-1-user-opens-the-app)
+    - [User imports a diagram image](#flow-2-user-imports-a-diagram-image-vision-to-intent)
+    - [User writes functional requirements and API contracts](#flow-3-user-writes-requirements-and-api-contracts-design-flow)
+    - [User runs a simulation](#flow-4-user-runs-a-simulation)
+    - [User clicks Run Stressed](#flow-5-user-clicks-run-stressed)
+    - [User sees a preflight error and clicks to fix it](#flow-6-preflight-routing)
+    - [Simulation completes and debrief appears](#flow-7-post-run-debrief-deterministic--ai)
+    - [User downloads the debrief report](#flow-8-user-downloads-the-debrief-report)
+4. [Subsystem map](#subsystem-map)
+    - [Simulation engine](#simulation-engine)
+    - [Store (Zustand)](#store-zustand)
+    - [AI debrief](#ai-debrief)
+    - [Design flow](#design-flow)
+    - [Preflight](#preflight)
+    - [Vision-to-Intent](#vision-to-intent)
+
+---
+
+## What SystemSim is
+
+**SystemSim** is a distributed-systems-design simulator. It's Logisim for backend architecture. Users drop components on a canvas (servers, databases, caches, queues), wire them together, define traffic profiles and API contracts, then run a tick-based stochastic simulation that surfaces realistic failure modes: cache stampede, hot shards, queue overflow, connection pool exhaustion, ρ-based queueing collapse.
+
+The thesis: runtime fidelity is the moat. Every competitor can draw boxes. Only we run the boxes.
+
+---
+
+## High-level architecture
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                          BROWSER (SPA)                          │
+│                                                                 │
+│  ┌──────────┐  ┌─────────┐  ┌────────┐  ┌─────────────────┐  │
+│  │ Landing  │→ │ Design  │→ │ Canvas │  │ SimulationEngine│  │
+│  │  Page    │  │  Flow   │  │+XyFlow │◄─│ (tick-based)    │  │
+│  └──────────┘  └─────────┘  └────┬───┘  └─────────────────┘  │
+│                                  │                             │
+│                    ┌─────────────┴──────────────┐              │
+│                    │        Zustand Store        │              │
+│                    │  (nodes/edges/metrics/log)  │              │
+│                    └─────────────┬──────────────┘              │
+│                                  │                             │
+│          ┌───────────────────────┼───────────────────────┐    │
+│          ▼                       ▼                       ▼    │
+│    ┌──────────┐          ┌────────────┐           ┌──────────┐│
+│    │ BottomPl │          │ Preflight  │           │ AI debrf ││
+│    │ (log/dbf)│          │  Banner    │           │ (async)  ││
+│    └──────────┘          └────────────┘           └────┬─────┘│
+└────────────────────────────────────────────────────┬───┼──────┘
+                                                     │   │
+                                                     ▼   ▼
+                                           ┌──────────────────────┐
+                                           │  Vercel Edge (API)   │
+                                           │  /api/debrief        │
+                                           │  /api/describe-intent│
+                                           │  /api/generate-diagram│
+                                           └──────────┬───────────┘
+                                                      │
+                                                      ▼
+                                           ┌──────────────────────┐
+                                           │  Anthropic API       │
+                                           │  (Claude models)     │
+                                           └──────────────────────┘
+```
+
+**Key principles:**
+- **Single source of truth**: [src/store/index.ts](src/store/index.ts). All UI state, graph state, simulation state, preflight state lives here.
+- **Simulation runs in the browser.** No backend simulation. [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) holds the full tick-based engine. Backend is only for LLM calls.
+- **LLM is optional enhancement, not hard dependency.** Deterministic debrief ships immediately; AI questions merge in async via [src/ai/anthropicDebrief.ts](src/ai/anthropicDebrief.ts). On timeout/error, users still see a full debrief.
+- **Store exposed on `window.__SYSTEMSIM_STORE__`** for Playwright E2E tests ([src/store/index.ts](src/store/index.ts#L1-L5)).
+
+---
+
+## Business logic flows
+
+### Flow 1: User opens the app
+
+**Business logic:** First-time user lands on a picker: Discord scenario, freeform template, or text/image-to-diagram input.
+
+**Code flow:**
+
+```
+User → browser loads / → index.html → src/main.tsx (mount React)
+    → App.tsx (routes by appView state)
+        → appView === 'landing' → LandingPage.tsx
+            [user clicks template or types intent]
+            → handles click:
+                - Template path: replaceGraph() + setAppView('canvas')
+                - Discord path: setAppMode('scenario') + setAppView('design')
+                - Text/image path: UnifiedInput → POST /api/describe-intent
+```
+
+**Files:**
+- [src/main.tsx](src/main.tsx) — React entry, creates root
+- [src/App.tsx](src/App.tsx) — view router (landing / design / review / canvas)
+- [src/components/ui/LandingPage.tsx](src/components/ui/LandingPage.tsx) — `startScenario()` kicks Discord path, `startFreeform()` goes to freeform, `handleTemplateApply()` injects template graph
+- [src/components/ui/TemplatePicker.tsx](src/components/ui/TemplatePicker.tsx) — loads `/public/templates/*.json`, displays thumbnails
+- [src/components/ui/UnifiedInput.tsx](src/components/ui/UnifiedInput.tsx) — text + image input; POST to `/api/describe-intent`
+
+### Flow 2: User imports a diagram image (vision-to-intent)
+
+**Business logic:** User has an existing Miro/Figma/Excalidraw diagram. They paste or upload it, we extract intent + components + connections, and let them review before committing.
+
+**Code flow:**
+
+```
+User drops image → ImagePasteZone.tsx (client-side resize via util/imageResize.ts)
+    → UnifiedInput.tsx onSubmit
+        → POST /api/describe-intent { text?, image? }
+            → api/describe-intent.ts
+                → validates image (MIME, magic bytes, size)
+                → calls Claude Opus 4.6 vision with DESCRIBE_INTENT_TOOL_SCHEMA
+                → returns { intent, systemSpec, confidence }
+        → store.setIntent(intent) + store.setSystemSpec(spec)
+        → setAppView('review')
+    → ReviewMode.tsx renders intent + editable connections
+        → user edits, clicks "Derive components" → replaceGraph + setAppView('canvas')
+```
+
+**Files:**
+- [src/components/ui/UnifiedInput.tsx](src/components/ui/UnifiedInput.tsx) — the input field + attach
+- [src/components/ui/ImagePasteZone.tsx](src/components/ui/ImagePasteZone.tsx), [src/components/ui/ImagePreviewChip.tsx](src/components/ui/ImagePreviewChip.tsx) — upload UX
+- [src/util/imageResize.ts](src/util/imageResize.ts) — client-side resize to 1568px JPEG before upload
+- [src/ai/describeIntent.ts](src/ai/describeIntent.ts) — client-side wrapper for the fetch call
+- [src/ai/describeIntentPrompt.ts](src/ai/describeIntentPrompt.ts), [src/ai/describeIntentSchema.ts](src/ai/describeIntentSchema.ts) — prompt + Zod schema
+- [api/describe-intent.ts](api/describe-intent.ts) — Edge Function
+- [api/_shared/imageValidation.ts](api/_shared/imageValidation.ts) — MIME + magic-byte check
+- [src/components/ui/ReviewMode.tsx](src/components/ui/ReviewMode.tsx) — intent + components + connections editor
+- [src/components/ui/ConfidencePanel.tsx](src/components/ui/ConfidencePanel.tsx) — displays confidence breakdown
+
+### Flow 3: User writes requirements and API contracts (design flow)
+
+**Business logic:** Before running a simulation, the user should be able to declare functional requirements, non-functional requirements (SLOs), API contracts (with auth + ownerServiceId), and a data schema.
+
+**Code flow:**
+
+```
+User clicks "Design Flow" tab in toolbar → setAppView('design')
+    → DesignFlow.tsx (full-page)
+        → Section 1: Requirements (functional + NFRs)
+        → Section 2: API Contracts (method, path, authMode, ownerServiceId)
+        → Section 3: Schema (paste SQL-like text → parseSchemaLocally → SchemaEntity[])
+        → Section 4: Auto-generate endpoint routes
+            → store.setApiContracts(contracts)
+                → internal: runs BFS from owner service, builds EndpointRoute[]
+        → onComplete → setAppView('canvas')
+```
+
+**Files:**
+- [src/components/panels/DesignFlow.tsx](src/components/panels/DesignFlow.tsx) — full-page multi-section editor
+- [src/components/panels/designFlowParser.ts](src/components/panels/designFlowParser.ts) — `parseSchemaLocally()` turns pasted schema text into `SchemaEntity[]`
+- [src/components/panels/DesignPanel.tsx](src/components/panels/DesignPanel.tsx) — inline version that lives in the CanvasSidebar
+- [src/components/panels/CanvasSidebar.tsx](src/components/panels/CanvasSidebar.tsx) — tabbed sidebar with Components / Design / Traffic
+
+**Store entry points:**
+- `setFunctionalReqs`, `setNonFunctionalReqs`
+- `setApiContracts` — the setter rebuilds `EndpointRoute[]` via BFS if `ownerServiceId` is set ([src/store/index.ts](src/store/index.ts))
+- `setSchemaMemory` — sets schema + triggers downstream preflight
+
+### Flow 4: User runs a simulation
+
+**Business logic:** Given a canvas with components + wires + traffic profile + preflight clean, user clicks Run. The simulation ticks once per second of sim-time, updates live metrics per component, and emits log entries. At completion, generates a debrief.
+
+**Code flow:**
+
+```
+User clicks Run → Toolbar.handleRun()
+    → checkForHints(nodes, edges, scenarioId) → emits hint cards
+    → startSimulation(profile, stressedMode=false)  [src/engine/useSimulation.ts]
+        → new SimulationEngine(nodes, edges, profile, ..., stressedMode)
+        → setInterval(runTick, 1000/simulationSpeed)
+            → runTick() loop:
+                → engine.tick()
+                    → getCurrentRps() → current phase RPS
+                    → for each entry node, processComponent(id, rps, 0)
+                        → recursively walks graph via forwardToDownstreams
+                        → per component type: processServer/Cache/Queue/Database/...
+                        → each sets state.metrics.{p50, p99, cpuPercent, errorRate, queueDepth, cacheHitRate}
+                        → fires saturation callouts via fireCallout() when thresholds cross
+                    → updateParticles() — visual particle physics for wires
+                    → updateComponentHealth() — healthy/warning/critical/crashed
+                    → throttled logs pushed to this.log
+                    → returns { metrics, healths, newLogs, particles, time }
+                → updateLiveMetrics(componentId, metrics) — fills store.liveMetrics[id]
+                → updateComponentHealth(componentId, health) — drives node border color
+                → addLogEntry(log) — appends to store.liveLog (visible in BottomPanel)
+            → when engine.isComplete(): stopSimulation(runId, profile)
+    → stopSimulation():
+        → assembles SimulationRun from metricsHistory + log + stressedMode
+        → addSimulationRun(run)
+        → generateDebrief(ctx) → sets store.debrief (deterministic, instant)
+        → fetchAIDebrief(summary) async → merges aiQuestions when ready
+        → setBottomPanelTab('debrief')
+```
+
+**Files:**
+- [src/components/ui/Toolbar.tsx](src/components/ui/Toolbar.tsx) — Run / Run Stressed / Pause / Resume buttons
+- [src/engine/useSimulation.ts](src/engine/useSimulation.ts) — the React-hook driver with `startSimulation`, `runTick`, `stopSimulation`
+- [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) — the tick engine itself (see Subsystem map below)
+- [src/store/index.ts](src/store/index.ts) — setters: `updateLiveMetrics`, `updateComponentHealth`, `addLogEntry`, `addSimulationRun`, `setDebrief`
+
+### Flow 5: User clicks Run Stressed
+
+**Business logic:** One-shot worst-case run. Same topology, but (a) peak phase RPS is held for the full duration, (b) caches and CDNs are forced cold (hitRate=0, no warmup, no stampede), (c) wire latency is always p99 (base + full jitter).
+
+**Code flow:**
+
+```
+User clicks Run Stressed → Toolbar.handleRunStressed()
+    → startSimulation(profile, stressedMode=true)
+        → new SimulationEngine(..., stressedMode=true)
+            → getCurrentRps(): returns max(phases.rps) regardless of tick
+            → getWireLatency(): returns latencyMs + jitterMs (no sampling)
+            → processCache / processCdn: forces hitRate=0, skips stampede logging
+    → stopSimulation stamps run.stressedMode=true
+    → BottomPanel DebriefContent shows "Stressed run · peak RPS held + cold cache + wire p99" badge
+```
+
+**Files:**
+- [src/components/ui/Toolbar.tsx](src/components/ui/Toolbar.tsx#L81-L103) — `handleRun` and `handleRunStressed` handlers
+- [src/engine/useSimulation.ts](src/engine/useSimulation.ts) — `startSimulation` accepts `stressedMode` param, threads it into `SimulationEngine`
+- [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) — `stressedMode` field, `getCurrentRps`, `getWireLatency`, `processCache`, `processCdn` branches
+- [src/components/panels/BottomPanel.tsx](src/components/panels/BottomPanel.tsx) — `DebriefContent` renders stressed badge via `latestRun.stressedMode`
+
+### Flow 6: Preflight routing
+
+**Business logic:** Before Run is enabled, preflight checks run on every state change. If something's missing (no traffic profile, no schema, unassigned tables, etc), a banner lists the errors. Clicking an error routes the user to the exact fix location, with a pulse animation drawing the eye.
+
+**Code flow:**
+
+```
+[every store change]
+    → Toolbar re-runs runPreflight(...) via useMemo
+        → preflight.ts returns { errors, warnings } each with:
+            - message, tooltip
+            - target: 'traffic' | 'design' | 'canvas' | 'config'
+            - targetSubtab?: 'api' | 'schema'
+            - targetComponentId?: string
+    → if errors.length > 0: Run button disabled with tooltip "Resolve preflight items first"
+    → PreflightBanner renders the errors + warnings above the canvas
+
+User clicks a preflight item → PreflightBanner.handleClick
+    → switch on item.target:
+        - 'traffic': setSidebarTab('traffic') + setPulseTarget('sidebar:traffic')
+        - 'design': setSidebarTab('design') + setDesignPanelTab(subtab) + pulse
+        - 'config': setSelectedNodeId(targetComponentId) + pulse node
+        - 'canvas': pulse all (for "no entry point" error)
+    → setTimeout(1500) then clearPulseTarget
+    → CanvasSidebar + SimComponentNode pick up pulseTarget and add .simfid-pulse class
+```
+
+**Files:**
+- [src/engine/preflight.ts](src/engine/preflight.ts) — `runPreflight()` returns `PreflightResult`
+- [src/components/canvas/PreflightBanner.tsx](src/components/canvas/PreflightBanner.tsx) — banner + click routing
+- [src/store/index.ts](src/store/index.ts) — `pulseTarget`, `setPulseTarget`, `sidebarTab`, `designPanelTab` state
+- [src/components/panels/CanvasSidebar.tsx](src/components/panels/CanvasSidebar.tsx) — tab buttons pulse when `pulseTarget === 'sidebar:*'`
+- [src/components/nodes/SimComponentNode.tsx](src/components/nodes/SimComponentNode.tsx) — node pulses when `pulseTarget === 'node:${id}'`
+- [src/index.css](src/index.css) — `.simfid-pulse` keyframe animation
+
+### Flow 7: Post-run debrief (deterministic + AI)
+
+**Business logic:** When the simulation completes, the user should see scores (coherence/security/performance), a per-component peak table (p50/p99/ρ/errors/queue), a list of detected patterns/flags, and 3-5 Socratic questions (deterministic + optional AI-generated).
+
+**Code flow:**
+
+```
+engine.isComplete() → stopSimulation()
+    → generateDebrief({ nodes, edges, requirements, schemaMemory, simulationRun, scenarioId })
+        → runDeterministicChecks(ctx) → flags: string[]
+            - API gateway without auth
+            - Queue without DLQ / retry
+            - DB without indexes
+            - Server SPOF
+            - Strong consistency + replication lag
+            - Cache TTL > 1h
+        → generateSocraticQuestions(ctx) → questions: string[]
+            - Hot shard (from metricsTimeSeries)
+            - Sync fanout (from graph structure)
+            - Queue overflow / stampede / pool exhaustion (from log)
+        → calculateScores(ctx, flags) → { coherence, security, performance }
+            - Deducts per flag category with predefined weights
+        → computePerComponentPeaks(metricsTimeSeries, nodes) → PerComponentSummary[]
+            - Max of p50, p99, cpu, mem, errorRate, queueDepth per component
+            - Sorted by p99 desc
+        → generateSummary(ctx) → summary string
+        → returns AIDebrief { summary, questions, flags, scores, componentSummary }
+    → store.setDebrief(debrief)
+    → store.setBottomPanelTab('debrief')
+
+Async: fetchAIDebrief(summary) via POST /api/debrief
+    → Claude Sonnet 4.6 with system prompt "Socratic distributed systems engineer"
+    → returns { questions: string[] }
+    → store.setDebrief({ ...current, aiQuestions, aiAvailable: true })
+    → BottomPanel re-renders with AI-tagged questions merged in
+    On error/timeout → aiAvailable stays false → banner "AI debrief unavailable"
+```
+
+**Files:**
+- [src/engine/useSimulation.ts](src/engine/useSimulation.ts#L64-L120) — `stopSimulation()`
+- [src/ai/debrief.ts](src/ai/debrief.ts) — `generateDebrief`, `computePerComponentPeaks`, `runDeterministicChecks`, `generateSocraticQuestions`, `calculateScores`, `generateSummary`, `checkForHints`
+- [src/ai/buildSimulationSummary.ts](src/ai/buildSimulationSummary.ts) — compresses sim state to ~4K tokens for the LLM call
+- [src/ai/anthropicDebrief.ts](src/ai/anthropicDebrief.ts) — client-side fetch to `/api/debrief` with fallback
+- [api/debrief.ts](api/debrief.ts) — Edge Function (see API Reference)
+- [src/components/panels/BottomPanel.tsx](src/components/panels/BottomPanel.tsx) — `DebriefContent`, `PerComponentTable`, `ScoreBadge` (numeric, no Pass/Warn/Fail)
+
+### Flow 8: User downloads the debrief report
+
+**Business logic:** User wants a shareable HTML report of the simulation run for design reviews or PRs.
+
+**Code flow:**
+
+```
+User clicks "Download Report" in BottomPanel debrief tab
+    → downloadDebriefHtml({ debrief, run, nodes, edges, scenarioId })
+        → generateDebriefHtml(...)
+            - Inlines Apple-style CSS
+            - Renders scores as raw numbers (not Pass/Warn/Fail)
+            - Embeds SimulationRun JSON in <script type="application/json" id="sim-data">
+            - Sections: header, scores, architecture, peak metrics, timeline, chain, questions, flags
+        → downloadBlob(html, filename)
+    → browser downloads .html file
+```
+
+**Files:**
+- [src/ai/generateDebriefHtml.ts](src/ai/generateDebriefHtml.ts) — HTML generator + download
+
+---
+
+## Subsystem map
+
+### Simulation engine
+
+**File:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)
+
+**Entry point:** `new SimulationEngine(nodes, edges, profile, schemaShardKey, cardinality, seed, stressedMode)` → `.tick()` loop.
+
+**Internal state per component:** `ComponentState { queueDepth, currentConnections, memoryUsed, cacheEntries, shardLoads, accumulatedErrors, totalRequests, crashed, instanceCount, lastComputedLatencyMs }`
+
+**Per-tick flow:**
+1. `getCurrentRps()` — reads the current traffic phase (or returns max if stressed)
+2. For each entry point (explicit `isEntry` flag, else zero-indegree nodes), call `processComponent(id, rps, 0)`
+3. `processComponent` dispatches to type-specific handler:
+    - `processLoadBalancer` — distributes RPS across healthy backends, p50/p99 reflects max(downstream latency + wire)
+    - `processApiGateway` — rate limit rejection + rate limit callout
+    - `processServer` — `computeQueueing(...)` from [QueueingModel.ts](src/engine/QueueingModel.ts), saturation callout at ρ≥0.85
+    - `processCache` — `computeCacheModel(...)` from [WorkingSetCache.ts](src/engine/WorkingSetCache.ts), Zipfian hit rate, cold-start warmup, stampede detection, miss-storm callout
+    - `processQueue` — Little's-Law-ish depth model, 70% capacity callout, overflow log, DLQ handling
+    - `processDatabase` — connection pool, throughput limits, hot-shard Pareto distribution, pool-pressure callout at 80%
+    - `processWebSocketGateway`, `processFanout`, `processCdn`, `processExternal`, `processAutoscaler`
+4. `callStack` Set guards against cycles (path-based, not flat)
+5. `updateComponentHealth` transitions healthy → warning (>70%) → critical (>95%) → crashed (>98% with 30% prob)
+6. `updateParticles` — visual packets for wire animation
+
+**Helper functions:**
+- `throttledLog(logs, entry, interval)` — per-component per-severity log dedup (2s default)
+- `fireCallout(logs, componentId, calloutType, message)` — one-shot saturation callouts, bypass throttle via `calloutEntries` WeakSet
+- `getCurrentRps()` — phase interpolation (steady / spike / instant_spike / ramp_down / ramp_up). Stressed mode returns `max(phases.rps)`.
+- `getWireLatency(source, target)` — base + jittered. Stressed returns base + full jitter.
+- `addJitter(value, pct)` — uniform jitter around a value
+- `mulberry32(seed)` — seeded PRNG for reproducible tests
+
+**Queueing math (src/engine/QueueingModel.ts):**
+- `ρ = arrivalRate / (instanceCount × serviceRate)`
+- `waitTime = procTime × ρ / (1 - ρ)` clamped at `procTime × 19`, total wait capped at 5000ms
+- p50 = 0.7 × totalLatency, p95 = 2×, p99 = 4×
+- Drop rate = `1 - 1/ρ` when ρ > 1
+- Concurrency cap: if `arrivalRate × totalLatency/1000 > maxConcurrent × instances`, additional drops
+
+**Cache model (src/engine/WorkingSetCache.ts):**
+- Working set = `min(keyCardinality, rps × ttlSeconds)`
+- `hitRate = min(1, (cacheSize / workingSet)^(1/zipfSkew))` with `zipfSkew=1.2`
+- Cold-start: linear ramp in first `ttlSeconds × 0.5`
+- LRU penalty: `× 0.85` when keyCardinality > 2× cache capacity
+- `stampedeRisk = rps > 1000 && ttl < 60 && hitRate > 0.7`
+- `networkAwareCacheLatency(sizeMb, ttl)` — different p50/p99 for big-cluster vs single-node vs CDN
+
+### Store (Zustand)
+
+**File:** [src/store/index.ts](src/store/index.ts)
+
+**Shape:**
+- **View state:** `appMode, appView, sidebarTab, designPanelTab, bottomPanelTab, bottomPanelOpen, logPanelExpanded, theme`
+- **Graph state:** `nodes, edges, selectedNodeId, hoveredNodeId, intent, systemSpec, confidence`
+- **Design state:** `functionalReqs, nonFunctionalReqs, apiContracts, endpointRoutes, schemaMemory, schemaHistory, schemaInput`
+- **Simulation state:** `simulationStatus, simulationTime, simulationSpeed, currentRunId, simulationRuns, liveMetrics, liveLog, particles, viewMode`
+- **Debrief state:** `debrief, debriefVisible, debriefLoading`
+- **UX state:** `pulseTarget, hints`
+
+**Exposed on `window.__SYSTEMSIM_STORE__`** for Playwright tests (Zustand store's `getState` + `setState`).
+
+**Key setters that have side effects beyond the direct field:**
+- `setApiContracts(contracts)` — if a contract has `ownerServiceId`, BFS from that service to generate `endpointRoutes`
+- `setSchemaMemory(schema)` — pushes prior schema to `schemaHistory`
+- `replaceGraph(canonical)` — from template or vision-to-intent, replaces nodes+edges atomically
+- `resetSimulationState()` — clears `liveMetrics, liveLog, particles, simulationStatus, simulationTime, currentRunId, debrief`
+
+### AI debrief
+
+**Files:**
+- Deterministic: [src/ai/debrief.ts](src/ai/debrief.ts)
+- Summary builder: [src/ai/buildSimulationSummary.ts](src/ai/buildSimulationSummary.ts)
+- LLM client: [src/ai/anthropicDebrief.ts](src/ai/anthropicDebrief.ts)
+- Backend: [api/debrief.ts](api/debrief.ts)
+- HTML export: [src/ai/generateDebriefHtml.ts](src/ai/generateDebriefHtml.ts)
+
+**Deterministic checks (no LLM call):**
+- `runDeterministicChecks(ctx)` — 7 pattern flags on graph config
+- `generateSocraticQuestions(ctx)` — 4 question templates tied to sim events
+- `calculateScores(ctx, flags)` — 0-100 coherence/security/performance with weight deductions
+- `computePerComponentPeaks(metricsTimeSeries, nodes)` — reduces series to peak summary per component (p50/p99/ρ/errors/queue), sorted by p99 desc
+
+**LLM-augmented:**
+- `fetchAIDebrief(summary, scenarioId)` — POSTs summary to `/api/debrief`, parses `{ questions }`, falls back to null on error
+- `buildSimulationSummary(nodes, edges, run, shardKey)` — compresses to ~4K tokens: topology, peak metrics, failure events, traffic, shard distribution
+
+### Design flow
+
+**Entry point:** [src/components/panels/DesignFlow.tsx](src/components/panels/DesignFlow.tsx) (full-page) or [src/components/panels/DesignPanel.tsx](src/components/panels/DesignPanel.tsx) (inline tab).
+
+**Schema parsing:** [src/components/panels/designFlowParser.ts](src/components/panels/designFlowParser.ts) — `parseSchemaLocally(text)` turns SQL-ish text into `SchemaEntity[]`.
+
+### Preflight
+
+**File:** [src/engine/preflight.ts](src/engine/preflight.ts)
+
+**Checks** (7 errors + 3 warnings):
+1. **Error** No traffic profile
+2. **Error** No nodes on canvas
+3. **Error** No entry point (all nodes have inbound edges)
+4. **Error** Disconnected components
+5. **Error** Schema entity without assigned DB
+6. **Error** API contract without owner service
+7. **Error** API contract with no auth (warning in freeform, error in scenario mode)
+8. **Warning** No cache in hot-read path
+9. **Warning** No queue in write-heavy path
+10. **Warning** Server with instanceCount=1 behind no LB (SPOF)
+
+**Each item has `target` (where to route on click) + optional `targetSubtab` and `targetComponentId`.**
+
+### Vision-to-Intent
+
+**Files:**
+- [src/components/ui/UnifiedInput.tsx](src/components/ui/UnifiedInput.tsx) — text + image input
+- [src/components/ui/ImagePasteZone.tsx](src/components/ui/ImagePasteZone.tsx) — drag/drop/paste
+- [src/util/imageResize.ts](src/util/imageResize.ts) — canvas-based resize
+- [src/ai/describeIntent.ts](src/ai/describeIntent.ts) — client fetch wrapper
+- [src/ai/describeIntentSchema.ts](src/ai/describeIntentSchema.ts) — tool-use schema
+- [src/ai/describeIntentPrompt.ts](src/ai/describeIntentPrompt.ts) — system prompt + user text builder
+- [src/ai/parseConnections.ts](src/ai/parseConnections.ts) — parses component connections from intent spec
+- [api/describe-intent.ts](api/describe-intent.ts) — Edge Function
+- [api/_shared/imageValidation.ts](api/_shared/imageValidation.ts) — MIME + magic bytes validation
+- [src/components/ui/ReviewMode.tsx](src/components/ui/ReviewMode.tsx) — edit intent/components before commit
+- [src/components/ui/ConfidencePanel.tsx](src/components/ui/ConfidencePanel.tsx) — per-dimension confidence display
+
+**Related: text-to-diagram (no image):**
+- [src/ai/generateDiagram.ts](src/ai/generateDiagram.ts) — text → graph
+- [src/ai/diagramSchema.ts](src/ai/diagramSchema.ts), [src/ai/diagramPrompt.ts](src/ai/diagramPrompt.ts)
+- [api/generate-diagram.ts](api/generate-diagram.ts) — Edge Function
+
+---
+
+## Where new code should go
+
+| Need to... | File |
+|---|---|
+| Add a new component type | [src/types/components.ts](src/types/components.ts) (registry) + [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) (`processX` handler) + [src/components/nodes/icons.tsx](src/components/nodes/icons.tsx) (icon) |
+| Add a new simulation modeling check | [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `fireCallout` in the right `processX` |
+| Add a new deterministic debrief flag | [src/ai/debrief.ts](src/ai/debrief.ts) `runDeterministicChecks` + adjust `calculateScores` |
+| Add a preflight check | [src/engine/preflight.ts](src/engine/preflight.ts) + route handler in [PreflightBanner.tsx](src/components/canvas/PreflightBanner.tsx) |
+| Add a keyboard shortcut | [src/components/canvas/Canvas.tsx](src/components/canvas/Canvas.tsx) `useEffect` keydown handler |
+| Add a store field | [src/store/index.ts](src/store/index.ts) + type in [src/types/index.ts](src/types/index.ts) |
+| Add a new LLM endpoint | New file under `api/` + [api/_shared/handler.ts](api/_shared/handler.ts) pattern |
+| Add a new template | New JSON in `/public/templates/` matching `CanonicalGraph` shape |

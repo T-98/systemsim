@@ -1,3 +1,15 @@
+/**
+ * @file preflight.ts
+ *
+ * Gates the Run button. Checks the current design against a set of structural
+ * rules and returns errors + warnings. Errors block Run; warnings render in
+ * the PreflightBanner but don't block.
+ *
+ * Each PreflightItem carries routing info (target tab, target node) so the
+ * banner can deep-link the user to the fix location with a visual pulse.
+ * See Decisions.md #22 and Knowledge.md Flow 6.
+ */
+
 import type {
   ApiContract,
   EndpointRoute,
@@ -17,6 +29,11 @@ interface PreflightInput {
   endpointRoutes: EndpointRoute[];
 }
 
+/**
+ * Run all preflight checks. Called in a useMemo in Toolbar every time the
+ * graph, traffic profile, or design artifacts change. The Run button is
+ * disabled when `errors.length > 0`.
+ */
 export function runPreflight(input: PreflightInput): PreflightResult {
   const errors: PreflightItem[] = [];
   const warnings: PreflightItem[] = [];
@@ -61,6 +78,7 @@ export function runPreflight(input: PreflightInput): PreflightResult {
       message: 'Define a data schema',
       tooltip: 'Databases need tables to simulate. Define entities in Design \u2192 Schema.',
       target: 'design',
+      targetSubtab: 'schema',
     });
   }
 
@@ -87,6 +105,7 @@ export function runPreflight(input: PreflightInput): PreflightResult {
       message: 'Define API endpoints',
       tooltip: 'Servers need endpoints to route traffic. Define at least one API contract.',
       target: 'design',
+      targetSubtab: 'api',
     });
   }
 
@@ -97,6 +116,7 @@ export function runPreflight(input: PreflightInput): PreflightResult {
       message: `${orphanedContracts.length} endpoint${orphanedContracts.length > 1 ? 's' : ''} missing owner service`,
       tooltip: 'Endpoints connect API contracts to the components and tables they use. Without them, the engine can\u2019t route traffic.',
       target: 'design',
+      targetSubtab: 'api',
     });
   }
 
@@ -106,6 +126,7 @@ export function runPreflight(input: PreflightInput): PreflightResult {
       message: 'Define endpoint routes',
       tooltip: 'Endpoint routes map API contracts to component chains and tables. Without them, traffic has no path.',
       target: 'design',
+      targetSubtab: 'api',
     });
   }
 

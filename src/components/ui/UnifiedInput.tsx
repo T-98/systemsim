@@ -1,3 +1,11 @@
+/**
+ * @file components/ui/UnifiedInput.tsx
+ *
+ * Single input that accepts text + image attachment (paste, drop, or upload).
+ * On submit, posts to /api/describe-intent (vision-to-intent) and routes to
+ * ReviewMode. Handles image resize via util/imageResize before base64-encoding.
+ */
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../store';
 import { describeIntent, type DescribeIntentResult } from '../../ai/describeIntent';

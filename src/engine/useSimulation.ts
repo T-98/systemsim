@@ -1,3 +1,18 @@
+/**
+ * @file useSimulation.ts
+ *
+ * The React-hook driver that owns the simulation engine instance and its
+ * setInterval timer. Glues the browser's time-based tick loop to the pure
+ * engine in SimulationEngine.ts.
+ *
+ * Exposes start / stop / pause / resume. On stop, assembles the SimulationRun
+ * artifact, triggers the deterministic debrief synchronously, and kicks off
+ * the async AI-debrief fetch (falls back gracefully on timeout/error).
+ *
+ * Metrics time-series is accumulated in `metricsHistoryRef` across ticks so
+ * the debrief can compute peaks.
+ */
+
 import { useRef, useCallback } from 'react';
 import { useStore } from '../store';
 import { SimulationEngine } from './SimulationEngine';
@@ -7,6 +22,12 @@ import { fetchAIDebrief } from '../ai/anthropicDebrief';
 import type { TrafficProfile, SimulationRun, HealthState } from '../types';
 import { v4 as uuid } from 'uuid';
 
+/**
+ * React hook that owns the simulation lifecycle. Returns stable callbacks
+ * for start / stop / pause / resume.
+ *
+ * @returns simulation controls bound to the global store
+ */
 export function useSimulation() {
   const engineRef = useRef<SimulationEngine | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -57,6 +78,8 @@ export function useSimulation() {
     return engineRef.current.isComplete();
   }, [setSimulationTime, setParticles, updateLiveMetrics, updateComponentHealth, addLogEntry]);
 
+  const stressedRef = useRef<boolean>(false);
+
   const stopSimulation = useCallback((runId?: string, trafficProfile?: TrafficProfile) => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -77,6 +100,7 @@ export function useSimulation() {
       trafficProfile: profile!,
       metricsTimeSeries: metricsHistoryRef.current,
       log: engine.getLog(),
+      stressedMode: stressedRef.current,
     };
 
     addSimulationRun(run);
@@ -118,10 +142,11 @@ export function useSimulation() {
     });
   }, [schemaMemory, addSimulationRun, setSimulationStatus]);
 
-  const startSimulation = useCallback((trafficProfile: TrafficProfile) => {
+  const startSimulation = useCallback((trafficProfile: TrafficProfile, stressedMode = false) => {
     resetSimulationState();
     clearLiveLog();
     metricsHistoryRef.current = {};
+    stressedRef.current = stressedMode;
 
     // Determine schema shard key info
     let shardKey: string | undefined;
@@ -137,7 +162,7 @@ export function useSimulation() {
       }
     }
 
-    const engine = new SimulationEngine(nodes, edges, trafficProfile, shardKey, shardKeyCardinality);
+    const engine = new SimulationEngine(nodes, edges, trafficProfile, shardKey, shardKeyCardinality, undefined, stressedMode);
     engineRef.current = engine;
 
     const runId = uuid();

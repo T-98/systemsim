@@ -1,3 +1,15 @@
+/**
+ * @file migrate/migrate.ts
+ *
+ * Zod-validated session-file migrator. Handles old save formats gracefully:
+ * synthesizes entity.id if missing, coerces auth bool → authMode, adds empty
+ * endpointRoutes, sets defaults for new schema fields. Returns `warnings[]`
+ * so the user sees what changed.
+ *
+ * Any time the SessionFile shape changes in types/index.ts, add a migration
+ * rule here and bump the expected version.
+ */
+
 import { z } from 'zod';
 import { v4 as uuid } from 'uuid';
 

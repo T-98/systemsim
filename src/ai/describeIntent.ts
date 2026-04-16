@@ -1,3 +1,12 @@
+/**
+ * @file ai/describeIntent.ts
+ *
+ * Client wrapper for the /api/describe-intent Edge Function. Accepts text
+ * and/or a base64 image, returns structured { intent, systemSpec, confidence }
+ * or a typed error. Backend uses Claude Opus 4.6 vision (better diagram
+ * reading than Sonnet).
+ */
+
 import type { DescribeIntentOutput } from './describeIntentSchema';
 import { callAIEndpoint, type AICallResult } from './_shared/aiClient';
 

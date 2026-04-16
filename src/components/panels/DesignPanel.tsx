@@ -1,3 +1,11 @@
+/**
+ * @file components/panels/DesignPanel.tsx
+ *
+ * Compact inline version of the design editor that lives inside the
+ * CanvasSidebar's Design tab. Sub-tabs: API and Schema (via `designPanelTab`
+ * store field so preflight routing can target them).
+ */
+
 import { useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useStore } from '../../store';
@@ -14,7 +22,8 @@ export default function DesignPanel() {
   const simulationStatus = useStore((s) => s.simulationStatus);
   const isRunning = simulationStatus === 'running' || simulationStatus === 'paused';
 
-  const [tab, setTab] = useState<'api' | 'schema'>('api');
+  const tab = useStore((s) => s.designPanelTab);
+  const setTab = useStore((s) => s.setDesignPanelTab);
 
   const serviceNodes = nodes.filter(
     (n) => n.data.type === 'server' || n.data.type === 'api_gateway' || n.data.type === 'load_balancer',

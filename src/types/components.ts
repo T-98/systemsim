@@ -1,3 +1,20 @@
+/**
+ * @file types/components.ts
+ *
+ * Component registry. Single source of truth for every component type's
+ * display metadata (label, icon category, keyboard shortcut, color) and
+ * default config (instance count, processing time, pool size, etc.).
+ *
+ * `MVP_VISIBLE_TYPES` filters ComponentLibrary and keyboard shortcuts to a
+ * focused 6-type subset. Hidden types still work in the engine and can be
+ * loaded from templates or session files. See Decisions.md #13.
+ *
+ * Adding a new component type? Three places:
+ * 1. Add to `ComponentType` union in types/index.ts
+ * 2. Add entry to `COMPONENT_DEFS` here
+ * 3. Add `processX` handler in SimulationEngine.ts
+ */
+
 import type { ComponentDef, ComponentType, ComponentCategory } from './index';
 
 export const CATEGORY_COLORS: Record<ComponentCategory, string> = {

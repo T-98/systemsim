@@ -1,3 +1,12 @@
+/**
+ * @file components/canvas/PreflightBanner.tsx
+ *
+ * Banner above the canvas that lists preflight errors + warnings. Each item
+ * is clickable; clicking deep-links to the fix location (tab, node, or
+ * canvas) and triggers the pulse animation to draw the eye. See
+ * Decisions.md #22.
+ */
+
 import { useMemo, useState } from 'react';
 import { useStore } from '../../store';
 import { runPreflight } from '../../engine/preflight';
@@ -75,11 +84,40 @@ export default function PreflightBanner() {
 
 function PreflightRow({ item }: { item: PreflightItem }) {
   const setSelectedNodeId = useStore((s) => s.setSelectedNodeId);
+  const setSidebarTab = useStore((s) => s.setSidebarTab);
+  const setDesignPanelTab = useStore((s) => s.setDesignPanelTab);
+  const setPulseTarget = useStore((s) => s.setPulseTarget);
   const [hovered, setHovered] = useState(false);
 
   const handleClick = () => {
     if (item.target === 'config' && item.targetComponentId) {
       setSelectedNodeId(item.targetComponentId);
+      setPulseTarget(`node:${item.targetComponentId}`);
+      setTimeout(() => setPulseTarget(null), 1500);
+      return;
+    }
+    if (item.target === 'traffic') {
+      setSidebarTab('traffic');
+      setPulseTarget('sidebar:traffic');
+      setTimeout(() => setPulseTarget(null), 1500);
+      return;
+    }
+    if (item.target === 'design') {
+      setSidebarTab('design');
+      if (item.targetSubtab) setDesignPanelTab(item.targetSubtab);
+      setPulseTarget(`sidebar:design:${item.targetSubtab ?? 'api'}`);
+      setTimeout(() => setPulseTarget(null), 1500);
+      return;
+    }
+    if (item.target === 'canvas' && item.targetComponentId) {
+      setSelectedNodeId(item.targetComponentId);
+      setPulseTarget(`node:${item.targetComponentId}`);
+      setTimeout(() => setPulseTarget(null), 1500);
+      return;
+    }
+    if (item.target === 'canvas') {
+      setPulseTarget('canvas:all');
+      setTimeout(() => setPulseTarget(null), 1500);
     }
   };
 

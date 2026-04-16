@@ -1,8 +1,24 @@
+/**
+ * @file ai/buildSimulationSummary.ts
+ *
+ * Compresses a completed simulation run into a ~4K-token text summary for the
+ * Anthropic debrief call. Too much detail inflates cost; too little loses the
+ * numbers the LLM needs to reference.
+ *
+ * Sections: Architecture (topology), Peak Metrics, Failure Events (deduped),
+ * Traffic Profile, Shard Distribution (if hot shard detected). Trims logs if
+ * the budget is exceeded.
+ */
+
 import type { SimulationRun, SimComponentData, WireConfig } from '../types';
 import type { Node, Edge } from '@xyflow/react';
 
 const MAX_TOKENS = 4000;
 
+/**
+ * Build the LLM-ready simulation summary. Output stays under ~4K tokens; the
+ * /api/debrief endpoint enforces a 16KB payload cap as a safety net.
+ */
 export function buildSimulationSummary(
   nodes: Node<SimComponentData>[],
   edges: Edge<{ config: WireConfig }>[],

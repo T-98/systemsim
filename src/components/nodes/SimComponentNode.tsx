@@ -1,3 +1,13 @@
+/**
+ * @file components/nodes/SimComponentNode.tsx
+ *
+ * XyFlow custom node. Renders the component box: icon + label + description,
+ * health-colored border, live metrics when sim is running (RPS, p99, error%,
+ * CPU, MEM, queue, cache-hit), shard distribution bars for DBs, crash mark.
+ *
+ * Pulses when `pulseTarget === 'node:${id}'` or `pulseTarget === 'canvas:all'`.
+ */
+
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { motion } from 'framer-motion';
@@ -16,16 +26,18 @@ const healthBorderVar: Record<HealthState, string> = {
 function SimComponentNode({ id, data, selected }: NodeProps & { data: SimComponentData }) {
   const simulationStatus = useStore((s) => s.simulationStatus);
   const liveMetrics = useStore((s) => s.liveMetrics[id]);
+  const pulseTarget = useStore((s) => s.pulseTarget);
   const def = COMPONENT_DEFS[data.type];
   const health = data.health;
   const isRunning = simulationStatus === 'running' || simulationStatus === 'paused';
 
   const metrics = isRunning ? (liveMetrics ?? data.metrics) : null;
   const showShardDist = data.type === 'database' && metrics?.shardDistribution && metrics.shardDistribution.length > 1;
+  const isPulsing = pulseTarget === `node:${id}` || pulseTarget === 'canvas:all';
 
   return (
     <motion.div
-      className="relative min-w-[200px] cursor-pointer transition-all duration-200"
+      className={`relative min-w-[200px] cursor-pointer transition-all duration-200 ${isPulsing ? 'simfid-pulse' : ''}`}
       style={{
         borderRadius: '12px',
         border: `1px solid ${healthBorderVar[health]}`,
