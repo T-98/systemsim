@@ -346,12 +346,24 @@ export class SimulationEngine {
     return 0;
   }
 
+  /**
+   * Single choke point for any traffic flowing from one component to another
+   * over a wire. All circuit-breaker / retry / backpressure logic will hook
+   * in here so processor code doesn't need to know about them.
+   *
+   * Today: wire latency + recurse. Phase 3 adds: circuit-breaker gate,
+   * retry re-forwarding on downstream errors, backpressure rate scaling.
+   */
+  private forwardOverWire(sourceId: string, targetId: string, rps: number, accumulatedLatencyMs: number, logs: LogEntry[]) {
+    const wireLatency = this.getWireLatency(sourceId, targetId);
+    this.processComponent(targetId, rps, logs, accumulatedLatencyMs + wireLatency);
+  }
+
   private forwardToDownstreams(sourceId: string, rps: number, accumulatedLatencyMs: number, logs: LogEntry[]) {
     const downstreams = this.adjacency.get(sourceId) ?? [];
     const rpsEach = rps / Math.max(downstreams.length, 1);
     for (const downstream of downstreams) {
-      const wireLatency = this.getWireLatency(sourceId, downstream);
-      this.processComponent(downstream, rpsEach, logs, accumulatedLatencyMs + wireLatency);
+      this.forwardOverWire(sourceId, downstream, rpsEach, accumulatedLatencyMs, logs);
     }
   }
 
@@ -439,8 +451,7 @@ export class SimulationEngine {
 
     const rpsEach = rps / healthyDownstreams.length;
     for (const downstream of healthyDownstreams) {
-      const wireLatency = this.getWireLatency(state.id, downstream);
-      this.processComponent(downstream, rpsEach, logs, accumulatedLatencyMs + wireLatency);
+      this.forwardOverWire(state.id, downstream, rpsEach, accumulatedLatencyMs, logs);
     }
 
     const lbProcessingMs = 0.5;
