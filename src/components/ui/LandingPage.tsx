@@ -257,6 +257,7 @@ function loadSessionFromJson(session: Record<string, unknown>) {
   if (s.design?.requirements?.functional) store.setFunctionalReqs(s.design.requirements.functional);
   if (s.design?.requirements?.nonFunctional) store.setNonFunctionalReqs(s.design.requirements.nonFunctional);
   if (s.design?.apiContracts) store.setApiContracts(s.design.apiContracts);
+  if (s.design?.endpointRoutes) store.setEndpointRoutes(s.design.endpointRoutes);
   if (s.design?.schemaMemory) store.setSchemaMemory(s.design.schemaMemory);
 
   if (s.componentGraph?.components) {

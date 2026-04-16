@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { v4 as uuid } from 'uuid';
 import { useStore } from '../../store';
-import type { NFR, ApiContract } from '../../types';
+import type { NFR, ApiContract, AuthMode } from '../../types';
+import { parseSchemaLocally } from './designFlowParser';
 
 export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
   const [activeSection, setActiveSection] = useState<string>('requirements');
@@ -19,7 +21,7 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
     { attribute: '', target: '', scope: '' },
   ]);
   const [apiList, setApiList] = useState<ApiContract[]>(apiContracts.length ? apiContracts : [
-    { method: 'POST', path: '', description: '', auth: true },
+    { id: uuid(), method: 'POST', path: '', description: '', authMode: 'none', ownerServiceId: null },
   ]);
   const [schemaText, setSchemaText] = useState(schemaInput);
   const [schemaLoading, setSchemaLoading] = useState(false);
@@ -283,24 +285,23 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
                   className="flex-1 transition-all duration-200"
                   style={inputStyle}
                 />
-                <label className="flex items-center gap-1.5" style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>
-                  <input
-                    type="checkbox"
-                    checked={api.auth}
-                    onChange={(e) => {
-                      const copy = [...apiList];
-                      copy[i] = { ...copy[i], auth: e.target.checked };
-                      setApiList(copy);
-                    }}
-                    className="rounded"
-                    style={{ accentColor: 'var(--accent)' }}
-                  />
-                  Auth
-                </label>
+                <select
+                  value={api.authMode}
+                  onChange={(e) => {
+                    const copy = [...apiList];
+                    copy[i] = { ...copy[i], authMode: e.target.value as AuthMode };
+                    setApiList(copy);
+                  }}
+                  style={{ ...inputStyle, width: 80, fontSize: 12 }}
+                >
+                  <option value="none">None</option>
+                  <option value="jwt">JWT</option>
+                  <option value="oauth">OAuth</option>
+                </select>
               </div>
             ))}
             <button
-              onClick={() => setApiList([...apiList, { method: 'GET', path: '', description: '', auth: true }])}
+              onClick={() => setApiList([...apiList, { id: uuid(), method: 'GET', path: '', description: '', authMode: 'none', ownerServiceId: null }])}
               className="transition-all duration-200"
               style={{ fontSize: '14px', color: 'var(--accent-link)', letterSpacing: '-0.224px' }}
               onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-hover)'; }}
@@ -456,103 +457,3 @@ function SchemaPreview() {
   );
 }
 
-function parseSchemaLocally(input: string): import('../../types').SchemaMemoryBlock {
-  const version = (useStore.getState().schemaHistory.length || 0) + 1;
-  const entities: import('../../types').SchemaEntity[] = [];
-  const relationships: import('../../types').SchemaRelationship[] = [];
-
-  const lines = input.split('\n').map((l) => l.trim()).filter(Boolean);
-  let currentEntity: import('../../types').SchemaEntity | null = null;
-
-  for (const line of lines) {
-    const tableMatch = line.match(/^(\w+)\s+table\s*:/i) || line.match(/^CREATE\s+TABLE\s+(\w+)/i);
-    if (tableMatch) {
-      if (currentEntity) entities.push(currentEntity);
-      currentEntity = { name: tableMatch[1], fields: [], indexes: [], accessPatterns: [] };
-
-      // Parse inline fields
-      const fieldPart = line.split(':').slice(1).join(':');
-      if (fieldPart) {
-        const fieldStrs = fieldPart.split(',');
-        for (const fs of fieldStrs) {
-          const parts = fs.trim().split(/\s+/);
-          if (parts.length >= 1) {
-            const name = parts[0].replace(/[()]/g, '');
-            const type = parts[1]?.replace(/[()]/g, '') ?? 'text';
-            const isFk = fs.toLowerCase().includes('fk');
-            const isPk = fs.toLowerCase().includes('pk');
-            const cardinality: 'low' | 'medium' | 'high' = isPk ? 'high' : isFk ? 'medium' : 'high';
-
-            if (name && name.length > 0) {
-              currentEntity.fields.push({
-                name,
-                type,
-                cardinality,
-                notes: isPk ? 'primary key' : isFk ? `foreign key${fs.match(/FK\s+(\S+)/i)?.[1] ? ` to ${fs.match(/FK\s+(\S+)/i)![1]}` : ''}` : undefined,
-              });
-
-              if (isFk) {
-                const fkTarget = fs.match(/FK\s+(\w+)\.(\w+)/i);
-                if (fkTarget) {
-                  relationships.push({
-                    from: `${currentEntity.name}.${name}`,
-                    to: `${fkTarget[1]}.${fkTarget[2]}`,
-                    type: 'many_to_one',
-                  });
-                }
-              }
-            }
-          }
-        }
-      }
-      continue;
-    }
-
-    if (currentEntity) {
-      const partitionMatch = line.match(/partition\s+key\s*:\s*(\w+)/i);
-      if (partitionMatch) {
-        currentEntity.partitionKey = partitionMatch[1];
-        // Check if partition key is user_id — medium cardinality warning
-        if (partitionMatch[1].toLowerCase().includes('user')) {
-          currentEntity.partitionKeyCardinalityWarning = true;
-          const field = currentEntity.fields.find((f) => f.name === partitionMatch[1]);
-          if (field) field.cardinality = 'medium';
-        }
-        continue;
-      }
-
-      const indexMatch = line.match(/index\s+on\s+(\w+)\s*\((\w+)\)/i) || line.match(/index\s+on\s+(\w+)/i);
-      if (indexMatch) {
-        currentEntity.indexes.push({
-          field: indexMatch[1],
-          type: (indexMatch[2] as 'btree' | 'hash') ?? 'btree',
-        });
-        continue;
-      }
-
-      const accessMatch = line.match(/access\s*:\s*(.+)/i);
-      if (accessMatch) {
-        const desc = accessMatch[1];
-        if (desc.toLowerCase().includes('write')) {
-          currentEntity.accessPatterns.push({ operation: 'write', frequency: 'very_high', pattern: desc });
-        }
-        if (desc.toLowerCase().includes('read')) {
-          currentEntity.accessPatterns.push({ operation: 'read', frequency: 'high', pattern: desc });
-        }
-        continue;
-      }
-    }
-  }
-
-  if (currentEntity) entities.push(currentEntity);
-
-  // Generate AI notes
-  let aiNotes = '';
-  for (const entity of entities) {
-    if (entity.partitionKeyCardinalityWarning) {
-      aiNotes += `Partition key ${entity.partitionKey} on ${entity.name} has medium cardinality. In a notification system with large server memberships, this concentrates writes for active users on their shard.`;
-    }
-  }
-
-  return { version, entities, relationships, aiNotes };
-}

@@ -77,11 +77,15 @@ export interface NFR {
   scope: string;
 }
 
+export type AuthMode = 'none' | 'jwt' | 'oauth';
+
 export interface ApiContract {
+  id: string;
   method: string;
   path: string;
   description: string;
-  auth: boolean;
+  authMode: AuthMode;
+  ownerServiceId: string | null;
 }
 
 export interface SchemaField {
@@ -103,12 +107,28 @@ export interface AccessPattern {
 }
 
 export interface SchemaEntity {
+  id: string;
   name: string;
   fields: SchemaField[];
   indexes: SchemaIndex[];
   partitionKey?: string;
   partitionKeyCardinalityWarning?: boolean;
   accessPatterns: AccessPattern[];
+  assignedDbId: string | null;
+}
+
+export interface TableAccess {
+  tableId: string;
+  mode: 'read' | 'write' | 'read_write';
+  indexed: boolean;
+}
+
+export interface EndpointRoute {
+  endpointId: string;
+  componentChain: string[];
+  tablesAccessed: TableAccess[];
+  weight: number;
+  estimatedPayloadBytes: number;
 }
 
 export interface SchemaRelationship {
@@ -172,6 +192,7 @@ export interface SessionFile {
       nonFunctional: NFR[];
     };
     apiContracts: ApiContract[];
+    endpointRoutes: EndpointRoute[];
     schemaMemory: SchemaMemoryBlock | null;
     schemaHistory: SchemaMemoryBlock[];
   };
@@ -213,4 +234,19 @@ export interface HintMessage {
   id: string;
   message: string;
   dismissed: boolean;
+}
+
+export type PreflightTarget = 'traffic' | 'design' | 'canvas' | 'config';
+
+export interface PreflightItem {
+  id: string;
+  message: string;
+  tooltip: string;
+  target: PreflightTarget;
+  targetComponentId?: string;
+}
+
+export interface PreflightResult {
+  errors: PreflightItem[];
+  warnings: PreflightItem[];
 }

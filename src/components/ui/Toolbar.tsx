@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useStore } from '../../store';
 import { useSimulation } from '../../engine/useSimulation';
 import { DISCORD_TRAFFIC_PROFILE, DISCORD_BRIEF } from '../../scenarios/discord';
 import { generateDebrief, checkForHints } from '../../ai/debrief';
+import { runPreflight } from '../../engine/preflight';
 import RemixInput from './RemixInput';
 import ConfirmModal from './ConfirmModal';
 import UndoToast from './UndoToast';
@@ -30,10 +31,29 @@ export default function Toolbar() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
+  const schemaMemory = useStore((s) => s.schemaMemory);
+  const apiContracts = useStore((s) => s.apiContracts);
+  const endpointRoutes = useStore((s) => s.endpointRoutes);
+
   const isRunning = simulationStatus === 'running';
   const isPaused = simulationStatus === 'paused';
   const isCompleted = simulationStatus === 'completed';
   const hasNodes = nodes.length > 0;
+
+  const preflight = useMemo(
+    () =>
+      runPreflight({
+        nodes: nodes.map((n) => ({ id: n.id, data: { type: n.data.type, label: n.data.label, config: n.data.config } })),
+        edges: edges.map((e) => ({ source: e.source, target: e.target })),
+        trafficProfile,
+        schemaMemory,
+        apiContracts,
+        endpointRoutes,
+      }),
+    [nodes, edges, trafficProfile, schemaMemory, apiContracts, endpointRoutes],
+  );
+  const preflightClean = preflight.errors.length === 0;
+
   const canRemix = hasNodes && simulationStatus === 'idle' && !remixOpen;
 
   const handleRemixClick = useCallback(() => {
@@ -203,14 +223,19 @@ export default function Toolbar() {
         {simulationStatus === 'idle' && (
           <button
             onClick={handleRun}
-            disabled={nodes.length === 0}
-            className="rounded-lg font-medium disabled:opacity-25 transition-all"
+            disabled={!hasNodes || !preflightClean}
+            className="rounded-lg font-medium transition-all"
+            title={!preflightClean ? 'Resolve preflight items first' : undefined}
             style={{
               padding: '6px 16px',
               fontSize: '14px',
               letterSpacing: '-0.224px',
-              background: 'var(--accent)',
-              color: 'var(--text-on-accent)',
+              background: hasNodes && preflightClean ? 'var(--accent)' : 'var(--bg-card)',
+              color: hasNodes && preflightClean ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
+              border: hasNodes && preflightClean ? 'none' : '1px solid var(--border-color)',
+              cursor: hasNodes && preflightClean ? 'pointer' : 'not-allowed',
+              transform: hasNodes && preflightClean ? 'scale(1.02)' : 'scale(1)',
+              transition: 'all 100ms ease',
             }}
           >
             Run
@@ -376,7 +401,7 @@ function handleSave() {
   const session = {
     systemsimVersion: '1.0', mode: state.appMode, scenarioId: state.scenarioId, intent: state.intent ?? null,
     session: { createdAt: new Date().toISOString(), lastModified: new Date().toISOString() },
-    design: { requirements: { functional: state.functionalReqs, nonFunctional: state.nonFunctionalReqs }, apiContracts: state.apiContracts, schemaMemory: state.schemaMemory, schemaHistory: state.schemaHistory },
+    design: { requirements: { functional: state.functionalReqs, nonFunctional: state.nonFunctionalReqs }, apiContracts: state.apiContracts, endpointRoutes: state.endpointRoutes, schemaMemory: state.schemaMemory, schemaHistory: state.schemaHistory },
     componentGraph: { components: state.nodes.map((n) => ({ id: n.id, type: n.data.type, label: n.data.label, position: n.position, config: n.data.config })), wires: state.edges.map((e) => ({ id: e.id, from: { componentId: e.source, port: 'output' }, to: { componentId: e.target, port: 'input' }, config: e.data?.config })) },
     simulationRuns: state.simulationRuns,
   };

@@ -15,6 +15,7 @@ import type {
   SchemaMemoryBlock,
   NFR,
   ApiContract,
+  EndpointRoute,
   SimulationRun,
   SimulationStatus,
   ViewMode,
@@ -28,8 +29,10 @@ import type {
   HealthState,
   AIDebrief,
   CanonicalGraph,
+  TableAccess,
 } from '../types';
 import type { DescribeIntentOutput } from '../ai/describeIntentSchema';
+import { buildAdjacency, bfs, findEntryPoints } from '../engine/graphTraversal';
 
 export interface ReviewInput {
   text?: string;
@@ -101,9 +104,11 @@ export interface AppState {
   functionalReqs: string[];
   nonFunctionalReqs: NFR[];
   apiContracts: ApiContract[];
+  endpointRoutes: EndpointRoute[];
   setFunctionalReqs: (reqs: string[]) => void;
   setNonFunctionalReqs: (reqs: NFR[]) => void;
   setApiContracts: (contracts: ApiContract[]) => void;
+  setEndpointRoutes: (routes: EndpointRoute[]) => void;
 
   // Schema
   schemaMemory: SchemaMemoryBlock | null;
@@ -294,9 +299,69 @@ export const useStore = create<AppState>((set, get) => ({
   functionalReqs: [],
   nonFunctionalReqs: [],
   apiContracts: [],
+  endpointRoutes: [],
   setFunctionalReqs: (reqs) => set({ functionalReqs: reqs }),
   setNonFunctionalReqs: (reqs) => set({ nonFunctionalReqs: reqs }),
-  setApiContracts: (contracts) => set({ apiContracts: contracts }),
+  setApiContracts: (contracts) => {
+    const state = get();
+    const edges = state.edges.map((e) => ({ source: e.source, target: e.target }));
+    const nodes = state.nodes.map((n) => ({ id: n.id, data: { config: n.data.config } }));
+    const adj = buildAdjacency(edges);
+    const entries = findEntryPoints(nodes, edges);
+    const dbNodeIds = state.nodes.filter((n) => n.data.type === 'database').map((n) => n.id);
+
+    const routes: EndpointRoute[] = contracts
+      .filter((c) => c.ownerServiceId)
+      .map((c) => {
+        const existing = state.endpointRoutes.find((r) => r.endpointId === c.id);
+        if (existing) return existing;
+
+        let chain: string[] = [];
+        const entry = entries[0];
+        if (entry && c.ownerServiceId) {
+          const toOwner = bfs(adj, entry, c.ownerServiceId);
+          if (toOwner) {
+            chain = [...toOwner];
+            for (const dbId of dbNodeIds) {
+              const toDb = bfs(adj, c.ownerServiceId, dbId);
+              if (toDb) {
+                chain = [...toOwner, ...toDb.slice(1)];
+                break;
+              }
+            }
+          } else {
+            chain = [c.ownerServiceId];
+          }
+        } else if (c.ownerServiceId) {
+          chain = [c.ownerServiceId];
+        }
+
+        const tablesAccessed: TableAccess[] = [];
+        const schema = state.schemaMemory;
+        if (schema) {
+          for (const entity of schema.entities) {
+            if (entity.assignedDbId && dbNodeIds.includes(entity.assignedDbId)) {
+              tablesAccessed.push({
+                tableId: entity.id,
+                mode: c.method === 'GET' ? 'read' : c.method === 'DELETE' ? 'write' : 'read_write',
+                indexed: entity.indexes.length > 0,
+              });
+            }
+          }
+        }
+
+        return {
+          endpointId: c.id,
+          componentChain: chain,
+          tablesAccessed,
+          weight: 1,
+          estimatedPayloadBytes: 200,
+        };
+      });
+
+    set({ apiContracts: contracts, endpointRoutes: routes });
+  },
+  setEndpointRoutes: (routes) => set({ endpointRoutes: routes }),
 
   // Schema
   schemaMemory: null,
