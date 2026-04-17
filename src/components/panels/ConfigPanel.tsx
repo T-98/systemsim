@@ -73,6 +73,8 @@ export default function ConfigPanel() {
             onChange={(v) => updateWireConfig(selectedEdge.id, { latencyMs: Number(v) })} disabled={isRunning} />
           <ConfigField label="Jitter (ms)" type="number" value={wireConfig.jitterMs}
             onChange={(v) => updateWireConfig(selectedEdge.id, { jitterMs: Number(v) })} disabled={isRunning} />
+
+          <CircuitBreakerSection edgeId={selectedEdge.id} wireConfig={wireConfig} disabled={isRunning} />
         </div>
       </div>
     );
@@ -183,6 +185,16 @@ export default function ConfigPanel() {
         {/* Assigned tables section (database only) */}
         {data.type === 'database' && (
           <AssignedTablesSection nodeId={selectedNode.id} disabled={isRunning} />
+        )}
+
+        {/* Retry policy — only for components that forward traffic downstream */}
+        {canRetry(data.type) && (
+          <RetryPolicySection nodeId={selectedNode.id} config={config} disabled={isRunning} />
+        )}
+
+        {/* Backpressure — only on component types whose processors emit errorRate */}
+        {canBackpressure(data.type) && (
+          <BackpressureSection nodeId={selectedNode.id} config={config} disabled={isRunning} />
         )}
 
         {!isRunning && (
@@ -474,6 +486,202 @@ function AssignedTablesSection({ nodeId, disabled }: { nodeId: string; disabled:
           ))}
         </select>
       )}
+    </div>
+  );
+}
+
+/**
+ * Phase 3 resilience: only components that forward traffic downstream can
+ * sensibly retry (the retry policy governs outgoing calls). Pure leaves
+ * like `external` or `autoscaler` never forward, so no retry UI for them.
+ */
+function canRetry(type: string): boolean {
+  return type === 'server' || type === 'load_balancer' || type === 'api_gateway'
+    || type === 'cache' || type === 'queue' || type === 'fanout' || type === 'cdn';
+}
+
+/**
+ * Backpressure only makes sense on components whose processor actually sets
+ * `state.metrics.errorRate`. Toggling it on a component that never emits
+ * errorRate (fanout, websocket_gateway, cdn, autoscaler, cache) silently does
+ * nothing — misleading. See Codex finding #4 on Phase 3 UI review.
+ */
+function canBackpressure(type: string): boolean {
+  return type === 'server' || type === 'database' || type === 'queue'
+    || type === 'api_gateway' || type === 'external' || type === 'load_balancer';
+}
+
+/**
+ * Clamp a user-entered number to finite, non-NaN. Returns fallback for
+ * Infinity/NaN/non-numeric input. Prevents engine-side silent rejection
+ * (RetryPolicy.readRetryPolicy throws away Infinity and the UI never knew).
+ */
+function safeFiniteNumber(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Same as safeFiniteNumber but additionally enforces integer and a minimum
+ * (e.g., maxRetries must be a positive integer).
+ */
+function safePositiveInt(raw: unknown, fallback: number, min = 1): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.floor(n));
+}
+
+/**
+ * Clamp a number to [lo, hi] after finite check. For bounded params like
+ * failureThreshold (0-1).
+ */
+function clampFinite(raw: unknown, lo: number, hi: number, fallback: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+/**
+ * Collapsible wire-level circuit breaker config. Toggle enables/disables the
+ * feature (adds/removes `wire.config.circuitBreaker`). Numeric fields let
+ * the user tune failure detection + recovery. Preview: "CLOSED → OPEN
+ * after N failed ticks, cooldown Xs, then M healthy probes → CLOSED."
+ */
+function CircuitBreakerSection({ edgeId, wireConfig, disabled }: {
+  edgeId: string;
+  wireConfig: { circuitBreaker?: {
+    failureThreshold?: number; failureWindow?: number;
+    cooldownSeconds?: number; halfOpenTicks?: number;
+  } };
+  disabled: boolean;
+}) {
+  const updateWireConfig = useStore((s) => s.updateWireConfig);
+  const breaker = wireConfig.circuitBreaker;
+  const enabled = !!breaker;
+
+  const toggle = (on: boolean) => {
+    if (disabled) return;
+    if (on) {
+      updateWireConfig(edgeId, {
+        circuitBreaker: {
+          failureThreshold: 0.5,
+          failureWindow: 3,
+          cooldownSeconds: 10,
+          halfOpenTicks: 2,
+        },
+      });
+    } else {
+      updateWireConfig(edgeId, { circuitBreaker: undefined });
+    }
+  };
+
+  const updateField = (key: string, value: number) => {
+    if (disabled || !breaker) return;
+    updateWireConfig(edgeId, {
+      circuitBreaker: { ...breaker, [key]: value },
+    });
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
+      <ConfigToggle label="Circuit breaker" value={enabled} onChange={toggle} disabled={disabled} />
+      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: 6 }}>
+        Fail-fast: drop traffic when downstream errors pile up.
+      </div>
+      {enabled && breaker && (
+        <div className="space-y-4" style={{ marginTop: 14 }}>
+          <ConfigField label="Failure threshold (errorRate 0–1)" type="number" value={breaker.failureThreshold ?? 0.5}
+            onChange={(v) => updateField('failureThreshold', clampFinite(v, 0, 1, 0.5))} disabled={disabled} />
+          <ConfigField label="Failure window (ticks)" type="number" value={breaker.failureWindow ?? 3}
+            onChange={(v) => updateField('failureWindow', safePositiveInt(v, 3, 1))} disabled={disabled} />
+          <ConfigField label="Cooldown (seconds)" type="number" value={breaker.cooldownSeconds ?? 10}
+            onChange={(v) => updateField('cooldownSeconds', Math.max(0, safeFiniteNumber(v, 10)))} disabled={disabled} />
+          <ConfigField label="Half-open probe ticks" type="number" value={breaker.halfOpenTicks ?? 2}
+            onChange={(v) => updateField('halfOpenTicks', safePositiveInt(v, 2, 1))} disabled={disabled} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Retry policy config. Upstream components that forward traffic can opt in.
+ * When downstream errorRate > 0, effective RPS is amplified by the geometric
+ * sum of the retry waves (1 + e + e² + ...).
+ */
+function RetryPolicySection({ nodeId, config, disabled }: {
+  nodeId: string;
+  config: Record<string, unknown>;
+  disabled: boolean;
+}) {
+  const updateComponentConfig = useStore((s) => s.updateComponentConfig);
+  const policy = config.retryPolicy as { maxRetries?: number; backoffMs?: number; backoffMultiplier?: number } | undefined;
+  const enabled = !!policy;
+
+  const toggle = (on: boolean) => {
+    if (disabled) return;
+    if (on) {
+      updateComponentConfig(nodeId, {
+        retryPolicy: { maxRetries: 3, backoffMs: 100, backoffMultiplier: 2 },
+      });
+    } else {
+      updateComponentConfig(nodeId, { retryPolicy: undefined });
+    }
+  };
+
+  const updateField = (key: string, value: number) => {
+    if (disabled || !policy) return;
+    updateComponentConfig(nodeId, {
+      retryPolicy: { ...policy, [key]: value },
+    });
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
+      <ConfigToggle label="Retry policy" value={enabled} onChange={toggle} disabled={disabled} />
+      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: 6 }}>
+        On downstream errors, this component retries — amplifies load.
+      </div>
+      {enabled && policy && (
+        <div className="space-y-4" style={{ marginTop: 14 }}>
+          <ConfigField label="Max retries" type="number" value={policy.maxRetries ?? 3}
+            onChange={(v) => updateField('maxRetries', safePositiveInt(v, 3, 1))} disabled={disabled} />
+          <ConfigField label="Backoff (ms, display-only)" type="number" value={policy.backoffMs ?? 100}
+            onChange={(v) => updateField('backoffMs', Math.max(0, safeFiniteNumber(v, 100)))} disabled={disabled} />
+          <ConfigField label="Backoff multiplier (display-only)" type="number" value={policy.backoffMultiplier ?? 2}
+            onChange={(v) => updateField('backoffMultiplier', Math.max(0, safeFiniteNumber(v, 2)))} disabled={disabled} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Backpressure opt-in. When enabled on a target, upstream callers scale
+ * forwarded RPS down by the target's acceptanceRate (1 - errorRate)
+ * observed in the previous tick.
+ */
+function BackpressureSection({ nodeId, config, disabled }: {
+  nodeId: string;
+  config: Record<string, unknown>;
+  disabled: boolean;
+}) {
+  const updateComponentConfig = useStore((s) => s.updateComponentConfig);
+  const bp = config.backpressure as { enabled?: boolean } | undefined;
+  const enabled = bp?.enabled === true;
+
+  const toggle = (on: boolean) => {
+    if (disabled) return;
+    if (on) updateComponentConfig(nodeId, { backpressure: { enabled: true } });
+    else updateComponentConfig(nodeId, { backpressure: undefined });
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
+      <ConfigToggle label="Backpressure" value={enabled} onChange={toggle} disabled={disabled} />
+      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: 6 }}>
+        Signal saturation to callers so they slow down proportionally.
+      </div>
     </div>
   );
 }

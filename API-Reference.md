@@ -676,6 +676,134 @@ M/M/1-per-instance approximation via Little's Law. See [Decisions.md #6](Decisio
 - `networkAwareCacheLatency(cacheSizeMb, ttlSeconds)`
     → `{ p50, p99 }`
 
+#### Phase 3 UI surface
+
+**Store additions** (in [src/store/index.ts](src/store/index.ts)):
+- `liveWireStates: Record<string, { breakerStatus: 'closed' | 'open' | 'half_open' | null; lastObservedErrorRate: number }>`
+- `setLiveWireStates(states)` — action, called each tick by `useSimulation`
+
+**Engine return type** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
+- `WireLiveState` exported interface
+- `tick()` now returns `{ ..., wireStates: Record<string, WireLiveState> }`
+
+**ConfigPanel sections** ([src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx)):
+- `CircuitBreakerSection(edgeId, wireConfig, disabled)` — wire-selection panel, rendered in every wire-config view
+- `RetryPolicySection(nodeId, config, disabled)` — node-selection panel, rendered for `canRetry(type)` types
+- `BackpressureSection(nodeId, config, disabled)` — node-selection panel, rendered for `canBackpressure(type)` types
+- Helpers: `canRetry(type)`, `canBackpressure(type)`, `safeFiniteNumber`, `safePositiveInt`, `clampFinite`
+
+**SimWireEdge** ([src/components/canvas/SimWireEdge.tsx](src/components/canvas/SimWireEdge.tsx)):
+- Reads `useStore((s) => s.liveWireStates[id])` for per-wire breaker state
+- Color precedence: selection > breaker state > default
+- Breaker colors only render when `simulationStatus === 'running' || 'paused'` (post-completion shows default to avoid stale paint)
+
+**Graph-version teardown** ([src/engine/useSimulation.ts](src/engine/useSimulation.ts)):
+- `useEffect` on `graphVersion` from the store
+- On change (after initial mount), clears `timerRef`, nulls `engineRef`, clears `metricsHistoryRef`
+- Invoked by `replaceGraph` (the only action that bumps `graphVersion`)
+
+**Showcase template** ([public/templates/resilience_showcase.json](public/templates/resilience_showcase.json)):
+- 4-node graph: LB → API Gateway (rateLimit=60) → Server (retryPolicy) → DB (backpressure)
+- Circuit breaker on LB→gateway wire (threshold 0.3, window 5 ticks)
+- Expected traffic profile: 120 RPS × 25s overloads gateway → breaker trips, DB saturation → retry + backpressure fire
+
+#### `Backpressure`
+
+**File:** [src/engine/Backpressure.ts](src/engine/Backpressure.ts)
+
+Target-signaled backpressure. Opt-in via target's `config.backpressure = { enabled: true }`.
+
+**Types:**
+- `BackpressureConfig` — `{ enabled: boolean }` (extensible: future smoothing, hysteresis)
+
+**Exports:**
+- `readBackpressureConfig(config): BackpressureConfig | undefined` — returns config iff `enabled: true`; rejects null, arrays, non-objects
+- `computeAcceptanceRate(errorRate: number): number` — simple inverse `1 - errorRate`, clamped to `[0, 1]`
+
+**Engine integration** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
+- `ComponentState.acceptanceRate: number` — init 1.0, updated end-of-tick when backpressure enabled AND `state.metrics.rps > 0`
+- `forwardOverWire`: after retry amplification, if target's backpressure is enabled AND breaker is not HALF_OPEN, multiply `effectiveRps × target.acceptanceRate`
+- One-shot callout emits when `appliedBackpressure ≤ 0.7` (includes 0 — the worst case)
+
+**Config example:**
+```ts
+{ ...existingConfig, backpressure: { enabled: true } }
+```
+
+**Interaction rules:**
+- **Breaker OPEN:** traffic already dropped upstream → backpressure doesn't run
+- **Breaker HALF_OPEN:** backpressure suppressed (probe flows at nominal rate)
+- **Target received 0 RPS this tick:** `acceptanceRate` NOT updated (no fresh signal; holds prior value)
+
+#### `RetryPolicy`
+
+**File:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts)
+
+Retry storm modeling. Upstream components opt-in via `config.retryPolicy`.
+
+**Types:**
+- `RetryPolicy` — `{ maxRetries: number, backoffMs?: number, backoffMultiplier?: number }`
+
+**Exports:**
+- `computeAmplification(errorRate: number, policy: RetryPolicy): number` — geometric sum `1 + e + e² + … + e^maxRetries`; returns 1.0 when errorRate = 0 or maxRetries = 0; clamps errorRate to [0, 1]
+- `readRetryPolicy(config: Record<string, unknown>): RetryPolicy | undefined` — parses `config.retryPolicy`, returns undefined on missing/malformed/maxRetries<=0
+
+**Engine integration** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
+- `WireState.lastObservedErrorRate: number` — updated after every forwardOverWire call; consumed by next tick's retry amplification
+- `forwardOverWire` reads the source's retry policy, computes amplification from `wire.lastObservedErrorRate`, forwards `rps × amplification`, then records `target.metrics.errorRate` for the next tick
+- One-shot callout emits to live log when amplification ≥ 1.5×
+
+**Config example** (on any component that forwards to a downstream):
+```ts
+{ ...existingConfig, retryPolicy: { maxRetries: 3, backoffMs: 100, backoffMultiplier: 2 } }
+```
+
+`backoffMs` and `backoffMultiplier` are display-only fields in 3.2; the same-tick bundling model doesn't delay ticks by backoff.
+
+#### `CircuitBreaker`
+
+**File:** [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts)
+
+Per-wire circuit breaker state machine. Opt-in via `WireConfig.circuitBreaker`.
+
+**Types:**
+- `BreakerStatus` — `'closed' | 'open' | 'half_open'`
+- `CircuitBreakerState` — `{ status, consecutiveFailureTicks, consecutiveSuccessTicks, cooldownUntilTime, hadTrafficThisTick }`
+- `CircuitBreakerConfig` — `{ failureThreshold, failureWindow, cooldownSeconds, halfOpenTicks }`
+- `BreakerTransition` — `{ from: BreakerStatus, to: BreakerStatus }`
+
+**Defaults** (`DEFAULT_BREAKER_CONFIG`):
+- `failureThreshold: 0.5` (errorRate above which a tick counts as failure)
+- `failureWindow: 3` (consecutive failure ticks to trip CLOSED → OPEN)
+- `cooldownSeconds: 10` (time in OPEN before trying HALF_OPEN)
+- `halfOpenTicks: 2` (consecutive healthy probe ticks to return to CLOSED)
+
+**Exports:**
+- `makeBreakerState(): CircuitBreakerState` — fresh CLOSED state
+- `resolveBreakerConfig(partial?): CircuitBreakerConfig` — applies defaults
+- `evaluateBreaker(state, config, errorRate, currentTime): BreakerTransition | null` — advance the state machine by one tick; returns transition or null
+
+**Engine integration** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
+- `WireState` gets optional `breaker` + `breakerConfig` (present iff `WireConfig.circuitBreaker` was set)
+- `forwardOverWire(src, tgt, rps, accumulated, logs)` gates on breaker state — OPEN drops traffic; sets `hadTrafficThisTick = true` on the breaker when rps > 0
+- `evaluateBreakers(logs)` runs at end of every tick; logs transitions bypass the throttle via `calloutEntries`
+- `processLoadBalancer` excludes breaker-OPEN wires from its healthy-backend filter
+
+**Type extension:**
+```ts
+interface WireConfig {
+  throughputRps: number;
+  latencyMs: number;
+  jitterMs: number;
+  circuitBreaker?: {                 // <-- NEW in Phase 3.1
+    failureThreshold?: number;
+    failureWindow?: number;
+    cooldownSeconds?: number;
+    halfOpenTicks?: number;
+  };
+}
+```
+
 #### `graphTraversal`
 
 **File:** [src/engine/graphTraversal.ts](src/engine/graphTraversal.ts)

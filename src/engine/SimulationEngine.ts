@@ -36,6 +36,16 @@ import type {
 import type { Node, Edge } from '@xyflow/react';
 import { computeQueueing } from './QueueingModel';
 import { computeCacheModel, networkAwareCacheLatency } from './WorkingSetCache';
+import {
+  type BreakerStatus,
+  type CircuitBreakerConfig,
+  type CircuitBreakerState,
+  evaluateBreaker,
+  makeBreakerState,
+  resolveBreakerConfig,
+} from './CircuitBreaker';
+import { computeAmplification, readRetryPolicy } from './RetryPolicy';
+import { computeAcceptanceRate, readBackpressureConfig } from './Backpressure';
 
 interface ComponentState {
   id: string;
@@ -54,6 +64,22 @@ interface ComponentState {
   crashed: boolean;
   instanceCount: number;
   lastComputedLatencyMs: number;
+  /**
+   * Backpressure signal: acceptanceRate ∈ [0, 1], updated at end of tick
+   * if `config.backpressure.enabled`. Upstream callers read the PREVIOUS
+   * tick's value and scale forwarded RPS down by (1 - acceptanceRate).
+   * Initialized to 1.0 (fully accepting) — no backpressure until observed.
+   */
+  acceptanceRate: number;
+}
+
+/**
+ * Per-wire live state surfaced at end of each tick for UI consumption.
+ * `breakerStatus` is null when no breaker is configured on the wire.
+ */
+export interface WireLiveState {
+  breakerStatus: BreakerStatus | null;
+  lastObservedErrorRate: number;
 }
 
 interface WireState {
@@ -62,6 +88,17 @@ interface WireState {
   target: string;
   config: WireConfig;
   currentRps: number;
+  /** Present iff wire.config.circuitBreaker was set. */
+  breaker?: CircuitBreakerState;
+  /** Resolved breaker config (with defaults applied). Present iff breaker present. */
+  breakerConfig?: CircuitBreakerConfig;
+  /**
+   * Downstream errorRate observed after the most recent forward. Used by the
+   * NEXT tick's retry amplification (3.2) and — in the future — backpressure
+   * (3.3) so they can read the previous tick's outcome without peeking at
+   * the aggregate target.metrics.errorRate mid-tick.
+   */
+  lastObservedErrorRate: number;
 }
 
 // Seeded PRNG (mulberry32) for reproducible simulations in tests
@@ -139,17 +176,23 @@ export class SimulationEngine {
         crashed: false,
         instanceCount: (node.data.config.instanceCount as number) ?? 1,
         lastComputedLatencyMs: 0,
+        acceptanceRate: 1.0,
       });
     }
 
     // Initialize wire states and adjacency
     for (const edge of edges) {
+      const cfg = edge.data!.config;
+      const hasBreaker = cfg.circuitBreaker !== undefined;
       this.wires.set(edge.id, {
         id: edge.id,
         source: edge.source,
         target: edge.target,
-        config: edge.data!.config,
+        config: cfg,
         currentRps: 0,
+        breaker: hasBreaker ? makeBreakerState() : undefined,
+        breakerConfig: hasBreaker ? resolveBreakerConfig(cfg.circuitBreaker) : undefined,
+        lastObservedErrorRate: 0,
       });
 
       if (!this.adjacency.has(edge.source)) this.adjacency.set(edge.source, []);
@@ -278,6 +321,7 @@ export class SimulationEngine {
     newLogs: LogEntry[];
     particles: Particle[];
     time: number;
+    wireStates: Record<string, WireLiveState>;
   } {
     const newLogs: LogEntry[] = [];
     const currentRps = this.getCurrentRps();
@@ -294,6 +338,28 @@ export class SimulationEngine {
         });
       }
     }
+
+    // Reset per-tick instantaneous metrics on non-crashed components. Processors
+    // that run this tick will overwrite with real values; components whose
+    // inbound traffic is blocked (breaker OPEN) will show truthful zeros instead
+    // of stale values. Crashed components retain their last-known metrics so
+    // users see WHY they crashed.
+    //
+    // Also reset per-wire "had traffic this tick" flag — set by forwardOverWire
+    // when traffic actually flows, consumed by evaluateBreakers at end of tick.
+    this.components.forEach((state) => {
+      if (state.crashed) return;
+      state.metrics.rps = 0;
+      state.metrics.errorRate = 0;
+      state.metrics.p50 = 0;
+      state.metrics.p95 = 0;
+      state.metrics.p99 = 0;
+      state.metrics.cpuPercent = 0;
+      state.metrics.memoryPercent = 0;
+    });
+    this.wires.forEach((wire) => {
+      if (wire.breaker) wire.breaker.hadTrafficThisTick = false;
+    });
 
     // Distribute traffic to entry points
     const rpsPerEntry = rpsPerTick / Math.max(this.entryPoints.length, 1);
@@ -315,6 +381,26 @@ export class SimulationEngine {
       healths[id] = state.health;
     });
 
+    // Advance per-wire circuit breakers based on this tick's downstream errorRate.
+    this.evaluateBreakers(newLogs);
+
+    // Update per-component acceptanceRate (3.3 backpressure signal). Read
+    // by next tick's forwardOverWire so upstream callers scale their
+    // forwarded RPS down when the downstream is saturated. One-tick
+    // propagation delay matches real systems.
+    //
+    // No-traffic guard: if the component got 0 RPS this tick (upstream
+    // wire breaker OPEN, or simply quiet phase), we have NO fresh signal.
+    // Holding the previous value beats falsely healing to 1.0, which would
+    // happen because tick-start resets errorRate to 0. Missing data is not
+    // health.
+    this.components.forEach((state) => {
+      if (state.crashed) return;
+      if (!readBackpressureConfig(state.config)) return;
+      if (state.metrics.rps <= 0) return; // no traffic = no new signal
+      state.acceptanceRate = computeAcceptanceRate(state.metrics.errorRate);
+    });
+
     // Throttle logs: max 1 log per (component, severity) per 2 seconds of sim time.
     // Callout entries bypass this entirely — firedCallouts already guarantees one-shot.
     const throttled = newLogs.filter((entry) => {
@@ -329,7 +415,16 @@ export class SimulationEngine {
     this.log.push(...throttled);
     this.time += this.tickInterval;
 
-    return { metrics, healths, newLogs: throttled, particles: [...this.particles], time: this.time };
+    // Emit per-wire live state for UI rendering (breaker color, etc.)
+    const wireStates: Record<string, WireLiveState> = {};
+    this.wires.forEach((wire) => {
+      wireStates[wire.id] = {
+        breakerStatus: wire.breaker ? wire.breaker.status : null,
+        lastObservedErrorRate: wire.lastObservedErrorRate,
+      };
+    });
+
+    return { metrics, healths, newLogs: throttled, particles: [...this.particles], time: this.time, wireStates };
   }
 
   private getWireLatency(sourceId: string, targetId: string): number {
@@ -346,12 +441,163 @@ export class SimulationEngine {
     return 0;
   }
 
+  /** Find the wire (if any) running from source to target. */
+  private findWire(sourceId: string, targetId: string): WireState | undefined {
+    for (const wire of this.wires.values()) {
+      if (wire.source === sourceId && wire.target === targetId) return wire;
+    }
+    return undefined;
+  }
+
+  /**
+   * Single choke point for any traffic flowing from one component to another
+   * over a wire. Phase 3 resilience logic hooks in here so processor code
+   * doesn't need to know about them.
+   *
+   * Circuit breaker gate:
+   * - OPEN: drop traffic entirely. No recurse, no latency, no cost.
+   * - HALF_OPEN: let traffic flow. If the tick ends with the target healthy,
+   *   breaker moves back toward CLOSED.
+   * - CLOSED: normal forwarding.
+   *
+   * Retry + backpressure will extend this in 3.2 / 3.3.
+   */
+  private forwardOverWire(sourceId: string, targetId: string, rps: number, accumulatedLatencyMs: number, logs: LogEntry[]) {
+    const wire = this.findWire(sourceId, targetId);
+    if (wire?.breaker?.status === 'open') {
+      return; // fail fast: circuit open, drop at the source
+    }
+
+    // Retry amplification: if the source has a retry policy and the downstream
+    // was erroring last tick, amplify the effective RPS by the geometric sum
+    // of the retry waves (1 + e + e² + … + e^maxRetries). This is how
+    // real retry storms inflate load on an already-struggling downstream.
+    //
+    // Using previous-tick errorRate avoids needing multiple recursion passes
+    // per tick and matches the one-tick propagation delay backpressure (3.3)
+    // will also use.
+    //
+    // HALF_OPEN exception: the whole point of HALF_OPEN is to send a small
+    // probe, not a replayed storm. Amplifying on a recovering downstream
+    // would slam it with stale errors and guarantee re-open. Skip retries
+    // during HALF_OPEN.
+    let effectiveRps = rps;
+    let amplification = 1;
+    const sourceState = this.components.get(sourceId);
+    const retryPolicy = sourceState ? readRetryPolicy(sourceState.config) : undefined;
+    const breakerHalfOpen = wire?.breaker?.status === 'half_open';
+    if (retryPolicy && wire && rps > 0 && wire.lastObservedErrorRate > 0 && !breakerHalfOpen) {
+      amplification = computeAmplification(wire.lastObservedErrorRate, retryPolicy);
+      effectiveRps = rps * amplification;
+    }
+
+    // Backpressure: if the target is signaling it can't accept everything
+    // (its previous-tick acceptanceRate < 1), scale the forwarded RPS down.
+    // This happens AFTER retry amplification — upstream optimistically
+    // amplifies, downstream pushes back; net effect self-stabilizes.
+    //
+    // HALF_OPEN exception: same reasoning as retry suppression. A probe
+    // must flow at nominal rate so `hadTrafficThisTick` fires and the
+    // breaker can observe whether the downstream has recovered. Scaling
+    // a probe to 0 would lock the breaker in HALF_OPEN forever.
+    const targetStateForBp = this.components.get(targetId);
+    let appliedBackpressure = 1;
+    if (targetStateForBp && readBackpressureConfig(targetStateForBp.config) && !breakerHalfOpen) {
+      appliedBackpressure = targetStateForBp.acceptanceRate;
+      effectiveRps = effectiveRps * appliedBackpressure;
+    }
+
+    // Record that this wire actually served traffic this tick. HALF_OPEN
+    // recovery requires at least one real probe to succeed, not just the
+    // absence of failure. Without this, a quiet tick would silently be
+    // counted as success and recover the breaker without validation.
+    if (wire?.breaker && effectiveRps > 0) {
+      wire.breaker.hadTrafficThisTick = true;
+    }
+
+    const wireLatency = this.getWireLatency(sourceId, targetId);
+    this.processComponent(targetId, effectiveRps, logs, accumulatedLatencyMs + wireLatency);
+
+    // Observe post-recursion errorRate for the next tick's retry decision.
+    // Multi-inbound caveat: this is the target's AGGREGATE errorRate after
+    // everyone's traffic, not this wire's slice. Close enough for the retry
+    // signal; good enough that steady-state stabilizes within a couple ticks.
+    if (wire) {
+      const target = this.components.get(targetId);
+      wire.lastObservedErrorRate = target?.metrics.errorRate ?? 0;
+    }
+
+    // One-shot callout when amplification crosses a meaningful threshold,
+    // so the user sees the retry storm in the live log.
+    if (amplification >= 1.5 && wire) {
+      this.fireCallout(
+        logs,
+        sourceId,
+        `retry-storm:${targetId}`,
+        `${sourceId} → ${targetId}: retry storm amplifying load ${amplification.toFixed(1)}× at t=${Math.round(this.time)}s (downstream errorRate=${(wire.lastObservedErrorRate * 100).toFixed(0)}%)`,
+      );
+    }
+
+    // One-shot callout when backpressure meaningfully reduces forwarded load
+    // (target rejecting ≥ 30% via acceptanceRate). Includes acceptanceRate=0
+    // (maximal rejection — the worst case we definitely want to surface).
+    // The guard on "<1" ensures we only log when backpressure actually fired;
+    // HALF_OPEN bypasses backpressure entirely so appliedBackpressure stays 1 there.
+    if (appliedBackpressure < 1 && appliedBackpressure <= 0.7) {
+      const scalePct = Math.round((1 - appliedBackpressure) * 100);
+      this.fireCallout(
+        logs,
+        sourceId,
+        `backpressure:${targetId}`,
+        `${targetId} signaling backpressure (acceptanceRate=${appliedBackpressure.toFixed(2)}) — ${sourceId} scaling forwarded load down ${scalePct}% at t=${Math.round(this.time)}s`,
+      );
+    }
+  }
+
+  /**
+   * End-of-tick breaker evaluation. Every wire with a breaker inspects its
+   * target's current errorRate and advances its state machine. Transitions
+   * are logged as warnings so users can see the breaker open/close.
+   */
+  private evaluateBreakers(logs: LogEntry[]) {
+    for (const wire of this.wires.values()) {
+      if (!wire.breaker || !wire.breakerConfig) continue;
+      const target = this.components.get(wire.target);
+      if (!target) continue;
+      const transition = evaluateBreaker(
+        wire.breaker,
+        wire.breakerConfig,
+        target.metrics.errorRate,
+        this.time,
+      );
+      if (transition) {
+        // Breaker transitions are already deduped by the state machine itself.
+        // Bypass the per-tick throttle so close-together transitions (e.g.,
+        // open → half_open followed by half_open → closed) both make it out.
+        const entry: LogEntry = {
+          time: this.time,
+          message: `Circuit breaker ${wire.source} → ${wire.target}: ${transition.from} → ${transition.to}`,
+          severity: transition.to === 'open' ? 'critical' : 'warning',
+          componentId: wire.source,
+        };
+        this.calloutEntries.add(entry);
+        logs.push(entry);
+
+        // On OPEN → HALF_OPEN, clear the stale error signal. The downstream
+        // may have recovered during cooldown, and we don't want the probe
+        // request to trigger retry amplification based on an old failure.
+        if (transition.from === 'open' && transition.to === 'half_open') {
+          wire.lastObservedErrorRate = 0;
+        }
+      }
+    }
+  }
+
   private forwardToDownstreams(sourceId: string, rps: number, accumulatedLatencyMs: number, logs: LogEntry[]) {
     const downstreams = this.adjacency.get(sourceId) ?? [];
     const rpsEach = rps / Math.max(downstreams.length, 1);
     for (const downstream of downstreams) {
-      const wireLatency = this.getWireLatency(sourceId, downstream);
-      this.processComponent(downstream, rpsEach, logs, accumulatedLatencyMs + wireLatency);
+      this.forwardOverWire(sourceId, downstream, rpsEach, accumulatedLatencyMs, logs);
     }
   }
 
@@ -421,9 +667,15 @@ export class SimulationEngine {
 
     state.metrics.rps = rps / this.tickInterval;
 
+    // Exclude crashed downstreams AND downstreams whose incoming wire has an
+    // OPEN circuit breaker. The LB shouldn't route to something we've already
+    // decided to fail-fast.
     const healthyDownstreams = downstreams.filter((d) => {
       const ds = this.components.get(d);
-      return ds && !ds.crashed;
+      if (!ds || ds.crashed) return false;
+      const wire = this.findWire(state.id, d);
+      if (wire?.breaker?.status === 'open') return false;
+      return true;
     });
 
     if (healthyDownstreams.length === 0) {
@@ -432,15 +684,14 @@ export class SimulationEngine {
       state.metrics.p50 = 0;
       state.metrics.p99 = 0;
       if (rps > 0) {
-        logs.push({ time: this.time, message: `${state.id}: No healthy backends. All requests failing. All downstream servers crashed — check their capacity in the live log above.`, severity: 'critical', componentId: state.id });
+        logs.push({ time: this.time, message: `${state.id}: No healthy backends. All requests failing. Downstreams crashed or circuit breakers open.`, severity: 'critical', componentId: state.id });
       }
       return;
     }
 
     const rpsEach = rps / healthyDownstreams.length;
     for (const downstream of healthyDownstreams) {
-      const wireLatency = this.getWireLatency(state.id, downstream);
-      this.processComponent(downstream, rpsEach, logs, accumulatedLatencyMs + wireLatency);
+      this.forwardOverWire(state.id, downstream, rpsEach, accumulatedLatencyMs, logs);
     }
 
     const lbProcessingMs = 0.5;

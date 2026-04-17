@@ -148,6 +148,12 @@ export interface AppState {
   particles: Particle[];
   liveLog: LogEntry[];
   liveMetrics: Record<string, ComponentMetrics>;
+  /**
+   * Per-edge live state published at end of each tick. `breakerStatus` null
+   * when no circuit breaker is configured on the wire. UI uses this to color
+   * edges (OPEN = red, HALF_OPEN = amber, CLOSED or null = default).
+   */
+  liveWireStates: Record<string, { breakerStatus: 'closed' | 'open' | 'half_open' | null; lastObservedErrorRate: number }>;
   setSimulationStatus: (status: SimulationStatus) => void;
   setSimulationTime: (time: number) => void;
   setSimulationSpeed: (speed: number) => void;
@@ -157,6 +163,7 @@ export interface AppState {
   clearLiveLog: () => void;
   updateLiveMetrics: (componentId: string, metrics: Partial<ComponentMetrics>) => void;
   updateComponentHealth: (componentId: string, health: HealthState) => void;
+  setLiveWireStates: (states: Record<string, { breakerStatus: 'closed' | 'open' | 'half_open' | null; lastObservedErrorRate: number }>) => void;
   resetSimulationState: () => void;
 
   // Traffic
@@ -418,6 +425,7 @@ export const useStore = create<AppState>((set, get) => ({
   particles: [],
   liveLog: [],
   liveMetrics: {},
+  liveWireStates: {},
   setSimulationStatus: (status) => set({ simulationStatus: status }),
   setSimulationTime: (time) => set({ simulationTime: time }),
   setSimulationSpeed: (speed) => set({ simulationSpeed: speed }),
@@ -441,6 +449,7 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     });
   },
+  setLiveWireStates: (states) => set({ liveWireStates: states }),
   resetSimulationState: () => {
     set({
       simulationStatus: 'idle',
@@ -448,6 +457,7 @@ export const useStore = create<AppState>((set, get) => ({
       particles: [],
       liveLog: [],
       liveMetrics: {},
+      liveWireStates: {},
       debrief: null,
       debriefVisible: false,
       debriefLoading: false,
@@ -552,10 +562,14 @@ export const useStore = create<AppState>((set, get) => ({
       type: 'simWire',
       animated: false,
       data: {
+        // Preserve all wire config fields from the template (including Phase 3
+        // circuitBreaker), not just the three core numeric values. Defaults
+        // are applied only when the field is absent.
         config: {
           throughputRps: ce.config?.throughputRps ?? 10000,
           latencyMs: ce.config?.latencyMs ?? 2,
           jitterMs: ce.config?.jitterMs ?? 1,
+          ...(ce.config?.circuitBreaker ? { circuitBreaker: ce.config.circuitBreaker } : {}),
         },
       },
     }));
@@ -577,6 +591,7 @@ export const useStore = create<AppState>((set, get) => ({
       configPanelOpen: false,
       // Clear simulation derived state
       liveMetrics: {},
+      liveWireStates: {},
       particles: [],
       liveLog: [],
       // Undo stack

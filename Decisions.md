@@ -120,6 +120,123 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Rejected:** Message-prefix in throttle key (spam risk). Direct push to `this.log` bypassing `newLogs` (breaks UI which reads `newLogs`).
 - **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `calloutEntries`, regression test in [src/engine/__tests__/SimulationEngine.test.ts](src/engine/__tests__/SimulationEngine.test.ts).
 
+### 12a. Circuit breakers live per-wire, opt-in via WireConfig.circuitBreaker
+
+- **When:** SIMFID Phase 3.1 (2026-04-16)
+- **Context:** CEO plan §2.8 calls for per-wire circuit breakers. Existing tests and scenarios must not regress when the feature ships.
+- **Decision:** New [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts) with a three-state machine (`CLOSED → OPEN → HALF_OPEN → CLOSED`). `WireConfig.circuitBreaker?` is optional: presence enables, absence skips all breaker logic for that wire. `forwardOverWire` gates on breaker state. End-of-tick `evaluateBreakers` advances the state machine from the target component's errorRate. Transitions emit logs that bypass the per-tick throttle via `calloutEntries` WeakSet. Load Balancer's healthy-backend filter also excludes breaker-OPEN wires.
+- **Why:** Opt-in preserves ~283 existing tests unchanged. Per-wire state matches the CEO plan's "refactor processComponent to iterate wires." Transition bypass prevents close-together `open → half_open → closed` events from being swallowed by the component-level throttle.
+- **Rejected:** Always-on with defaults (would trip on existing overload scenarios and add spurious test noise). Component-level breakers (CEO plan explicitly says per-wire). Probe-rate sampling in HALF_OPEN (real breakers let only N% through — simplified to full traffic for simulation clarity; documented as a known approximation).
+- **Source:** commits on `feat/simfid-phase3-resilience` branch; [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts), [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire`, `evaluateBreakers`.
+
+### 12b. HALF_OPEN requires actual probe traffic to count as success
+
+- **When:** SIMFID Phase 3.1, Codex review fix (2026-04-16)
+- **Context:** Initial 3.1 implementation treated "no failure this tick" as "success." A quiet phase (low or zero RPS) would silently tick the breaker back to CLOSED without a single real request validating the downstream.
+- **Decision:** Added `hadTrafficThisTick: boolean` on `CircuitBreakerState`. `forwardOverWire` sets it true whenever traffic actually flows through the wire. In HALF_OPEN, `evaluateBreaker` only increments `consecutiveSuccessTicks` if `hadTrafficThisTick === true`. Reset at start of each tick.
+- **Why:** Correctness. A breaker's whole purpose is to gate traffic around a failing downstream — recovering without a probe defeats it. Codex caught this in 3.1 review.
+- **Rejected:** Probe-limit sampling (more complex, not needed for correctness). Counting quiet ticks as "success but with half credit" (opaque).
+- **Source:** [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts) `hadTrafficThisTick`, [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire`.
+
+### 12c. Full instantaneous-metrics reset at start of every tick
+
+- **When:** SIMFID Phase 3.1 (2026-04-16)
+- **Context:** With breaker OPEN, downstream processors are skipped. Without a reset, `state.metrics.rps`, `errorRate`, `p99`, etc. would retain pre-trip values — the canvas and debrief would show 100 RPS on a component actually receiving 0.
+- **Decision:** At the start of each tick, zero out `rps`, `errorRate`, `p50`, `p95`, `p99`, `cpuPercent`, `memoryPercent` on every NON-crashed component. Crashed components keep their last-known metrics so users see why they crashed. Processors overwrite with real values when they run.
+- **Why:** Live metrics must reflect this tick's reality, not last tick's. Critical for breaker UX — OPEN means the component is visibly quiet.
+- **Rejected:** Reset everything including crashed (loses crash context). Reset only `rps` (leaves `p99` / CPU stale on quiet ticks — Codex caught this). Historical metrics like `queueDepth` are accumulators and intentionally not reset.
+- **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `tick()` reset loop.
+
+### 12d. Retry storms use previous-tick errorRate + same-tick bundling
+
+- **When:** SIMFID Phase 3.2 (2026-04-16)
+- **Context:** CEO plan §2.6 calls for `round N = round(N-1) × errorRate` geometric retry amplification. Open question: how to model retry timing in a 1-second tick engine?
+- **Decision:** New [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts). Retry config lives on the **upstream** component (`config.retryPolicy = { maxRetries, backoffMs?, backoffMultiplier? }`). `WireState` gains `lastObservedErrorRate: number`, updated after each forward. In `forwardOverWire`, if upstream has a retry policy, amplification factor = `1 + e + e² + … + e^maxRetries` using **previous tick's** `lastObservedErrorRate` (not this tick's). All retry waves bundle into the same tick's RPS to the downstream.
+- **Why:** We can't observe errorRate until after the downstream processes the request — can't retry within the same tick's processComponent call without re-entry. Using previous-tick observation matches the one-tick propagation delay planned for backpressure (3.3), is deterministic, and captures the "your DB is taking 3× nominal because of retry storms" capacity impact that's the whole point. Tick-0 has no history so amplification = 1 (no retry).
+- **Rejected:** Multi-pass within same tick (target metrics overwritten each call, loses aggregate). Spreading retries across ticks (matches reality but the model would diverge for maxRetries > tick duration). Per-request retry queue (full discrete-event simulator; overkill).
+- **Known side benefit:** `wire.lastObservedErrorRate` is **per-wire**, closing the multi-inbound breaker observability limitation from 3.1. Future refactor can also feed this into the breaker's failure signal for per-wire semantics.
+- **Source:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts), [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire` retry branch, `WireState.lastObservedErrorRate`.
+
+### 12e. Retry suppression during HALF_OPEN + stale-signal reset on OPEN→HALF_OPEN
+
+- **When:** SIMFID Phase 3.2, Codex review fix (2026-04-16)
+- **Context:** Initial 3.2 implementation had two bugs: (1) retry amplification still fired when the breaker was HALF_OPEN — a probe tick would get slammed with stale-error amplification, guaranteeing re-OPEN; (2) if a wire's `lastObservedErrorRate` was 0.8 when the breaker tripped, that value persisted through the cooldown and the first HALF_OPEN probe would amplify 3× based on 20s-old data.
+- **Decision:** (1) `forwardOverWire` skips retry amplification when `wire.breaker.status === 'half_open'`. (2) When `evaluateBreakers` transitions OPEN→HALF_OPEN, also reset `wire.lastObservedErrorRate = 0` so the probe forwards at nominal RPS.
+- **Why:** HALF_OPEN semantic is "send a small test request, don't overwhelm the recovering downstream." Amplifying defeats the purpose. Resetting the error signal on transition prevents stale data from polluting the recovery attempt.
+- **Rejected:** Decay `lastObservedErrorRate` over idle ticks (more complex, harder to reason about). Keep amplifying but reduce by some factor during HALF_OPEN (still wrong — any amplification at all on a probe can re-open the breaker).
+- **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire` `breakerHalfOpen` check + `evaluateBreakers` OPEN→HALF_OPEN reset.
+
+### 12f. readRetryPolicy rejects Infinity / NaN / fractional maxRetries
+
+- **When:** SIMFID Phase 3.2, Codex review fix (2026-04-16)
+- **Context:** Original `readRetryPolicy` accepted any positive number for `maxRetries`. `Infinity` would hang `computeAmplification`'s for-loop. Fractional values gave nonsense retry counts.
+- **Decision:** Validate `maxRetries` with `Number.isFinite(n) && Number.isInteger(n) && n > 0`. Reject arrays, null, functions. Also validate `backoffMs` / `backoffMultiplier` for finiteness.
+- **Why:** Defensive parsing at system boundaries (config is user-editable). An Infinity would freeze the simulation.
+- **Source:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts) `readRetryPolicy`.
+
+### 12g. Backpressure: opt-in, `acceptanceRate = 1 - errorRate`, one-tick delay
+
+- **When:** SIMFID Phase 3.3 (2026-04-16)
+- **Context:** CEO plan §2.7 calls for components to signal `acceptanceRate` per tick; upstream reads it to scale forwarded RPS. One-tick delay to match real propagation.
+- **Decision:** New [src/engine/Backpressure.ts](src/engine/Backpressure.ts) with `computeAcceptanceRate(errorRate)` + `readBackpressureConfig(config)`. `ComponentState` gains `acceptanceRate: number` (init 1.0). End-of-tick hook updates the signal for non-crashed components with `config.backpressure = { enabled: true }`. `forwardOverWire`, after retry amplification, multiplies by `target.acceptanceRate` when the target opted in.
+- **Why:** Symmetric with CircuitBreaker + RetryPolicy (opt-in via config field, evaluated end-of-tick, consumed next tick). Simple inverse `1 - errorRate` keeps the mental model clear: "what fraction of requests did the target succeed on last tick?"
+- **Rejected:** Always-on (breaks existing scenarios). Per-wire backpressure (backpressure is a property of the target's state, not the wire; fan-in should share it). Smoothed EWMA (future enhancement; adds hysteresis).
+- **Source:** [src/engine/Backpressure.ts](src/engine/Backpressure.ts), [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire` backpressure branch + end-of-tick update loop.
+
+### 12h. Backpressure no-traffic guard + HALF_OPEN bypass
+
+- **When:** SIMFID Phase 3.3, Codex review fix (2026-04-16)
+- **Context:** Three real bugs Codex caught: (1) End-of-tick reset zeros `errorRate` for all non-crashed components. If the target gets 0 RPS this tick, the naive update computes `acceptanceRate = 1 - 0 = 1` and falsely heals the backpressure signal. (2) HALF_OPEN probe was getting scaled by stale `acceptanceRate` — if that was 0, the probe never landed and the breaker locked in HALF_OPEN forever. (3) Callout predicate `> 0 && <= 0.7` excluded `acceptanceRate = 0`, the worst case.
+- **Decision:** (1) Skip the end-of-tick `acceptanceRate` update when `state.metrics.rps <= 0` (no fresh data → hold prior value). (2) Skip backpressure scaling in `forwardOverWire` when the breaker is HALF_OPEN (same reasoning as retry suppression — probes must flow at nominal rate). (3) Callout predicate `< 1 && <= 0.7` correctly includes 0.
+- **Why:** Missing data is not health. Probes must actually land to validate recovery. Callouts must cover the worst case.
+- **Rejected:** Decaying `acceptanceRate` over idle ticks (more complex). Forcing a minimum probe RPS during HALF_OPEN (opaque, better to just skip both upstream controls).
+- **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `forwardOverWire` `breakerHalfOpen` guards + no-rps guard in end-of-tick update.
+
+### 12i. Phase 3 UI: ConfigPanel toggles + wire color + showcase template
+
+- **When:** SIMFID Phase 3 UI pass (2026-04-16)
+- **Context:** Phase 3 engine work shipped entirely opt-in via config fields. Without UI surface, users could only enable features via devtools-console snippets — useless for manual validation or demos.
+- **Decision:** Added four UI pieces in one pass:
+  1. **Engine → store → UI** plumbing: `tick()` returns `wireStates: Record<edgeId, { breakerStatus, lastObservedErrorRate }>`. Store gains `liveWireStates` field, populated by `useSimulation` each tick.
+  2. **ConfigPanel** gains three resilience sections: `CircuitBreakerSection` (on wire selection), `RetryPolicySection` (on forwarding components), `BackpressureSection` (on components whose processors emit errorRate).
+  3. **SimWireEdge** renders breaker state: OPEN = destructive-red dashed, HALF_OPEN = amber dashed, CLOSED/null = default. Only during actively-running sim (avoids stale paint post-completion).
+  4. **`resilience_showcase.json` template** pre-wires all three features on a 4-node graph (LB → API Gateway rate-limit → server w/ retries → DB w/ backpressure + breaker on the LB → gateway wire). One click from landing page; traffic profile designed to trip all three callouts in under 10s.
+- **Why:** Opt-in is great for test stability, but features that can't be toggled via UI aren't really shipped. Adding UI makes the engine features dogfoodable, supports a real demo flow, and lets the design review process start critiquing resilience UX.
+- **Rejected:** Single modal for wire config (floating modal adds UI complexity; extending the existing right-dock ConfigPanel handles both nodes and wires cleanly). Visual wire state in a separate overlay (easier but wastes the existing edge rendering hook).
+- **Source:** commits on `feat/simfid-phase3-resilience` branch; [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `WireLiveState` + tick() return; [src/components/canvas/SimWireEdge.tsx](src/components/canvas/SimWireEdge.tsx) breaker colors; [src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx) `CircuitBreakerSection` / `RetryPolicySection` / `BackpressureSection`; [public/templates/resilience_showcase.json](public/templates/resilience_showcase.json).
+
+### 12j. Graph-version teardown: useSimulation stops the timer when the graph is replaced
+
+- **When:** SIMFID Phase 3 UI, Codex review fix (2026-04-16)
+- **Context:** `replaceGraph` only called `resetSimulationState()` which clears the store, but the simulation timer and `SimulationEngine` instance both live in `useRef` inside `useSimulation`. If the graph was replaced mid-run, the old engine would keep ticking and writing stale metrics/wireStates onto the newly-loaded graph. Codex caught this during Phase 3 UI review (finding #1).
+- **Decision:** Added a `useEffect` in `useSimulation` that watches `graphVersion` (bumped by `replaceGraph`). On change (after the initial mount), it clears the interval, nulls out `engineRef` and `metricsHistoryRef`, and updates its stored version.
+- **Why:** Correctness. Store state and engine state must stay in sync. The alternative (exposing `stopSimulation` through the store so `replaceGraph` can call it) would introduce a circular dependency between the store and the hook's lifecycle.
+- **Source:** [src/engine/useSimulation.ts](src/engine/useSimulation.ts) `useEffect` on `graphVersion`.
+
+### 12k. UI-level validation for retry + breaker numeric inputs
+
+- **When:** SIMFID Phase 3 UI, Codex review fix (2026-04-16)
+- **Context:** The new ConfigPanel sections let users type any value into numeric fields. `maxRetries: Infinity` hangs `computeAmplification`'s for-loop. The engine already rejects invalid policies via `readRetryPolicy`, but silently — so the toggle could look enabled while retries did nothing. Codex finding #3 + #5.
+- **Decision:** Added UI helpers (`safeFiniteNumber`, `safePositiveInt`, `clampFinite`) and applied them to every numeric field in `CircuitBreakerSection` and `RetryPolicySection`. Fractional `maxRetries` → floored. Infinity/NaN → fallback. `failureThreshold` clamped to [0, 1]. Counts clamped to min 1.
+- **Why:** Defense in depth. Engine validation is still the ground truth, but UI validation means the toggle's state reflects reality.
+- **Source:** [src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx) helper functions + updated `onChange` handlers.
+
+### 12l. Backpressure toggle gated to components that emit errorRate
+
+- **When:** SIMFID Phase 3 UI, Codex review fix (2026-04-16)
+- **Context:** Backpressure toggle was shown on all component types, but several processors never set `state.metrics.errorRate` (fanout, websocket_gateway, cdn, autoscaler, cache). Enabling backpressure on those did silently nothing. Codex finding #4.
+- **Decision:** Added `canBackpressure(type)` helper returning true only for processors that meaningfully emit errorRate: `server`, `database`, `queue`, `api_gateway`, `external`, `load_balancer`. `BackpressureSection` is conditional on this check.
+- **Why:** Don't expose a control that doesn't do anything. Hides the toggle instead of letting users click it and wonder why nothing happens.
+- **Source:** [src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx) `canBackpressure` + conditional render.
+
+### 12m. SimWireEdge shows breaker color only during actively-running sim
+
+- **When:** SIMFID Phase 3 UI, Codex review fix (2026-04-16)
+- **Context:** `liveWireStates` persists after simulation completes (it's useful for the debrief view). But edges were painted with breaker colors even on `completed` status, so a user editing the graph post-run would see stale colors from the old topology. Codex finding #2.
+- **Decision:** SimWireEdge gates breaker color rendering on `simulationStatus === 'running' || 'paused'`. Once 'completed' or 'idle', edges render as normal regardless of `liveWireStates`.
+- **Why:** Stale paint misleads. Post-run users are in edit mode; showing breaker colors suggests the wire is still in that state.
+- **Source:** [src/components/canvas/SimWireEdge.tsx](src/components/canvas/SimWireEdge.tsx) `showBreakerState` check.
+
 ### 12. Saturation callouts fire without upper bound on ρ
 
 - **When:** SIMFID Phase 3, Codex review fix (2026-04-16)

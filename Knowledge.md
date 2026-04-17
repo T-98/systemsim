@@ -341,6 +341,159 @@ User clicks "Download Report" in BottomPanel debrief tab
 
 ## Subsystem map
 
+### Circuit breakers (Phase 3.1)
+
+**File:** [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts)
+
+**Purpose:** Per-wire fail-fast gating. When a downstream is erroring consistently, the breaker trips and upstream traffic is dropped at the wire rather than piling onto a dying component.
+
+**State machine:**
+
+```
+    CLOSED ──(N consecutive failed ticks)──→ OPEN
+       ▲                                      │
+       │                               (cooldownSeconds elapsed)
+       │                                      ▼
+       │                                 HALF_OPEN
+       │                                      │
+       └──(M healthy probe ticks)─────────────┘
+                                              │
+                             (any failure)────┘
+                                              ↓
+                                             OPEN
+```
+
+**Opt-in:** Breakers only run on wires whose `WireConfig.circuitBreaker` is set. Absent config = no breaker, zero regression for existing scenarios.
+
+**Failure signal:** target component's `errorRate` at end of tick. Above `failureThreshold` (default 0.5) = "failed tick."
+
+**HALF_OPEN probe requirement:** Success ticks only count when traffic *actually* flowed through the wire (`hadTrafficThisTick` set by `forwardOverWire`). A quiet phase cannot silently recover the breaker.
+
+**Code flow:**
+
+```
+tick() starts
+    → reset non-crashed metrics (rps, errorRate, p50, p95, p99, cpuPercent, memoryPercent)
+    → reset all wire.breaker.hadTrafficThisTick = false
+    → processComponent(entry) → ... → forwardOverWire(src, tgt, rps)
+        → if breaker.status === 'open': return (drop at wire)
+        → if breaker && rps > 0: breaker.hadTrafficThisTick = true
+        → getWireLatency + processComponent(tgt)
+    → end-of-tick: evaluateBreakers(newLogs)
+        → for each wire with a breaker:
+            - evaluateBreaker(state, config, target.metrics.errorRate, this.time)
+            - transition logged (bypasses throttle via calloutEntries)
+    → tick++
+```
+
+**LB integration:** `processLoadBalancer` filters out downstreams with incoming wire in OPEN state. "All backends down or breaker-open" → same critical log as "no healthy backends."
+
+**Known limitation (documented):** breakers share their failure signal with siblings at multi-inbound targets. One noisy upstream can trip a well-behaved sibling's breaker. Per-wire error accounting is deferred to the ForwardResult refactor coming with retry storms (3.2).
+
+### Retry storms (Phase 3.2)
+
+**File:** [src/engine/RetryPolicy.ts](src/engine/RetryPolicy.ts)
+
+**Purpose:** Model the real-world cascade where a slightly-unhealthy downstream gets hit with 3-5× its nominal load because every caller dutifully retries. This is one of the top causes of cascading failure in production.
+
+**Model:** upstream has `config.retryPolicy = { maxRetries, backoffMs?, backoffMultiplier? }`. When forwarding, amplification = `1 + e + e² + … + e^maxRetries` where `e` = **previous tick's** observed errorRate on this wire. Bundled into one recursive call to keep the model tractable.
+
+**Opt-in:** absent `retryPolicy` = no amplification, identical to pre-3.2 behavior.
+
+**Per-wire observability:** `WireState.lastObservedErrorRate` is set after every successful recurse in `forwardOverWire`. Reading per-wire rather than per-target sidesteps the multi-inbound aggregate problem for the retry signal (the breaker still uses target-aggregate — documented limitation).
+
+**Code flow:**
+
+```
+forwardOverWire(src, tgt, rps)
+    → if breaker OPEN: return
+    → read source's retryPolicy (may be undefined)
+    → if policy present AND wire.lastObservedErrorRate > 0:
+        amplification = computeAmplification(lastObservedErrorRate, policy)
+        effectiveRps = rps × amplification
+    → getWireLatency + processComponent(tgt, effectiveRps, ...)
+    → wire.lastObservedErrorRate = target.metrics.errorRate   [for next tick]
+    → if amplification ≥ 1.5: fireCallout("retry storm amplifying load 1.8×")
+```
+
+**Callout:** one-shot per (source, target) pair, fires when amplification crosses 1.5×. Surfaces in the live log so users see retries inflating load.
+
+**Interaction with circuit breakers:** breaker OPEN drops traffic before retry logic runs (fail-fast is the whole point). Breaker HALF_OPEN allows traffic through, retries apply normally.
+
+### Phase 3 UI surface (ConfigPanel + SimWireEdge + showcase template)
+
+**Files:**
+- [src/components/panels/ConfigPanel.tsx](src/components/panels/ConfigPanel.tsx) — `CircuitBreakerSection`, `RetryPolicySection`, `BackpressureSection`
+- [src/components/canvas/SimWireEdge.tsx](src/components/canvas/SimWireEdge.tsx) — reads `liveWireStates[id]` to color edges by breaker state
+- [public/templates/resilience_showcase.json](public/templates/resilience_showcase.json) — one-click demo
+- [src/engine/useSimulation.ts](src/engine/useSimulation.ts) — graph-version teardown + `setLiveWireStates`
+- [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) — `WireLiveState` + tick() return
+
+**User flow (manual testing):**
+
+```
+User lands on app → clicks "Resilience Showcase" template
+    → replaceGraph loads 4 nodes + 3 edges with Phase 3 features pre-wired
+    → traffic profile pre-set for 120 RPS × 25s
+User clicks Run (preflight still needs schema/API contract)
+    → useSimulation starts timer + SimulationEngine
+    → each tick emits wireStates which populate store.liveWireStates
+    → SimWireEdge reads liveWireStates and paints:
+        - LB → gateway wire: amber dashed (HALF_OPEN) or red dashed (OPEN)
+    → Live Log tab shows:
+        - "server-2 → database-3: retry storm amplifying load 1.8×"
+        - "database-3 signaling backpressure (acceptanceRate=0.42)"
+        - "Circuit breaker load_balancer-0 → api_gateway-1: closed → open"
+User clicks a wire → ConfigPanel shows breaker fields (threshold, window, cooldown, halfOpenTicks)
+User clicks a node → ConfigPanel shows retry + backpressure toggles (on eligible types)
+```
+
+**Key rules:**
+- Wire breaker colors render only while `simulationStatus === 'running' || 'paused'`
+- Graph replaced mid-run → `useSimulation`'s `useEffect` on `graphVersion` tears down timer + engineRef
+- Opt-in toggles add/remove the config field; spreading `undefined` leaves a ghost key but all readers treat undefined as absent
+- Retry UI only shows on components that forward (server, LB, API gateway, cache, queue, fanout, CDN)
+- Backpressure UI only shows on components whose processors emit errorRate (server, database, queue, API gateway, external, load_balancer)
+
+### Backpressure (Phase 3.3)
+
+**File:** [src/engine/Backpressure.ts](src/engine/Backpressure.ts)
+
+**Purpose:** Close the feedback loop from downstream saturation to upstream flow control. When a target's `errorRate` rises, its `acceptanceRate` drops; upstream callers reading that signal scale down their forwarded RPS.
+
+**Config:** opt-in on the target via `config.backpressure = { enabled: true }`.
+
+**State:**
+- `ComponentState.acceptanceRate: number` — initialized to 1.0, updated end-of-tick when `state.metrics.rps > 0` (no traffic = no new signal)
+- `acceptanceRate = clamp01(1 - errorRate)`
+
+**Code flow:**
+
+```
+forwardOverWire(src, tgt, rps)
+    → check breaker OPEN: drop
+    → apply retry amplification (unless HALF_OPEN)
+    → check target's backpressure config
+       → if enabled AND breaker not HALF_OPEN:
+           effectiveRps *= target.acceptanceRate  (previous tick's value)
+    → mark wire.breaker.hadTrafficThisTick if rps > 0
+    → processComponent(tgt, effectiveRps)
+    → observe target.metrics.errorRate for retry signal
+    → fire callout if appliedBackpressure ≤ 0.7 (one-shot)
+
+end of tick:
+    → for each non-crashed, backpressure-enabled component with rps > 0:
+       → acceptanceRate = 1 - errorRate
+```
+
+**Composition with retry storms:** retry amplifies first (optimistic caller), backpressure scales down (downstream's pushback). At steady state with shared `errorRate e`: `amplification × acceptance = (1 + e + e² + …) × (1 - e) ≈ 1` → self-stabilizing in the single-inbound case.
+
+**HALF_OPEN exception:** same as retry — probes must flow at nominal rate. If backpressure were applied, a recovering downstream with `acceptanceRate=0` would never receive a probe, and the breaker would lock in HALF_OPEN forever.
+
+**No-traffic guard:** if the target got 0 RPS this tick (upstream wire breaker OPEN, quiet phase), its `errorRate` was reset to 0 at tick start — recomputing `acceptanceRate = 1` would falsely heal the signal. The update is skipped on no-traffic ticks; prior value persists.
+
+**Known limitation (shared with 3.2):** multi-inbound fan-in causes order-dependent `acceptanceRate` because processor metrics are not aggregated per tick. Proper fix requires refactoring processors to accumulate. Documented; deferred to a future architectural pass.
+
 ### Simulation engine
 
 **File:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)
@@ -484,3 +637,4 @@ User clicks "Download Report" in BottomPanel debrief tab
 | Add a store field | [src/store/index.ts](src/store/index.ts) + type in [src/types/index.ts](src/types/index.ts) |
 | Add a new LLM endpoint | New file under `api/` + [api/_shared/handler.ts](api/_shared/handler.ts) pattern |
 | Add a new template | New JSON in `/public/templates/` matching `CanonicalGraph` shape |
+| Add a new resilience pattern (e.g. rate limiter, bulkhead) | Same shape as [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts): types + evaluate fn + opt-in via `WireConfig` + hook into `forwardOverWire` |
