@@ -509,3 +509,30 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Why:** Static detection via grep/tsc doesn't work because many InfoIcon topic keys are computed (e.g. `config.${key}` on dynamic component config). A runtime check with an E2E assertion catches drift without coupling to TypeScript literals.
 - **Rejected:** TypeScript template-literal types over topic keys (breaks on dynamic keys). Grep-based CI check (false negatives on computed strings).
 - **Source:** [src/components/ui/InfoIcon.tsx](src/components/ui/InfoIcon.tsx) `registerRef`, [src/wiki/components/CoverageDebugRoute.tsx](src/wiki/components/CoverageDebugRoute.tsx), [e2e/wiki-coverage.spec.ts](e2e/wiki-coverage.spec.ts).
+
+### 41. Left sidebar widens to 320px on ≥1200px, collapses to a 44px rail below
+
+- **When:** Phase B1 (2026-04-18)
+- **Context:** CanvasSidebar was 240px wide — too tight for the new traffic editor with PhaseCurve + NL input, but 320px steals canvas width on 13" laptops.
+- **Decision:** Sidebar is 320px on viewports ≥1200px, collapses to a 44px rail below that. Manual expand / collapse available at any width via `sidebar-expand` / `sidebar-collapse` buttons. Collapsed state is panel-local (session-only), not persisted — explicit design choice to avoid "I don't know why my sidebar is collapsed" confusion across sessions.
+- **Why:** 320px is the measured minimum for the traffic editor content to not wrap awkwardly. Below 1200px the canvas gets squeezed if the sidebar takes its share; auto-collapse preserves canvas affordance.
+- **Rejected:** Fixed 320px always (breaks at 1024px). Drawer overlay always (loses at-a-glance context). Persisting collapse in the store (cross-session confusion).
+- **Source:** [src/components/panels/CanvasSidebar.tsx](src/components/panels/CanvasSidebar.tsx), [e2e/traffic-panel-scroll.spec.ts](e2e/traffic-panel-scroll.spec.ts).
+
+### 42. Traffic profile PhaseCurve is a shape-aware pure render, no store dep
+
+- **When:** Phase B2 (2026-04-18)
+- **Context:** Users were editing phases numerically without seeing the resulting RPS curve. The existing phase table requires spatial reasoning (start / end / rps columns) to imagine the shape.
+- **Decision:** [src/components/panels/PhaseCurve.tsx](src/components/panels/PhaseCurve.tsx) renders a ~60px-tall SVG above the phase list. Each phase contributes shape-aware points (steady = flat, ramp = diagonal, spike = peak triangle, instant_spike = step jump). Hover tooltip shows `t=<s>s, RPS=<n>` derived by evaluating the phase at the hovered x-coordinate. Zero store dependency — pure render over props. Renders reactively via React state in TrafficEditor.
+- **Why:** Visual preview eliminates the spatial-reasoning tax. Curve visualization exposes shape misuse (e.g. `ramp_up` with wrong startS immediately looks wrong). Pure render keeps the component cheap to reason about and test.
+- **Rejected:** Live-simulation preview (expensive, stale vs user edits). A live Chart.js / visx dependency (bundle bloat for one 60px SVG).
+- **Source:** [src/components/panels/PhaseCurve.tsx](src/components/panels/PhaseCurve.tsx), [e2e/traffic-phase-curve.spec.ts](e2e/traffic-phase-curve.spec.ts).
+
+### 43. Natural-language traffic input via /api/traffic-intent (Sonnet 4.6 tool_choice)
+
+- **When:** Phase B3 (2026-04-18)
+- **Context:** The phase table UX requires understanding the `shape` enum and thinking in `{startS, endS, rps}` tuples — a gatekeeping abstraction for first-time users. Meanwhile the user almost always starts with a plain-English description of what they want to simulate ("ramp to 500 then spike to 8000 for 5 seconds").
+- **Decision:** Added an NL textarea + Generate button that calls [/api/traffic-intent](api/traffic-intent.ts), a Vercel Edge Function using Claude Sonnet 4.6 with a `traffic_intent` tool_choice that forces structured output. Hand-rolled validator in [src/ai/trafficIntentSchema.ts](src/ai/trafficIntentSchema.ts) (matches describeIntentSchema pattern) rejects malformed shapes with internal reason codes logged server-side only. Client uses the shared `callAIEndpoint` helper for consistent `AICallResult` discriminated unions.
+- **Why:** Claude Sonnet 4.6 is the right model for structured-JSON text tasks (Opus would be overkill here; describe-intent uses Opus only because it's vision-heavy). Tool-choice guarantees the model emits the right shape. Hand-rolled validator matches existing pattern for consistency. Abort-on-unmount via AbortController + AbortSignal propagated through callAIEndpoint.
+- **Rejected:** Free-form Claude response + post-hoc parsing (fragile). Zod schema (inconsistent with describeIntentSchema). Not persisting the generation to the store (breaks "NL → canvas picks it up immediately" UX).
+- **Source:** [api/traffic-intent.ts](api/traffic-intent.ts), [src/ai/trafficIntent.ts](src/ai/trafficIntent.ts), [src/ai/trafficIntentSchema.ts](src/ai/trafficIntentSchema.ts), [src/ai/trafficIntentPrompt.ts](src/ai/trafficIntentPrompt.ts), [src/components/panels/TrafficEditor.tsx](src/components/panels/TrafficEditor.tsx) `handleGenerate`.

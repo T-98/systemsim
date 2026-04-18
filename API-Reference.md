@@ -980,3 +980,31 @@ Dev-only diagnostic. Reads `window.__SYSTEMSIM_TOPIC_REFS__` and flags any refer
 - [e2e/wiki-scaffold.spec.ts](e2e/wiki-scaffold.spec.ts) — /wiki opens, grouped nav renders, deep-link focuses, arrow-key nav, how-to stub, Back returns to prior view.
 - [e2e/info-icon-configpanel.spec.ts](e2e/info-icon-configpanel.spec.ts) — ConfigPanel has InfoIcons, popover opens, "Learn more" routes to wiki, Escape closes, wire config fields show icons.
 - [e2e/wiki-coverage.spec.ts](e2e/wiki-coverage.spec.ts) — registry covers all live references (zero unresolved).
+
+## Traffic profile overhaul (Phase B)
+
+### `src/components/panels/CanvasSidebar.tsx`
+Left sidebar. 320px on viewports ≥1200px, collapses to a 44px rail below. Manual `sidebar-expand` / `sidebar-collapse` buttons available at any width. Session-only; not persisted.
+
+### `src/components/panels/PhaseCurve.tsx`
+SVG preview of a `TrafficProfile`'s phase sequence. Rendered above the phase list in TrafficEditor. Shape-aware per phase (steady / instant_spike / ramp_up / ramp_down / spike). Hover anywhere on the chart to see `t=<s>s, RPS=<n>`. Pure render over props; no store dep.
+
+### Traffic intent NL input
+
+- **Client:** [src/ai/trafficIntent.ts](src/ai/trafficIntent.ts) — `trafficIntent({ description, signal? })` returns `{ ok, data: TrafficProfile } | { ok: false, kind, message }`.
+- **Schema + validator:** [src/ai/trafficIntentSchema.ts](src/ai/trafficIntentSchema.ts) — `TRAFFIC_INTENT_TOOL_SCHEMA` Anthropic tool shape + `validateTrafficIntent(raw)` with `{ok: true, data} | {ok: false, reason}`. Reason codes stay server-side (logged, never returned in HTTP body).
+- **Prompt:** [src/ai/trafficIntentPrompt.ts](src/ai/trafficIntentPrompt.ts) — system prompt + `buildTrafficIntentUserText(description)`, versioned via `TRAFFIC_INTENT_PROMPT_VERSION`.
+- **Edge Function:** [api/traffic-intent.ts](api/traffic-intent.ts) — Claude Sonnet 4.6 with `tool_choice: { type: 'tool', name: 'traffic_intent' }`. 32KB payload cap. Description 4–2000 chars. Validation failures logged with reason + prompt version, client sees generic message only.
+
+### TrafficEditor wiring
+- Phase curve renders at the top of the expanded editor.
+- NL textarea + Generate button below the curve. Aborts in-flight requests on unmount or rapid re-click via a panel-local AbortController.
+- Status announced via `role="status" aria-live="polite"` live region; errors raise `role="alert"`.
+- Applies the returned profile to local draft state AND to the store's `trafficProfile` so the canvas picks it up immediately.
+- Gated by `import.meta.env.VITE_ENABLE_TRAFFIC_INTENT !== 'false'` (enabled by default; set `VITE_ENABLE_TRAFFIC_INTENT=false` to hide the textarea in dev/E2E).
+
+### E2E + unit coverage
+- [src/ai/__tests__/trafficIntent.test.ts](src/ai/__tests__/trafficIntent.test.ts) — 15 Vitest cases (client mocks, validator edge cases).
+- [e2e/traffic-panel-scroll.spec.ts](e2e/traffic-panel-scroll.spec.ts) — sidebar width at ≥1200 / <1200, manual collapse, scroll behavior.
+- [e2e/traffic-phase-curve.spec.ts](e2e/traffic-phase-curve.spec.ts) — curve renders, mutates on phase edit, tooltip on hover, all 5 shapes.
+- [e2e/traffic-nl-input.spec.ts](e2e/traffic-nl-input.spec.ts) — success / 500 / 429 / loading states via `page.route` stub.
