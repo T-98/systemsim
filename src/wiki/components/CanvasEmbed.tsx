@@ -104,11 +104,13 @@ export default function CanvasEmbed({ template }: { template: string }) {
         data-testid="canvas-embed-error"
         style={{
           padding: 16,
-          borderRadius: 8,
+          borderRadius: 6,
           border: '1px dashed var(--destructive)',
           color: 'var(--destructive)',
           fontSize: 13,
           letterSpacing: '-0.12px',
+          display: 'flex',
+          alignItems: 'center',
         }}
       >
         {error}
@@ -121,11 +123,14 @@ export default function CanvasEmbed({ template }: { template: string }) {
         data-testid="canvas-embed-loading"
         style={{
           padding: 16,
-          borderRadius: 8,
+          borderRadius: 6,
           border: '1px dashed var(--border-color)',
           color: 'var(--text-tertiary)',
           fontSize: 13,
           letterSpacing: '-0.12px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
         }}
       >
         Loading preview…
@@ -151,7 +156,7 @@ export default function CanvasEmbed({ template }: { template: string }) {
       data-template={template}
       style={{
         margin: '20px 0',
-        borderRadius: 10,
+        borderRadius: 8,
         border: '1px solid var(--border-color)',
         overflow: 'hidden',
         background: 'var(--bg-input)',
@@ -159,7 +164,7 @@ export default function CanvasEmbed({ template }: { template: string }) {
     >
       <div
         style={{
-          padding: '10px 14px',
+          padding: '12px 16px',
           borderBottom: '1px solid var(--border-color)',
           display: 'flex',
           alignItems: 'center',
@@ -208,7 +213,7 @@ export default function CanvasEmbed({ template }: { template: string }) {
           </button>
         </div>
       </div>
-      <div style={{ height: 200, background: 'var(--bg-primary)' }}>
+      <div style={{ height: 220, background: 'var(--bg-primary)' }}>
         <ReactFlowProvider>
           <ReactFlow
             nodes={previewNodes(data)}
@@ -232,12 +237,12 @@ export default function CanvasEmbed({ template }: { template: string }) {
       </div>
       <div
         style={{
-          padding: '8px 14px',
-          fontSize: 11,
+          padding: '8px 16px',
+          fontSize: 12,
           color: 'var(--text-tertiary)',
           letterSpacing: '-0.12px',
           borderTop: '1px solid var(--border-color)',
-          fontFamily: "'Geist Mono', monospace",
+          fontFamily: "'Geist Mono', ui-monospace, monospace",
         }}
       >
         {graph.nodes.length} components · {graph.edges.length} wires · Tap "Take to canvas" to edit + run.

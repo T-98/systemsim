@@ -168,79 +168,101 @@ export default function WikiRoute() {
       style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
     >
       <header
-        className="flex items-center justify-between"
+        className="flex flex-col"
         style={{
-          padding: '12px 20px',
-          borderBottom: '1px solid var(--border-color)',
           background: 'var(--bg-sidebar)',
+          borderBottom: '1px solid var(--border-color)',
         }}
       >
-        <div className="flex items-center gap-6">
-          <button
-            type="button"
-            onClick={closeWiki}
-            data-testid="wiki-back"
-            style={{
-              padding: '6px 12px',
-              borderRadius: 6,
-              background: 'transparent',
-              border: '1px solid var(--border-color)',
-              color: 'var(--text-secondary)',
-              fontSize: 13,
-              cursor: 'pointer',
-              letterSpacing: '-0.12px',
-            }}
-          >
-            ← Back
-          </button>
-          <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: '-0.24px' }}>
-            SystemSim Docs
+        <div
+          className="flex items-center justify-between"
+          style={{
+            padding: '8px 20px',
+          }}
+        >
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={closeWiki}
+              data-testid="wiki-back"
+              style={{
+                padding: '6px 12px',
+                borderRadius: 6,
+                background: 'transparent',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-secondary)',
+                fontSize: 13,
+                cursor: 'pointer',
+                letterSpacing: '-0.12px',
+              }}
+            >
+              ← Back
+            </button>
+            <div
+              style={{
+                width: '1px',
+                height: '20px',
+                background: 'var(--border-color)',
+              }}
+            />
+            <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: '-0.24px' }}>
+              SystemSim Docs
+            </div>
           </div>
-          <nav
-            className="flex items-center gap-1"
-            data-testid="docs-tabs"
-            role="tablist"
-            aria-label="Documentation sections"
-          >
-            {TABS.map((t) => {
-              const active = tab === t.id;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  data-testid={`docs-tab-${t.id}`}
-                  data-active={active ? 'true' : 'false'}
-                  onClick={() => {
-                    setTab(t.id);
-                    // Clear the focused topic so the effect above picks the first
-                    // visible one for the new tab.
-                    setFocused(null);
-                  }}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: 6,
-                    border: '1px solid transparent',
-                    background: active ? 'var(--bg-input)' : 'transparent',
-                    color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                    borderColor: active ? 'var(--border-color)' : 'transparent',
-                    fontSize: 13,
-                    fontWeight: active ? 600 : 500,
-                    letterSpacing: '-0.12px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {t.label}
-                </button>
-              );
-            })}
-          </nav>
+          <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>
+            {flatKeys.length} {activeTab.label.toLowerCase()} topics
+            {focused ? ` · ${topicKeyToSlug(focused)}` : ''}
+          </div>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>
-          {flatKeys.length} {activeTab.label.toLowerCase()} topics
-          {focused ? ` · ${topicKeyToSlug(focused)}` : ''}
-        </div>
+
+        <nav
+          className="flex items-center"
+          data-testid="docs-tabs"
+          role="tablist"
+          aria-label="Documentation sections"
+          style={{
+            borderTop: '1px solid var(--border-color)',
+            padding: '0 20px',
+            gap: '2px',
+          }}
+        >
+          {TABS.map((t) => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                data-testid={`docs-tab-${t.id}`}
+                data-active={active ? 'true' : 'false'}
+                onClick={() => {
+                  setTab(t.id);
+                  // Clear the focused topic so the effect above picks the first
+                  // visible one for the new tab.
+                  setFocused(null);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 0,
+                  border: 'none',
+                  background: 'transparent',
+                  color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  fontSize: 13,
+                  fontWeight: active ? 600 : 500,
+                  letterSpacing: '-0.12px',
+                  cursor: 'pointer',
+                  borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                  transition: 'color 150ms ease-out, border-bottom-color 150ms ease-out',
+                  position: 'relative',
+                  bottom: '-1px',
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -252,14 +274,14 @@ export default function WikiRoute() {
             width: 280,
             borderRight: '1px solid var(--border-color)',
             background: 'var(--bg-sidebar)',
-            padding: '12px 0',
+            padding: '12px 0 32px 0',
           }}
         >
           {activeTab.categoryOrder.map((cat) => {
             const keys = grouped.get(cat) ?? [];
             if (keys.length === 0) return null;
             return (
-              <div key={cat} data-testid={`wiki-nav-group-${cat}`} style={{ marginBottom: 12 }}>
+              <div key={cat} data-testid={`wiki-nav-group-${cat}`} style={{ marginBottom: 12, paddingTop: 16 }}>
                 <div
                   style={{
                     padding: '6px 16px',
@@ -281,7 +303,7 @@ export default function WikiRoute() {
         <main
           className="flex-1 overflow-y-auto"
           data-testid="wiki-main"
-          style={{ padding: '32px 48px' }}
+          style={{ padding: '32px 40px' }}
         >
           <TopicBody topicKey={focused} />
         </main>

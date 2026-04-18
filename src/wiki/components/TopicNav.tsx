@@ -33,21 +33,28 @@ export default function TopicNav({
               display: 'block',
               width: '100%',
               textAlign: 'left',
-              padding: '7px 16px',
+              padding: '8px 16px',
               border: 'none',
               background: active ? 'var(--bg-input)' : 'transparent',
-              color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+              color: active ? 'var(--text-primary)' : 'var(--text-primary)',
               fontSize: 13,
               letterSpacing: '-0.12px',
               cursor: 'pointer',
-              borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
-              transition: 'background 140ms ease, color 140ms ease',
+              borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
+              transition: 'background 140ms ease, color 140ms ease, border-left-color 140ms ease',
+              outline: 'none',
             }}
             onMouseEnter={(e) => {
               if (!active) e.currentTarget.style.background = 'var(--bg-input)';
             }}
             onMouseLeave={(e) => {
               if (!active) e.currentTarget.style.background = 'transparent';
+            }}
+            onFocus={(e) => {
+              e.currentTarget.style.boxShadow = `inset 0 0 0 2px var(--accent-ring)`;
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.boxShadow = 'none';
             }}
           >
             {t.title}

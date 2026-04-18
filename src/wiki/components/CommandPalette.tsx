@@ -163,7 +163,7 @@ export default function CommandPalette() {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(0,0,0,0.5)',
+        background: 'rgba(0,0,0,0.4)',
         zIndex: 10000,
         display: 'flex',
         alignItems: 'flex-start',
@@ -180,7 +180,7 @@ export default function CommandPalette() {
           width: 'min(640px, 90vw)',
           maxHeight: '65vh',
           background: 'var(--bg-sidebar)',
-          border: '1px solid var(--border-color)',
+          border: '1px solid var(--border-strong)',
           borderRadius: 12,
           boxShadow: 'var(--shadow-elevated)',
           overflow: 'hidden',
@@ -209,9 +209,9 @@ export default function CommandPalette() {
           }}
           style={{
             width: '100%',
-            padding: '14px 16px',
+            padding: '16px 16px',
             fontSize: 15,
-            background: 'transparent',
+            background: 'var(--bg-input)',
             color: 'var(--text-primary)',
             border: 'none',
             borderBottom: '1px solid var(--border-color)',
@@ -247,10 +247,9 @@ export default function CommandPalette() {
                     width: '100%',
                     textAlign: 'left',
                     padding: '10px 16px',
-                    background: isSel ? 'var(--bg-input)' : 'transparent',
+                    background: isSel ? 'var(--bg-hover)' : 'transparent',
                     color: 'var(--text-secondary)',
                     border: 'none',
-                    borderLeft: isSel ? '2px solid var(--accent)' : '2px solid transparent',
                     cursor: 'pointer',
                     fontSize: 13,
                     letterSpacing: '-0.12px',
@@ -269,7 +268,7 @@ export default function CommandPalette() {
                         color: 'var(--text-tertiary)',
                         border: '1px solid var(--border-color)',
                         padding: '1px 6px',
-                        borderRadius: 4,
+                        borderRadius: 980,
                       }}
                     >
                       {CATEGORY_PILL[r.topic.category]}
@@ -305,9 +304,9 @@ export default function CommandPalette() {
             gap: 14,
           }}
         >
-          <span><kbd>↑↓</kbd> navigate</span>
-          <span><kbd>↵</kbd> open</span>
-          <span><kbd>esc</kbd> close</span>
+          <span><kbd style={{ fontFamily: 'inherit', background: 'var(--bg-input)', border: '1px solid var(--border-color)', borderRadius: 4, padding: '1px 5px', fontSize: 'inherit' }}>↑↓</kbd> navigate</span>
+          <span><kbd style={{ fontFamily: 'inherit', background: 'var(--bg-input)', border: '1px solid var(--border-color)', borderRadius: 4, padding: '1px 5px', fontSize: 'inherit' }}>↵</kbd> open</span>
+          <span><kbd style={{ fontFamily: 'inherit', background: 'var(--bg-input)', border: '1px solid var(--border-color)', borderRadius: 4, padding: '1px 5px', fontSize: 'inherit' }}>esc</kbd> close</span>
         </div>
       </div>
     </div>

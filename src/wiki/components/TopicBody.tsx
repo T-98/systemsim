@@ -40,11 +40,15 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
       <header style={{ marginBottom: 20 }}>
         <div
           style={{
-            fontSize: 12,
+            fontSize: 10,
             textTransform: 'uppercase',
-            letterSpacing: '0.8px',
+            letterSpacing: '0.6px',
             color: 'var(--text-tertiary)',
-            marginBottom: 6,
+            marginBottom: 12,
+            display: 'inline-block',
+            border: '1px solid var(--border-color)',
+            padding: '2px 8px',
+            borderRadius: 4,
           }}
         >
           {info.category}
@@ -53,9 +57,10 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
           style={{
             fontSize: 28,
             fontWeight: 600,
-            letterSpacing: '-0.6px',
+            letterSpacing: '-0.5px',
             color: 'var(--text-primary)',
             margin: 0,
+            lineHeight: 1.2,
           }}
         >
           {info.title}
@@ -67,7 +72,7 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
           data-testid="wiki-empty-state"
           style={{
             padding: 20,
-            borderRadius: 10,
+            borderRadius: 8,
             border: '1px dashed var(--border-color)',
             color: 'var(--text-tertiary)',
             fontSize: 14,
@@ -75,7 +80,7 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
             letterSpacing: '-0.12px',
           }}
         >
-          Content coming soon — we're building our knowledge base.
+          Content coming soon.
         </div>
       ) : (
         <MarkdownBody markdown={info.body} />
@@ -91,14 +96,14 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
             title="Templates land in Phase A-content"
             style={{
               padding: '10px 18px',
-              borderRadius: 8,
+              borderRadius: 6,
               background: 'var(--accent)',
               color: 'white',
               border: 'none',
               fontSize: 14,
               letterSpacing: '-0.12px',
               cursor: 'not-allowed',
-              opacity: 0.5,
+              opacity: 0.45,
             }}
           >
             Load in canvas (coming soon)
