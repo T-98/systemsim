@@ -482,3 +482,12 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Why:** Consistency with §10 (the only other mega-topic in the KB). Avoids a second round of TOC renumbering. Lets the wiki topic registry pick individual sub-sections (e.g. `concept.watermark` → §14.3.3) without a separate §-per-topic naming burden.
 - **Rejected:** 18 top-level §s (churn in numbering, harder to navigate). Splitting across parts (batch in Part III, stream in Part V — loses the batch-stream-unified narrative).
 - **Source:** KB file §14 revision 2026-04-17, Phase 0.7.
+
+### 38. KB §40–§44 SIMFID Runtime docs cite code with file:line; fan-in caveats explicit
+
+- **When:** KB Phase 0.8 (2026-04-18)
+- **Context:** Part VIII of the KB documents what the simulator actually does (circuit breaker, retry storm, backpressure, wire config, traffic profile). First codex review found 8 contradictions between my initial docs and the code — e.g. LB does even split not weighted, wire jitter is per-call not per-packet, userDistribution and jitterPercent are declared but unused, multi-inbound resilience has last-invocation bias not clean per-wire behavior.
+- **Decision:** Every §40–§44 subsection cites `src/engine/*.ts` file:line references. The fan-in caveat (components overwrite `state.metrics` per `processComponent` call, so in fan-in topologies breaker/retry/backpressure signals are last-invocation-biased) is documented explicitly in §40.6, §41.2, §42.5 — not hidden. The ForwardResult refactor that would fix it is named as deferred.
+- **Why:** SIMFID's runtime fidelity is the product moat (Decisions §34). Docs that misrepresent engine behavior erode the moat. Grounding every claim in code reference + running codex review against the code catches drift during the writing pass itself.
+- **Rejected:** Abstract "how it works" prose without file:line cites (lets drift sneak in). Hiding the fan-in limitation (users would trip over it and lose trust).
+- **Source:** KB file §40–§44 revision 2026-04-18, Phase 0.8.

@@ -3335,24 +3335,432 @@ For a **high-QPS, read-dominated, latency-sensitive** path — feeds, catalogs, 
 
 ## 40. Circuit Breaker State Machine
 
-*To be written alongside the wiki copy for `microservice.circuitBreaker` topic. Document the three states (CLOSED, OPEN, HALF_OPEN), the transition conditions (failure-rate threshold over a rolling window to trip, cooldown seconds before half-open, halfOpenTicks probes before re-closing), and the relation to the academic state machine.*
+SIMFID implements a per-wire, **opt-in** circuit breaker. Wires without `WireConfig.circuitBreaker` skip all breaker logic entirely. This section documents what the simulator actually does; §21.2 covers the general resilience pattern.
+
+**Source:** `src/engine/CircuitBreaker.ts` (157 lines); integration at `src/engine/SimulationEngine.ts:562–593` (evaluation) and `465–555` (enforcement in `forwardOverWire`).
+
+### 40.1 State machine
+
+Three states, identical to the academic breaker but with SIMFID-specific transition conditions:
+
+```
+   CLOSED ──(N consecutive failed ticks)──▶ OPEN
+      ▲                                      │
+      │                        (cooldownSeconds elapsed)
+      │                                      ▼
+      │                                 HALF_OPEN
+      │                                      │
+      └──(M consecutive healthy ticks)──────┘
+                                             │
+                           (any failure)─────┘
+                                             ▼
+                                            OPEN
+```
+
+A tick counts as **failed** for a given breaker when `target.metrics.errorRate` exceeds `failureThreshold` at end of tick. The breaker reads a single per-target value — *not* a per-wire error rate. Under fan-in (multiple upstream wires feeding one target), each inbound wire triggers a `processComponent` call that **overwrites** `state.metrics.errorRate` rather than aggregating. The breaker reads whatever the last-invoking wire's processor wrote. Important caveat; fan-in topologies exhibit order-dependent breaker behavior. Single-inbound or LB fan-out (which is a one-to-many from the LB's side) is unaffected.
+
+### 40.2 Configuration
+
+```typescript
+// src/engine/CircuitBreaker.ts:50–71
+interface CircuitBreakerConfig {
+  failureThreshold: number;   // 0–1; error rate above this counts as a failed tick
+  failureWindow:    number;   // consecutive failed ticks required to trip CLOSED → OPEN
+  cooldownSeconds:  number;   // time OPEN before probing (HALF_OPEN)
+  halfOpenTicks:    number;   // consecutive healthy probe ticks to re-close
+}
+
+const DEFAULT_BREAKER_CONFIG = {
+  failureThreshold: 0.5,
+  failureWindow:    3,
+  cooldownSeconds:  10,
+  halfOpenTicks:    2,
+};
+```
+
+Set on a wire via `WireConfig.circuitBreaker` in `src/types/index.ts:66–81`. All four fields optional — missing fields inherit from `DEFAULT_BREAKER_CONFIG`.
+
+### 40.3 Enforcement path
+
+When upstream forwards over a wire whose breaker is OPEN, the request is dropped — `forwardOverWire` returns early. The Load Balancer goes further: it filters crashed + OPEN-breaker downstreams out of its distribution, then **splits RPS evenly across the surviving set** — `rps / healthyDownstreams.length` (`SimulationEngine.ts:673–695`). An LB with all downstreams either crashed or OPEN-breakered sets `errorRate = 1.0` for the tick. Weighted / affinity-based LB policies are not modeled.
+
+HALF_OPEN allows probe traffic through unmodified. Retries (§41) are **suppressed** during HALF_OPEN; backpressure (§42) is **bypassed**. The idea: a probe tick should be a clean sample, not a sample contaminated by amplified retries or scaled-down traffic.
+
+### 40.4 Recovery: no traffic ≠ healthy
+
+A HALF_OPEN breaker can only re-close on ticks that actually saw traffic. The `hadTrafficThisTick` flag on the breaker state is checked before a tick counts toward `halfOpenTicks` progress (`CircuitBreaker.ts:148`). Without this, a misconfigured scenario that stops sending traffic after the breaker opens would "heal" silently on empty ticks — a false recovery that real circuit breakers specifically avoid.
+
+This is Decisions §12b.
+
+### 40.5 Stale-signal reset on OPEN → HALF_OPEN
+
+When transitioning OPEN → HALF_OPEN, SIMFID zeroes `wire.lastObservedErrorRate` (`SimulationEngine.ts:589–591`). Without this, retry amplification (§41) would read the last-observed error rate from just before the breaker opened — which could be high, possibly 1.0 — and amplify the probe traffic geometrically, guaranteeing it fails. The reset makes the probe a clean sample.
+
+This is Decisions §12e.
+
+### 40.6 Fan-in caveat — last-invocation bias
+
+The breaker tracks per-wire state but reads `target.metrics.errorRate`, which is a single mutable field that each `processComponent` call **overwrites** rather than aggregating. In a fan-in topology where two upstreams A and B both forward to the same target T:
+
+1. A's `forwardOverWire(A, T, …)` runs → `processT` writes `T.metrics.errorRate = e_A`.
+2. B's `forwardOverWire(B, T, …)` runs → `processT` writes `T.metrics.errorRate = e_B`.
+3. `evaluateBreakers` reads the last written value — `e_B`.
+
+Both wires' breakers see `e_B`, regardless of whether A's traffic was healthy. This is order-dependent. Traversal order is determined by the graph adjacency walk; it is deterministic for a fixed graph but not semantically meaningful.
+
+For MVP scenarios (single inbound, or LB → N servers where the LB is the only upstream) this doesn't surface. It becomes a real limitation when users build diamond or fan-in topologies. Fixing requires a `ForwardResult` refactor (per-wire metrics threaded back through the recursion) — out of scope for Phase 3.
+
+### 40.7 Related
+
+- §21.2 — the general circuit breaker pattern (academic model).
+- §41 — retry suppression during HALF_OPEN.
+- §42 — backpressure bypass during HALF_OPEN.
+- Decisions §12a–§12c, §12e, §12m — original decision records.
 
 ## 41. Retry Storm Amplification
 
-*To be written alongside `microservice.retries` topic. Document the geometric amplification pattern, why aggressive retries make things worse under saturation, and the SIMFID retry policy configuration (maxRetries, backoffMs).*
+SIMFID models retry storms as **geometric amplification** at the RPS level, not per-request retries. Given an upstream with `retryPolicy.maxRetries = k` forwarding to a downstream whose previous-tick error rate was `e`, the effective RPS hitting the downstream this tick is:
+
+```
+amplifiedRps = rps × (1 + e + e² + e³ + … + e^k)
+```
+
+This is the geometric sum. In the limit (`k → ∞`), it converges to `1 / (1 − e)` — a slightly unhealthy downstream (`e = 0.2`) is hit with 1.25× its nominal load; a badly unhealthy one (`e = 0.5`) is hit with 2.0×; at `e = 0.8`, 5.0×. Retries don't help when the downstream is already overloaded — they accelerate its collapse.
+
+**Source:** `src/engine/RetryPolicy.ts` (78 lines); integration at `SimulationEngine.ts:471–492`.
+
+### 41.1 Configuration
+
+```typescript
+// src/engine/RetryPolicy.ts:31–38
+interface RetryPolicy {
+  maxRetries:        number;        // 0 = no retries (policy dropped entirely)
+  backoffMs?:        number;        // display only — does not affect tick simulation
+  backoffMultiplier?: number;       // display only — does not affect tick simulation
+}
+```
+
+`backoffMs` and `backoffMultiplier` are **informational only**. SIMFID runs on one-second ticks; per-request sub-second delays have no granularity to model. The display fields let the UI show what a real retry policy would configure; the engine only cares about `maxRetries`.
+
+`readRetryPolicy` (`RetryPolicy.ts:63–77`) validates the config:
+- Rejects non-objects, arrays, null.
+- Rejects `Infinity`, `NaN`, non-integer, zero, negative `maxRetries`.
+- Only `backoffMs` / `backoffMultiplier` values that are finite numbers survive; all else dropped as `undefined`.
+
+This is Decisions §12f.
+
+### 41.2 Signal: previous-tick error rate, per-wire
+
+The error rate that drives amplification is `wire.lastObservedErrorRate`, updated **after** the recursive `processComponent` call returns (`SimulationEngine.ts:521–528`). Two design choices shape this:
+
+1. **Per-wire storage, but shared-snapshot read.** Each wire *stores* its own `lastObservedErrorRate`. What it reads after recursion is `target.metrics.errorRate` — the same mutable snapshot that fan-in processors overwrite (§40.6). So in fan-in, different wires can end up holding different per-wire values, but each one is a snapshot of the target right after *their* invocation, not an independent per-wire error measurement. This partially narrows the fan-in bias but doesn't fully fix it. For single-inbound paths, it behaves exactly like a clean per-wire signal.
+
+2. **Previous-tick, not same-tick.** Upstream reads the downstream's error rate from the previous tick. Real retries happen over seconds — upstream can't know instantly that downstream is failing. The one-tick delay models that propagation. Same-tick retries would be a fictional instant feedback loop.
+
+This is Decisions §12d.
+
+### 41.3 Bundling: all retries collapse into a single tick's RPS
+
+Real retries fan out over multiple seconds with backoff. SIMFID bundles all of them into the *current tick's* RPS multiplier. A `maxRetries=3` policy against a 50% error rate produces an amplification of `1 + 0.5 + 0.25 + 0.125 = 1.875×` applied to the same tick's RPS, not spread across future ticks.
+
+This is a deliberate modeling simplification. It loses the time-dispersion of real retries but correctly captures steady-state amplification, which is what matters for simulating saturation.
+
+### 41.4 HALF_OPEN suppression
+
+When the wire's breaker is HALF_OPEN, retries do **not** fire (`SimulationEngine.ts:488`). Probe traffic is sampled at nominal rate. If probes succeed, the breaker closes; amplification resumes from there. If probes fail, the breaker re-opens; no amplified storm ever hit the recovering target. See Decisions §12e.
+
+### 41.5 Self-stabilization with backpressure
+
+When a downstream also has backpressure (§42), retry amplification and backpressure scaling compose:
+
+```
+effectiveRps = rps × (1 + e + e² + … + e^k) × (1 − e)
+```
+
+At steady state with single-inbound, this stabilizes near the nominal RPS — the retries exactly cancel the rejection. It's one of the reasons retries + backpressure together is a stable pattern, while retries without backpressure is an unstable one. See `Knowledge.md:489` for the composition analysis.
+
+### 41.6 Callout
+
+When the amplification factor crosses 1.5× on any wire, `forwardOverWire` fires a callout (`SimulationEngine.ts:532–539`) — a high-signal warning that retries are now a meaningful multiplier on downstream load. Once-per-wire-per-run (deduped by the callout entry set).
+
+### 41.7 Related
+
+- §21.4 — the general retry + backoff pattern.
+- §24.5 — fan-out / retry-storm duality (both are amplification).
+- §40 — circuit breaker interaction.
+- §42 — backpressure composition.
+- Decisions §12d–§12f — original decision records.
 
 ## 42. Backpressure Propagation
 
-*To be written alongside `microservice.backpressure` topic. Document the one-tick propagation model, threshold-based signaling, and upstream pause behavior.*
+SIMFID models backpressure as a one-tick-delayed feedback signal. Each component with `backpressure.enabled = true` computes an `acceptanceRate ∈ [0, 1]` at end of tick from its observed error rate. Upstream callers read the *previous* tick's `acceptanceRate` and scale forwarded RPS proportionally.
+
+**Source:** `src/engine/Backpressure.ts` (48 lines); integration at `SimulationEngine.ts:494–508` (enforcement), `397–402` (update).
+
+### 42.1 Signal
+
+```typescript
+// src/engine/Backpressure.ts:45–47
+function computeAcceptanceRate(errorRate: number): number {
+  return Math.max(0, Math.min(1, 1 - errorRate));
+}
+```
+
+It's the inverse of error rate, clamped to `[0, 1]`:
+- `errorRate = 0` → `acceptanceRate = 1` (full acceptance).
+- `errorRate = 0.3` → `acceptanceRate = 0.7`.
+- `errorRate = 1.0` → `acceptanceRate = 0` (reject everything).
+
+Initial value is `1.0` (fully accepting) — backpressure only kicks in once the component has observed errors.
+
+### 42.2 Configuration
+
+```typescript
+// src/engine/Backpressure.ts:23–26
+interface BackpressureConfig {
+  enabled: boolean;
+  // Future: smoothing, hysteresis
+}
+```
+
+Opt-in on a per-component basis via `componentConfig.backpressure = { enabled: true }`. The UI gates the toggle to components that emit `errorRate` (servers, DBs, caches, queues, load balancers) — components without error rates have no signal to produce. See Decisions §12l.
+
+### 42.3 Enforcement path
+
+At forward time (`SimulationEngine.ts:494–508`):
+
+```
+effectiveRps = rps × retryAmplification × backpressureScale
+```
+
+Backpressure scaling applies **after** retry amplification. The composition is discussed in §41.5 — at steady state with single-inbound, the two cancel.
+
+Two bypass conditions:
+1. **HALF_OPEN bypass** (Decisions §12h). When the upstream wire's breaker is HALF_OPEN, scaling is skipped. Probes flow at nominal rate — same reasoning as retry suppression: probes should be clean samples.
+2. **Target not configured.** No `readBackpressureConfig()` → scaling skipped.
+
+### 42.4 Update path: end-of-tick, no-traffic guard
+
+```typescript
+// SimulationEngine.ts:397–402
+components.forEach((state) => {
+  if (state.crashed) return;
+  if (!readBackpressureConfig(state.config)) return;
+  if (state.metrics.rps <= 0) return;      // no-traffic guard
+  state.acceptanceRate = computeAcceptanceRate(state.metrics.errorRate);
+});
+```
+
+The **no-traffic guard** (Decisions §12h) is load-bearing. Metrics are reset at tick start; a tick with zero RPS has `errorRate = 0` by default. Without the guard, a component upstream of a crashed downstream would see "zero RPS → errorRate=0 → acceptanceRate=1 → full acceptance" and drive even more traffic into the failure.
+
+The guard preserves the previous tick's `acceptanceRate` through quiet periods. Recovery only happens when actual traffic hits and the component has a chance to demonstrate capacity.
+
+### 42.5 Fan-in caveat
+
+Backpressure shares the same mutable `state.metrics.errorRate` field as the breaker (§40.6) and retry amplification (§41.2). At end-of-tick update time, the computed `acceptanceRate` reflects only the last processor invocation's `errorRate` for the component. In fan-in topologies, upstreams A and B reading the same target's `acceptanceRate` are both reading a signal derived from the last-invoking wire's view of errors, not a per-wire backpressure snapshot. Same fan-in limitation as §40.6; same fix (ForwardResult refactor) would resolve it.
+
+### 42.6 One-tick propagation delay
+
+Upstream reads `state.acceptanceRate` on the *next* tick after the component updates it. This matches real systems: upstream cannot instantly know downstream saturation; there's always at least a network-round-trip delay before pushback reaches the caller. One tick = one second in SIMFID.
+
+Consequence: a sudden failure takes one tick to reach upstream as a backpressure signal. During that tick, upstream sends nominal RPS (amplified by retries if configured). The breaker and backpressure together make this bounded — retries see last-tick error rate, scale up; backpressure sees last-tick acceptance, scale down — but the failure is visible during the lag tick.
+
+### 42.7 Callout
+
+When applied backpressure drops below 0.7 (`applied < 1 && applied ≤ 0.7` at `SimulationEngine.ts:541–554`), SIMFID fires a callout showing how much load the downstream is rejecting. The predicate handles `acceptanceRate = 0` correctly — a full reject fires, not silently skipped.
+
+### 42.8 Related
+
+- §21.5 — the general backpressure concept.
+- §40 — HALF_OPEN bypass.
+- §41 — composition with retry amplification.
+- Decisions §12g–§12h, §12l — original decision records.
 
 ## 43. Wire-Level Configuration
 
-*To be written alongside `config.*` wire topics. Document throughputRps, latencyMs, jitterMs semantics and how they compose into end-to-end latency.*
+Every edge in a SIMFID graph is a **wire**. Wires carry RPS from one component to another and contribute latency to the end-to-end path.
+
+**Source:** `src/types/index.ts:66–81` (type); `SimulationEngine.ts:430–441` (latency sampling); `SimulationEngine.ts:465–555` (`forwardOverWire` — the single resilience choke point).
+
+### 43.1 Type + defaults
+
+```typescript
+// src/types/index.ts:66–81
+interface WireConfig {
+  throughputRps: number;    // informational; not enforced in tick logic
+  latencyMs:     number;    // base one-way latency added per hop
+  jitterMs:      number;    // jitter magnitude (uniform ±)
+  circuitBreaker?: {        // optional — see §40
+    failureThreshold?: number;
+    failureWindow?:    number;
+    cooldownSeconds?:  number;
+    halfOpenTicks?:    number;
+  };
+}
+
+// src/store/index.ts:274 — default for new wires
+{ throughputRps: 10000, latencyMs: 2, jitterMs: 1 }
+```
+
+### 43.2 `throughputRps` is informational
+
+SIMFID does **not** enforce `throughputRps` as a cap. It's a hint for the user about what the wire is specified to carry — useful for preflight checks or annotations, never a runtime constraint. Enforcement is done at component level (server concurrency, DB pool, cache capacity, etc.).
+
+### 43.3 Latency sampling
+
+Per-call (not per-tick) jitter sampling:
+
+```typescript
+// SimulationEngine.ts:430–441
+private getWireLatency(sourceId, targetId): number {
+  const wire = /* lookup */;
+  if (this.stressedMode) {
+    return Math.max(0, wire.config.latencyMs + wire.config.jitterMs);  // worst-case
+  }
+  const jitter = (this.random() - 0.5) * 2 * wire.config.jitterMs;     // uniform ±jitterMs
+  return Math.max(0, wire.config.latencyMs + jitter);
+}
+```
+
+Two modes:
+- **Normal:** `latencyMs + uniformRandom(-jitterMs, +jitterMs)`. Each **call to `getWireLatency` gets a fresh sample.** In practice this means one jitter sample per wire per tick — since `forwardOverWire` aggregates a tick's RPS into a single recursive call with one latency value. Per-packet variance is not modeled; per-tick variance across a long run is (different tick → different sample).
+- **Stressed:** `latencyMs + jitterMs` (no randomness; worst case). Used when the user clicks "Run Stressed" to force peak-load visualization. See Decisions §10.
+
+Negative latencies are clamped to 0.
+
+### 43.4 End-to-end latency composition
+
+`forwardOverWire` calls `processComponent` with an `accumulatedLatencyMs` argument that grows with each wire hop:
+
+```typescript
+// SimulationEngine.ts:518–519
+const wireLatency = this.getWireLatency(sourceId, targetId);
+this.processComponent(targetId, effectiveRps, logs, accumulatedLatencyMs + wireLatency);
+```
+
+Most component processors add `accumulatedLatencyMs` into their reported metrics — but **not uniformly**:
+
+| Component | Adds `accumulatedLatencyMs` to p50/p95/p99? | Source |
+|---|---|---|
+| Server | Yes (line 760–762) | `state.metrics.p50 = q.p50Ms + accumulatedLatencyMs` |
+| Cache | Yes (line 859) | same pattern |
+| Database | Yes | same pattern |
+| API Gateway | Yes (line 726–727) | p50 / p99 + accumulated |
+| Load Balancer | **No** (line 707–708) | Computes from `max(ds.lastComputedLatencyMs + wireLatency)`; does not include its own *incoming* accumulated latency in the reported metric |
+| Queue | Does **not** add accumulated at all (line 867–930) | Queue metrics reflect queue-internal timing only |
+
+Consequence: for the chain `LB → Server → DB`, the Server and DB reports include the wire latencies into them. For the chain `Client → LB → Server`, the LB's own reported metric won't include the wire latency from Client; the Server's will include both hops. The "accumulated latency" view is correct for most components and correct at end-to-end (since the Server/DB is usually the terminal measurement), but the LB and Queue are measurement points where it doesn't propagate.
+
+When reasoning about end-to-end p99, read the terminal component's metrics (usually the DB or serving-path component). Don't sum LB metrics plus Server metrics — they're measured on different baselines.
+
+This is Decisions §8, with the per-component heterogeneity documented here.
+
+### 43.5 `forwardOverWire` is the single resilience choke point
+
+Extracted in commit `1d6e8ef` as the **one** function all wire-forwarding goes through. Order of operations:
+
+```
+1. Check breaker (drop if OPEN)                              [§40]
+2. Read source's retryPolicy + lastObservedErrorRate         [§41]
+3. Read target's backpressure config + acceptanceRate        [§42]
+4. effectiveRps = rps × retryAmp × backpressureScale
+5. Set wire.hadTrafficThisTick = (effectiveRps > 0)          [§40.4]
+6. Get wire latency (sample jitter)                          [§43.3]
+7. Recurse into processComponent(targetId, effectiveRps, …)
+8. Update wire.lastObservedErrorRate = target.errorRate      [§41.2]
+9. Fire callouts for amplification ≥1.5× or backpressure ≤0.7
+```
+
+Keeping this path in one function means adding a new resilience pattern (rate limiter, bulkhead, shed-load policy) is a matter of inserting one step in the sequence. See the "Add a new resilience pattern" row in `Knowledge.md`'s routing table.
+
+### 43.6 Related
+
+- §40 — breaker enforcement at step 1.
+- §41 — retry amplification at step 4.
+- §42 — backpressure scaling at step 4.
+- Decisions §8 — latency propagation model.
 
 ## 44. Traffic Profile Semantics
 
-*To be written alongside `config.traffic.*` topics. Document phase shapes (steady, ramp, spike), jitterPercent, requestMix, userDistribution.*
+A traffic profile describes how load into the system varies over time. SIMFID evaluates it once per tick to derive the current RPS, which is then distributed across entry points.
+
+**Source:** `src/types/index.ts:83–99` (type); `SimulationEngine.ts:276–304` (`getCurrentRps`), `327–338` (per-tick evaluation).
+
+### 44.1 Type
+
+```typescript
+// src/types/index.ts:83–99
+interface TrafficPhase {
+  startS:      number;
+  endS:        number;
+  rps:         number;
+  shape:       'steady' | 'spike' | 'instant_spike' | 'ramp_down' | 'ramp_up';
+  description: string;
+}
+
+interface TrafficProfile {
+  profileName:              string;
+  durationSeconds:          number;                         // sim runs until this time
+  phases:                   TrafficPhase[];                 // ordered, contiguous expected
+  requestMix:               Record<string, number>;         // relative weights; semantic-only
+  userDistribution:         'uniform' | 'pareto';           // affects DB hot-shard modeling
+  jitterPercent:            number;                         // applied by addJitter()
+  largeServerConcentration?: number;                        // reserved; not yet consumed
+}
+```
+
+### 44.2 Phase evaluation
+
+Per tick, `getCurrentRps()` finds the phase whose `[startS, endS)` window contains `this.time`, then interpolates by `shape`:
+
+| `shape` | Behavior |
+|---|---|
+| `steady` | `return phase.rps` — constant RPS for the phase duration. |
+| `instant_spike` | Same math as `steady`; only the logged severity differs (`'critical'`). |
+| `ramp_up` | Linear: `phase.rps × (t − startS) / (endS − startS)` — starts at 0, reaches `rps` at `endS`. |
+| `ramp_down` | Linear from the *previous phase's* `rps` down to `phase.rps`. Lookup is `phases.find(p => p.endS === phase.startS)`. If no match, starts at `phase.rps` (self-flat, defensive). |
+| `spike` | No interpolation branch — falls through to `phase.rps`. Effectively `steady`. |
+
+Gaps in time coverage return `rps = 0`. No error; sim continues with zero load until the next phase.
+
+### 44.3 Tick conversion
+
+```typescript
+// SimulationEngine.ts:327–328
+const currentRps = this.getCurrentRps();
+const rpsPerTick = currentRps * this.tickInterval;    // tickInterval = 1 second
+```
+
+`tickInterval` is hardcoded to 1 second. RPS-per-tick is distributed evenly across entry points: `rpsPerEntry = rpsPerTick / entryPoints.length` (`SimulationEngine.ts:365`).
+
+### 44.4 Stressed mode overrides the profile
+
+In stressed mode, `getCurrentRps` returns `max(phases.map(p => p.rps))` regardless of `this.time`. The profile's phase shape, duration, and ordering are discarded; the peak is held for the entire sim. Combined with worst-case wire jitter (§43.3) and cold cache, this is SIMFID's "show me the worst case in one screenshot" button. See Decisions §10.
+
+### 44.5 `userDistribution` — declaratively set but not consumed by the DB
+
+`userDistribution` is present on the type but the DB hot-shard model is **not** driven by this field. `processDatabase` triggers the Pareto hot-shard path when *either* of two conditions holds (`SimulationEngine.ts:966–970`):
+
+- `schemaShardKeyCardinality` is `'low'` or `'medium'` (set on the schema declaration), OR
+- `config.shardKey` on the DB is a string that contains "user" (case-insensitive).
+
+When either triggers, the DB concentrates 78% of load on one shard. `trafficProfile.userDistribution` is carried through the profile for future use but no tick-loop code reads it today. Treat it as a semantic annotation on the profile, not an engine input.
+
+### 44.6 `requestMix` is not yet consumed
+
+`requestMix` is present on the type for forward compatibility — the idea is to model per-endpoint traffic profiles where reads and writes differ in volume and downstream behavior. No tick loop currently queries it. Safe to leave set; safe to ignore. Future Phase 2 feature (PRODUCT_VISION.md line 4).
+
+### 44.7 `jitterPercent` — currently unused by the engine
+
+`jitterPercent` is declared on `TrafficProfile` but no tick-loop code reads it. The `addJitter(value, pct)` helper (`SimulationEngine.ts:306–308`) exists for relative-jitter math, but its only call site hard-codes `30` on the API gateway's p99 (`SimulationEngine.ts:727`), not `trafficProfile.jitterPercent`. Treat `jitterPercent` as a reserved annotation on the profile; wiring it into components is future work. Wire-level jitter is controlled by `WireConfig.jitterMs` (§43.3), a separate and active mechanism.
+
+### 44.8 Related
+
+- §13 message queues — the receiving side of many traffic profiles.
+- §14.3 stream processing — traffic-shape intuition (windowed load).
+- §20.1 QPS tier tables — picking realistic `rps` values per phase.
+- Decisions §10 — stressed-mode semantics.
 
 ---
 
-*Populating sections in this order: Scaling Services → Data Storage → How to Scale Databases → Microservices & Data Flow → Patterns & Templates → Big Data → SIMFID Runtime.*
+*End of SIMFID Runtime section. The KB is feature-complete for Part I–VIII. Follow-up (Phase A-content) distills topic-by-topic derivatives into `src/wiki/topics.ts` — see the UI plan at [/Users/divyanshkhare/.claude/plans/simfid-ux-streams-a-b-c.md](~/.claude/plans/simfid-ux-streams-a-b-c.md).*
