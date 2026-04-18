@@ -99,10 +99,12 @@ export function renderMarkdown(md: string): string {
   const m = new Marked({ gfm: true, breaks: false });
   m.use({
     renderer: {
-      heading(token: Tokens.Heading): string {
-        // parseInline runs the same inline rules marked uses for regular text.
-        const textHtml = (m as unknown as { parser: { parseInline(t: Tokens.Generic[]): string } })
-          .parser.parseInline(token.tokens as Tokens.Generic[]);
+      // Regular function so `this` binds to the marked Renderer instance at
+      // render time — that's where `parser.parseInline` lives. An arrow
+      // function or closure capture of the `m` instance does NOT work in
+      // marked v18 (parser is set per-parse on the renderer, not on `m`).
+      heading(this: { parser: { parseInline(t: Tokens.Generic[]): string } }, token: Tokens.Heading): string {
+        const textHtml = this.parser.parseInline(token.tokens as Tokens.Generic[]);
         const plain = textHtml.replace(/<[^>]+>/g, '').trim();
         const base = slugifyHeading(plain);
         const id = uniqueId(base, seen);
