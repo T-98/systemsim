@@ -8,13 +8,19 @@
  * Pulses when `pulseTarget === 'node:${id}'` or `pulseTarget === 'canvas:all'`.
  */
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { motion } from 'framer-motion';
 import type { SimComponentData, HealthState } from '../../types';
 import { COMPONENT_DEFS } from '../../types/components';
 import { ComponentIcon } from './icons';
 import { useStore } from '../../store';
+import InfoIcon from '../ui/InfoIcon';
+
+function topicForComponentType(type: string): string {
+  const camel = type.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+  return `component.${camel}`;
+}
 
 const healthBorderVar: Record<HealthState, string> = {
   healthy: 'var(--node-border)',
@@ -34,9 +40,12 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
   const metrics = isRunning ? (liveMetrics ?? data.metrics) : null;
   const showShardDist = data.type === 'database' && metrics?.shardDistribution && metrics.shardDistribution.length > 1;
   const isPulsing = pulseTarget === `node:${id}` || pulseTarget === 'canvas:all';
+  const [hovered, setHovered] = useState(false);
 
   return (
     <motion.div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       className={`relative min-w-[200px] cursor-pointer transition-all duration-200 ${isPulsing ? 'simfid-pulse' : ''}`}
       style={{
         borderRadius: '12px',
@@ -90,6 +99,17 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
         </div>
         {health === 'crashed' && (
           <div className="absolute font-bold" style={{ top: '6px', right: '8px', color: 'var(--destructive)', fontSize: '18px' }}>X</div>
+        )}
+        {hovered && health !== 'crashed' && (
+          <div
+            className="absolute"
+            data-testid="node-info-badge"
+            style={{ top: '6px', right: '8px' }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <InfoIcon topic={topicForComponentType(data.type)} side="bottom" />
+          </div>
         )}
       </div>
 

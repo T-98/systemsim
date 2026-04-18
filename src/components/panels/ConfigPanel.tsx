@@ -12,6 +12,18 @@
 import { useStore } from '../../store';
 import { COMPONENT_DEFS } from '../../types/components';
 import type { ApiContract } from '../../types';
+import InfoIcon from '../ui/InfoIcon';
+
+/** Map dynamic component config keys to topic registry keys. */
+function topicForConfigKey(key: string): string {
+  return `config.${key}`;
+}
+
+/** Map `ComponentType` (snake_case) to the component.* topic registry key. */
+function topicForComponentType(type: string): string {
+  const camel = type.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+  return `component.${camel}`;
+}
 
 export default function ConfigPanel() {
   const selectedNodeId = useStore((s) => s.selectedNodeId);
@@ -67,11 +79,11 @@ export default function ConfigPanel() {
           </button>
         </div>
         <div style={{ padding: '20px' }} className="space-y-5">
-          <ConfigField label="Throughput (RPS)" type="number" value={wireConfig.throughputRps}
+          <ConfigField label="Throughput (RPS)" type="number" value={wireConfig.throughputRps} topic="config.throughputRps"
             onChange={(v) => updateWireConfig(selectedEdge.id, { throughputRps: Number(v) })} disabled={isRunning} />
-          <ConfigField label="Latency (ms)" type="number" value={wireConfig.latencyMs}
+          <ConfigField label="Latency (ms)" type="number" value={wireConfig.latencyMs} topic="config.latencyMs"
             onChange={(v) => updateWireConfig(selectedEdge.id, { latencyMs: Number(v) })} disabled={isRunning} />
-          <ConfigField label="Jitter (ms)" type="number" value={wireConfig.jitterMs}
+          <ConfigField label="Jitter (ms)" type="number" value={wireConfig.jitterMs} topic="config.jitterMs"
             onChange={(v) => updateWireConfig(selectedEdge.id, { jitterMs: Number(v) })} disabled={isRunning} />
 
           <CircuitBreakerSection edgeId={selectedEdge.id} wireConfig={wireConfig} disabled={isRunning} />
@@ -102,12 +114,15 @@ export default function ConfigPanel() {
         className="flex items-center justify-between"
         style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-color)' }}
       >
-        <span
-          className="font-semibold tracking-wide"
-          style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}
-        >
-          {def.label}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className="font-semibold tracking-wide"
+            style={{ fontSize: '14px', color: 'var(--text-secondary)', letterSpacing: '-0.224px' }}
+          >
+            {def.label}
+          </span>
+          <InfoIcon topic={topicForComponentType(data.type)} side="bottom" />
+        </div>
         <button
           onClick={close}
           className="transition-all duration-200"
@@ -124,15 +139,16 @@ export default function ConfigPanel() {
 
         {Object.entries(config).map(([key, value]) => {
           const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()).replace(/_/g, ' ');
+          const topic = topicForConfigKey(key);
           if (typeof value === 'boolean') {
             return (
-              <ConfigToggle key={key} label={label} value={value}
+              <ConfigToggle key={key} label={label} value={value} topic={topic}
                 onChange={(v) => updateConfig(key, v)} disabled={isRunning} />
             );
           }
           if (typeof value === 'number') {
             return (
-              <ConfigField key={key} label={label} type="number" value={value}
+              <ConfigField key={key} label={label} type="number" value={value} topic={topic}
                 onChange={(v) => updateConfig(key, Number(v))} disabled={isRunning} />
             );
           }
@@ -140,12 +156,12 @@ export default function ConfigPanel() {
             const selectOptions = getSelectOptions(key);
             if (selectOptions) {
               return (
-                <ConfigSelect key={key} label={label} value={value} options={selectOptions}
+                <ConfigSelect key={key} label={label} value={value} options={selectOptions} topic={topic}
                   onChange={(v) => updateConfig(key, v)} disabled={isRunning} />
               );
             }
             return (
-              <ConfigField key={key} label={label} type="text" value={value}
+              <ConfigField key={key} label={label} type="text" value={value} topic={topic}
                 onChange={(v) => updateConfig(key, String(v))} disabled={isRunning} />
             );
           }
@@ -222,17 +238,23 @@ export default function ConfigPanel() {
   );
 }
 
-function ConfigField({ label, type, value, onChange, disabled }: {
-  label: string; type: string; value: string | number; onChange: (v: string) => void; disabled?: boolean;
+function ConfigField({ label, type, value, onChange, disabled, topic }: {
+  label: string; type: string; value: string | number; onChange: (v: string) => void; disabled?: boolean; topic?: string;
 }) {
   return (
     <div>
-      <label
-        className="block font-medium"
-        style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '6px', letterSpacing: '-0.12px' }}
+      <div
+        className="flex items-center gap-2"
+        style={{ marginBottom: '6px' }}
       >
-        {label}
-      </label>
+        <label
+          className="block font-medium"
+          style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}
+        >
+          {label}
+        </label>
+        {topic && <InfoIcon topic={topic} side="left" />}
+      </div>
       <input
         type={type}
         value={value}
@@ -254,17 +276,20 @@ function ConfigField({ label, type, value, onChange, disabled }: {
   );
 }
 
-function ConfigToggle({ label, value, onChange, disabled }: {
-  label: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean;
+function ConfigToggle({ label, value, onChange, disabled, topic }: {
+  label: string; value: boolean; onChange: (v: boolean) => void; disabled?: boolean; topic?: string;
 }) {
   return (
     <div className="flex items-center justify-between">
-      <label
-        className="font-medium"
-        style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}
-      >
-        {label}
-      </label>
+      <div className="flex items-center gap-2">
+        <label
+          className="font-medium"
+          style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}
+        >
+          {label}
+        </label>
+        {topic && <InfoIcon topic={topic} side="left" />}
+      </div>
       <button
         onClick={() => !disabled && onChange(!value)}
         className="w-9 h-5 rounded-full transition-all duration-200"
@@ -286,17 +311,20 @@ function ConfigToggle({ label, value, onChange, disabled }: {
   );
 }
 
-function ConfigSelect({ label, value, options, onChange, disabled }: {
-  label: string; value: string; options: string[]; onChange: (v: string) => void; disabled?: boolean;
+function ConfigSelect({ label, value, options, onChange, disabled, topic }: {
+  label: string; value: string; options: string[]; onChange: (v: string) => void; disabled?: boolean; topic?: string;
 }) {
   return (
     <div>
-      <label
-        className="block font-medium"
-        style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '6px', letterSpacing: '-0.12px' }}
-      >
-        {label}
-      </label>
+      <div className="flex items-center gap-2" style={{ marginBottom: '6px' }}>
+        <label
+          className="block font-medium"
+          style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}
+        >
+          {label}
+        </label>
+        {topic && <InfoIcon topic={topic} side="left" />}
+      </div>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -584,19 +612,19 @@ function CircuitBreakerSection({ edgeId, wireConfig, disabled }: {
 
   return (
     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
-      <ConfigToggle label="Circuit breaker" value={enabled} onChange={toggle} disabled={disabled} />
+      <ConfigToggle label="Circuit breaker" value={enabled} onChange={toggle} disabled={disabled} topic="config.circuitBreaker.enabled" />
       <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: 6 }}>
         Fail-fast: drop traffic when downstream errors pile up.
       </div>
       {enabled && breaker && (
         <div className="space-y-4" style={{ marginTop: 14 }}>
-          <ConfigField label="Failure threshold (errorRate 0–1)" type="number" value={breaker.failureThreshold ?? 0.5}
+          <ConfigField label="Failure threshold (errorRate 0–1)" type="number" value={breaker.failureThreshold ?? 0.5} topic="config.circuitBreaker.failureThreshold"
             onChange={(v) => updateField('failureThreshold', clampFinite(v, 0, 1, 0.5))} disabled={disabled} />
-          <ConfigField label="Failure window (ticks)" type="number" value={breaker.failureWindow ?? 3}
+          <ConfigField label="Failure window (ticks)" type="number" value={breaker.failureWindow ?? 3} topic="config.circuitBreaker.failureWindow"
             onChange={(v) => updateField('failureWindow', safePositiveInt(v, 3, 1))} disabled={disabled} />
-          <ConfigField label="Cooldown (seconds)" type="number" value={breaker.cooldownSeconds ?? 10}
+          <ConfigField label="Cooldown (seconds)" type="number" value={breaker.cooldownSeconds ?? 10} topic="config.circuitBreaker.cooldownSeconds"
             onChange={(v) => updateField('cooldownSeconds', Math.max(0, safeFiniteNumber(v, 10)))} disabled={disabled} />
-          <ConfigField label="Half-open probe ticks" type="number" value={breaker.halfOpenTicks ?? 2}
+          <ConfigField label="Half-open probe ticks" type="number" value={breaker.halfOpenTicks ?? 2} topic="config.circuitBreaker.halfOpenTicks"
             onChange={(v) => updateField('halfOpenTicks', safePositiveInt(v, 2, 1))} disabled={disabled} />
         </div>
       )}
@@ -638,17 +666,17 @@ function RetryPolicySection({ nodeId, config, disabled }: {
 
   return (
     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
-      <ConfigToggle label="Retry policy" value={enabled} onChange={toggle} disabled={disabled} />
+      <ConfigToggle label="Retry policy" value={enabled} onChange={toggle} disabled={disabled} topic="concept.retryStorm" />
       <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: 6 }}>
         On downstream errors, this component retries — amplifies load.
       </div>
       {enabled && policy && (
         <div className="space-y-4" style={{ marginTop: 14 }}>
-          <ConfigField label="Max retries" type="number" value={policy.maxRetries ?? 3}
+          <ConfigField label="Max retries" type="number" value={policy.maxRetries ?? 3} topic="config.retry.maxRetries"
             onChange={(v) => updateField('maxRetries', safePositiveInt(v, 3, 1))} disabled={disabled} />
-          <ConfigField label="Backoff (ms, display-only)" type="number" value={policy.backoffMs ?? 100}
+          <ConfigField label="Backoff (ms, display-only)" type="number" value={policy.backoffMs ?? 100} topic="config.retry.backoffMs"
             onChange={(v) => updateField('backoffMs', Math.max(0, safeFiniteNumber(v, 100)))} disabled={disabled} />
-          <ConfigField label="Backoff multiplier (display-only)" type="number" value={policy.backoffMultiplier ?? 2}
+          <ConfigField label="Backoff multiplier (display-only)" type="number" value={policy.backoffMultiplier ?? 2} topic="config.retry.backoffMs"
             onChange={(v) => updateField('backoffMultiplier', Math.max(0, safeFiniteNumber(v, 2)))} disabled={disabled} />
         </div>
       )}
@@ -678,7 +706,7 @@ function BackpressureSection({ nodeId, config, disabled }: {
 
   return (
     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 16 }}>
-      <ConfigToggle label="Backpressure" value={enabled} onChange={toggle} disabled={disabled} />
+      <ConfigToggle label="Backpressure" value={enabled} onChange={toggle} disabled={disabled} topic="config.backpressure.enabled" />
       <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: 6 }}>
         Signal saturation to callers so they slow down proportionally.
       </div>

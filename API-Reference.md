@@ -941,3 +941,151 @@ Key types that cross module boundaries. Add new types here, not in component fil
 - Debug E2E: add `--headed --debug` flags
 
 All E2E tests use `window.__SYSTEMSIM_STORE__` to inject scenarios and bypass preflight.
+
+## Wiki (Phase A-scaffold)
+
+Info-icon + wiki layer shipped at Phase A-scaffold. Bodies are empty until Phase A-content fills them from [system-design-knowledgebase.md](system-design-knowledgebase.md).
+
+### `src/components/ui/InfoIcon.tsx`
+Tiny `(i)` glyph with click-to-open popover. Used next to config field labels, traffic editor fields, canvas node labels, the toolbar Run button, and live-log severity badges.
+
+- Props: `topic: string`, `side?: 'top'|'bottom'|'left'|'right'`, `style?`, `ariaLabel?`.
+- Popover auto-flips sides when the preferred side clips the viewport.
+- Registers its topic key on mount into `window.__SYSTEMSIM_TOPIC_REFS__: Set<string>` (consumed by `/wiki/coverage`).
+- On open, focus moves to the "Learn more" button inside the popover. Escape closes and returns focus to the trigger.
+- Unknown topic keys resolve to a "Documentation coming soon." placeholder and never crash.
+
+### `src/wiki/topics.ts`
+Single source of truth for every topic the UI references.
+
+- `TOPICS: Record<string, Topic>` — declares every topic key.
+- `lookupTopic(key)` — returns `{ title, shortDescription, body, category, resolved }`. `resolved: false` on unknown keys.
+- `listTopicKeys()` — enumerates all declared keys (used by the coverage route).
+- Categories: `component | config | concept | howto | severity`.
+- How-to topics carry a `howtoTemplate` pointer for a future "Load in canvas" action.
+
+### `src/wiki/WikiRoute.tsx` (appView === 'wiki')
+Left nav grouped by category + main pane. Arrow keys navigate the topic list; Escape closes; Back button returns to the prior `appView`.
+
+### `src/wiki/components/CoverageDebugRoute.tsx` (appView === 'wiki-coverage')
+Dev-only diagnostic. Reads `window.__SYSTEMSIM_TOPIC_REFS__` and flags any referenced key that doesn't resolve in the registry. Enforced by `e2e/wiki-coverage.spec.ts` (zero unresolved is the A-scaffold invariant).
+
+### Store additions (`src/store/index.ts`)
+- `wikiFocusedTopic: string | null` — deep-link target; set via `openWiki(topic)` or `setWikiFocusedTopic(key)`.
+- `wikiReturnView: AppView` — remembered entry point so `closeWiki()` can go back.
+- `openWiki(topic?)`, `openWikiCoverage()`, `setWikiFocusedTopic(key)`, `closeWiki()`.
+- `AppView` now includes `'wiki' | 'wiki-coverage'`.
+
+### E2E coverage
+- [e2e/wiki-scaffold.spec.ts](e2e/wiki-scaffold.spec.ts) — /wiki opens, grouped nav renders, deep-link focuses, arrow-key nav, how-to stub, Back returns to prior view.
+- [e2e/info-icon-configpanel.spec.ts](e2e/info-icon-configpanel.spec.ts) — ConfigPanel has InfoIcons, popover opens, "Learn more" routes to wiki, Escape closes, wire config fields show icons.
+- [e2e/wiki-coverage.spec.ts](e2e/wiki-coverage.spec.ts) — registry covers all live references (zero unresolved).
+
+## Traffic profile overhaul (Phase B)
+
+### `src/components/panels/CanvasSidebar.tsx`
+Left sidebar. 320px on viewports ≥1200px, collapses to a 44px rail below. Manual `sidebar-expand` / `sidebar-collapse` buttons available at any width. Session-only; not persisted.
+
+### `src/components/panels/PhaseCurve.tsx`
+SVG preview of a `TrafficProfile`'s phase sequence. Rendered above the phase list in TrafficEditor. Shape-aware per phase (steady / instant_spike / ramp_up / ramp_down / spike). Hover anywhere on the chart to see `t=<s>s, RPS=<n>`. Pure render over props; no store dep.
+
+### Traffic intent NL input
+
+- **Client:** [src/ai/trafficIntent.ts](src/ai/trafficIntent.ts) — `trafficIntent({ description, signal? })` returns `{ ok, data: TrafficProfile } | { ok: false, kind, message }`.
+- **Schema + validator:** [src/ai/trafficIntentSchema.ts](src/ai/trafficIntentSchema.ts) — `TRAFFIC_INTENT_TOOL_SCHEMA` Anthropic tool shape + `validateTrafficIntent(raw)` with `{ok: true, data} | {ok: false, reason}`. Reason codes stay server-side (logged, never returned in HTTP body).
+- **Prompt:** [src/ai/trafficIntentPrompt.ts](src/ai/trafficIntentPrompt.ts) — system prompt + `buildTrafficIntentUserText(description)`, versioned via `TRAFFIC_INTENT_PROMPT_VERSION`.
+- **Edge Function:** [api/traffic-intent.ts](api/traffic-intent.ts) — Claude Sonnet 4.6 with `tool_choice: { type: 'tool', name: 'traffic_intent' }`. 32KB payload cap. Description 4–2000 chars. Validation failures logged with reason + prompt version, client sees generic message only.
+
+### TrafficEditor wiring
+- Phase curve renders at the top of the expanded editor.
+- NL textarea + Generate button below the curve. Aborts in-flight requests on unmount or rapid re-click via a panel-local AbortController.
+- Status announced via `role="status" aria-live="polite"` live region; errors raise `role="alert"`.
+- Applies the returned profile to local draft state AND to the store's `trafficProfile` so the canvas picks it up immediately.
+- Gated by `import.meta.env.VITE_ENABLE_TRAFFIC_INTENT !== 'false'` (enabled by default; set `VITE_ENABLE_TRAFFIC_INTENT=false` to hide the textarea in dev/E2E).
+
+### E2E + unit coverage
+- [src/ai/__tests__/trafficIntent.test.ts](src/ai/__tests__/trafficIntent.test.ts) — 15 Vitest cases (client mocks, validator edge cases).
+- [e2e/traffic-panel-scroll.spec.ts](e2e/traffic-panel-scroll.spec.ts) — sidebar width at ≥1200 / <1200, manual collapse, scroll behavior.
+- [e2e/traffic-phase-curve.spec.ts](e2e/traffic-phase-curve.spec.ts) — curve renders, mutates on phase edit, tooltip on hover, all 5 shapes.
+- [e2e/traffic-nl-input.spec.ts](e2e/traffic-nl-input.spec.ts) — success / 500 / 429 / loading states via `page.route` stub.
+
+## Live Log 2.0 (Phase C)
+
+### `src/components/panels/liveLog/LogFilter.tsx`
+Severity chips (info / warning / critical, multi-select) + component dropdown + `N / M events` counter. Session-only panel-local state; `applyLogFilter` is a pure helper used by `LogContent`.
+
+### `src/components/panels/liveLog/groupLogs.ts`
+Pure function. Collapses runs of ≥5 same-componentId + same-severity events inside a 2-second window into a single `GroupedRow` (`{ kind: 'group', entries, ... }`). Visual only — never mutates `liveLog`. Entries without componentId never group.
+
+### `src/components/panels/liveLog/calloutPhrases.ts`
+Maps free-text engine messages to wiki topic keys via pre-compiled module-level regexes (bounded memoization cache). `segmentMessage(text)` returns alternating text / phrase segments the renderer walks. `CALLOUT_PHRASES` is the extensible authoritative list — add new phrases here when the engine emits new callouts.
+
+### `src/components/panels/liveLog/LogGroupedRow.tsx`
+Renders either a single row or a collapsed group header with chevron. Detected phrases render as underlined text + adjacent InfoIcon trigger. Row click → `setPulseTarget(node:${id})` + 600ms clear (timer ref-tracked in BottomPanel so rapid clicks don't race). Group header and rows are `role="button" tabIndex={0}` with Enter/Space keyboard handlers.
+
+### `BottomPanel.tsx` LogContent refactor
+- Pipeline: apply filter → group → render.
+- `filter`, `expanded`, `pulseTimerRef` are panel-local.
+- Component dropdown options derived from nodes referenced in the log (resolved to current node labels).
+
+### E2E coverage
+- [e2e/live-log-filter.spec.ts](e2e/live-log-filter.spec.ts) — severity chips, component dropdown, counter, reset, empty-filter state.
+- [e2e/live-log-click-pulse.spec.ts](e2e/live-log-click-pulse.spec.ts) — row with componentId pulses + auto-clears; row without componentId no-op; InfoIcon clicks don't trigger row click.
+- [e2e/live-log-hover-tooltip.spec.ts](e2e/live-log-hover-tooltip.spec.ts) — each callout phrase resolves to its wiki topic; Learn more routes correctly.
+- [e2e/live-log-grouping.spec.ts](e2e/live-log-grouping.spec.ts) — 6-row collapse, expand reveals entries, <minRun doesn't collapse, severity change breaks the run, out-of-window break.
+
+## Docs product (Phase A-content)
+
+The wiki is a three-tab docs product modeled on react.dev (Learn/Reference split) + shadcn (airy typography chrome).
+
+### Three top-level tabs
+
+- **Learn** (`userGuide.*`) — 18 hand-written user-manual pages. Reading order via `USER_GUIDE_ORDER`. Source: `src/wiki/content/learn/NN-slug.md`.
+- **Reference** (`reference.*` + component/concept/config/severity leaves) — 39 auto-imported KB sections from [system-design-knowledgebase.md](system-design-knowledgebase.md), plus the InfoIcon leaf pages.
+- **How-to** (`howto.*`) — 5 canvas-loadable failure scenarios with `<CanvasEmbed>` previews. Source: `src/wiki/content/howto/NN-slug.md` + `public/templates/howto/<slug>.json`.
+
+### Build-time topic generation
+
+[scripts/generate-reference-topics.ts](scripts/generate-reference-topics.ts) + [vite.config.ts](vite.config.ts) plugin:
+- Reads [system-design-knowledgebase.md](system-design-knowledgebase.md) → `src/wiki/generated/referenceTopics.ts`.
+- Reads `src/wiki/content/learn/*.md` → `src/wiki/generated/learnTopics.ts` + `USER_GUIDE_ORDER` (filename-sorted).
+- Reads `src/wiki/content/howto/*.md` → `src/wiki/generated/howtoTopics.ts` (filename = `NN-slug.md` → topic key `howto.slug`, `howtoTemplate: slug`).
+- Runs on `buildStart` + re-runs on source file changes during `pnpm dev` with a full-reload trigger.
+- `pnpm run generate:reference-topics` for standalone runs.
+- `src/wiki/generated/` is gitignored; a stub fallback keeps fresh clones working before the first dev boot.
+
+### `src/wiki/components/MarkdownBody.tsx`
+Markdown → HTML via `marked`, sanitized via a DOMParser tag + attribute allowlist. Splits on `<CanvasEmbed template="<slug>" />` tags (code blocks blanked first so the tag inside a ``` fence doesn't splice). Slug validated via `^[a-zA-Z0-9_-]+$`; invalid matches silently dropped.
+
+### `src/wiki/components/CanvasEmbed.tsx`
+Inline preview + "Take to canvas" hand-off:
+- Fetches `/templates/howto/<slug>.json` (slug re-validated on mount; path-encoded in fetch).
+- Renders a read-only mini ReactFlow (`nodesDraggable={false}`, `panOnDrag={false}`, `zoomOnScroll={false}`).
+- "Take to canvas" → `replaceGraph({nodes, edges})` + `setAppMode('freeform')` + `closeWiki()` + `setAppView('canvas')`.
+- "Run inline" button is a disabled stub; inline simulation ships in a follow-up (scoped sim-engine state is coupled to the global Zustand store today).
+
+### `src/wiki/components/CommandPalette.tsx`
+Global ⌘K / Ctrl+K search.
+- Fuse.js in-memory index of ~60 topics (`title` weight 2, `shortDescription` weight 1, `body` truncated to 800 chars weight 0.5).
+- Arrow-key navigation, Enter to open via `openWiki(key)`.
+- Escape closes (only while palette is open — no-op otherwise).
+- `role="dialog" aria-modal="true"` + focus trap (Tab / Shift+Tab cycle within dialog) + focus-restore on close.
+- Outside-click closes; backdrop at `rgba(0,0,0,0.5)`.
+
+### Entry points
+
+- **Landing page** — "Learn SystemSim →" tertiary link (next to blank-canvas / load-session), routes to `userGuide.welcome`.
+- **Toolbar** — "Docs" button next to theme toggle on the canvas view.
+- **Canvas InfoIcons** — any `(i)` click → "Learn more" routes to the topic on the right tab (A-scaffold mechanism).
+- **⌘K** — global keyboard shortcut from anywhere.
+
+### Hash-based deep linking
+
+URLs are `#docs/<tab>/<slug>` (e.g. `#docs/learn/your-first-design`, `#docs/reference/10-caching-full-curriculum`). [src/wiki/docsHash.ts](src/wiki/docsHash.ts) encodes/decodes; `WikiRoute` parses on mount and writes on tab/topic change. Back/forward + manual edits round-trip.
+
+### E2E coverage
+
+- [e2e/docs-reference-track.spec.ts](e2e/docs-reference-track.spec.ts) — 39 auto-imported refs render; §10 Caching shows sub-sections; deep-link hash round-trips.
+- [e2e/docs-learn-track.spec.ts](e2e/docs-learn-track.spec.ts) — 18 Learn pages populate; deep-link to a specific page; landing "Learn SystemSim" button works.
+- [e2e/docs-howto-try-this.spec.ts](e2e/docs-howto-try-this.spec.ts) — embed renders, "Take to canvas" transfers graph + switches view, all 5 templates render without error.
+- [e2e/docs-search-cmdk.spec.ts](e2e/docs-search-cmdk.spec.ts) — ⌘K opens, typing narrows, Enter opens, Escape closes, ArrowDown + Enter opens second result.

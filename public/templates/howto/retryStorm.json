@@ -1,0 +1,17 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "Retry Storm",
+    "source": "How-to — watch geometric retry amplification overwhelm a weak downstream",
+    "tags": ["howto", "retries", "storm"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+    { "type": "server", "label": "App Server", "config": { "instanceCount": 3, "processingTimeMs": 15, "maxConcurrent": 1000, "retryPolicy": { "maxRetries": 4, "backoffMs": 50, "backoffMultiplier": 2 } } },
+    { "type": "database", "label": "Weak DB", "config": { "engine": "postgres", "writeThroughputRps": 30, "readThroughputRps": 50, "connectionPoolSize": 20 } }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "server-1" },
+    { "source": "server-1", "target": "database-2" }
+  ]
+}

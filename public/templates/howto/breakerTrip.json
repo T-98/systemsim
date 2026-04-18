@@ -1,0 +1,26 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "Breaker Trip",
+    "source": "How-to — trip a circuit breaker and watch it heal through HALF_OPEN",
+    "tags": ["howto", "circuit-breaker", "half-open"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+    { "type": "server", "label": "App Server", "config": { "instanceCount": 3, "processingTimeMs": 15, "maxConcurrent": 1000 } },
+    { "type": "database", "label": "Flaky DB", "config": { "engine": "postgres", "writeThroughputRps": 40, "readThroughputRps": 80, "connectionPoolSize": 25 } }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "server-1" },
+    {
+      "source": "server-1",
+      "target": "database-2",
+      "config": {
+        "latencyMs": 3,
+        "jitterMs": 1,
+        "throughputRps": 100000,
+        "circuitBreaker": { "failureThreshold": 0.5, "failureWindow": 3, "cooldownSeconds": 10, "halfOpenTicks": 2 }
+      }
+    }
+  ]
+}

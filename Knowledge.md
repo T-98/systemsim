@@ -638,3 +638,36 @@ end of tick:
 | Add a new LLM endpoint | New file under `api/` + [api/_shared/handler.ts](api/_shared/handler.ts) pattern |
 | Add a new template | New JSON in `/public/templates/` matching `CanonicalGraph` shape |
 | Add a new resilience pattern (e.g. rate limiter, bulkhead) | Same shape as [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts): types + evaluate fn + opt-in via `WireConfig` + hook into `forwardOverWire` |
+| Author a new system-design concept for the wiki | Add a section in [system-design-knowledgebase.md](system-design-knowledgebase.md) (authorial memory, prose-first, cross-referenced). Wiki copy in `src/wiki/topics.ts` derives from it — never the other way. See Decisions §35. |
+| Add an InfoIcon next to a new field | `<InfoIcon topic="config.xxx" />` next to the label. Declare `config.xxx` in [src/wiki/topics.ts](src/wiki/topics.ts) (empty body is fine at A-scaffold; A-content fills it). Check `/wiki/coverage` shows zero unresolved. |
+| Add a new topic key | Add to the `TOPICS` record in [src/wiki/topics.ts](src/wiki/topics.ts) with category `component\|config\|concept\|howto\|severity\|userGuide\|reference`. Dynamic config keys auto-resolve via `topicForConfigKey(key)` → `config.${key}`. |
+| Add a new Learn page | Drop `src/wiki/content/learn/NN-slug.md` with the order prefix (NN = position in the sidebar). First `# Heading` becomes the title. Vite plugin regenerates `USER_GUIDE_TOPICS` on save. Deep link: `#docs/learn/slug`. |
+| Add a new How-to scenario | Drop `src/wiki/content/howto/NN-slug.md` + `public/templates/howto/slug.json`. Use `<CanvasEmbed template="slug" />` inline. Slug must match `^[a-zA-Z0-9_-]+$`. |
+| Add KB content | Edit [system-design-knowledgebase.md](system-design-knowledgebase.md). Build plugin re-generates `reference.*` topics on save. Cross-refs (`§N`) auto-link to the right slug. |
+
+---
+
+## Knowledge Base (`system-design-knowledgebase.md`)
+
+**What it is.** Long-form authorial memory for the wiki layer. Parts I–VIII cover design thinking, fundamentals, building blocks, API layer, scaling & resilience, patterns & templates, extended patterns + case studies, and SIMFID runtime internals.
+
+**What it isn't.** Not served to users. Wiki cards are **curated derivatives** (short text + diagram + pre-configured exercise) authored into `src/wiki/topics.ts`.
+
+**Population order** (KB Phase 0.x):
+1. Phase 0.1 — skeleton + §1–§8 (Design thinking + fundamentals) — done
+2. Phase 0.2 — §9 Load Balancing, §10 Caching, §25 CQRS — done
+3. Phase 0.3 — §13 Message Queues, §21 Microservice Resilience — done
+4. Phase 0.4 — §12 Database Scaling — done
+5. Phase 0.5 — §11 Data Storage — done
+6. Phase 0.6 — §22 Rate Limiting, §23 Saga, §24 Fan-Out/Fan-In, §26 Pre-Computing, §27 Unique IDs, §33–§39 Part VII (Extended Patterns & Case Studies) — done 2026-04-17
+7. Phase 0.7 — §14 Batch & Stream (Big Data): 18 sub-sections covering Unix Pipelines, Stream intro, MapReduce, HDFS, Spark, ETL vs ELT, Flink/Kafka Streams, Windowing, Event Time + Watermarks, Unified engines, Micro-batch, Lambda, Kappa, Real-Time Analytics, Delivery Guarantees, DLQ + Retries, Backfill, Materialized Views, Time-Series Patterns — done 2026-04-17
+8. **Phase 0.8** — §40–§44 SIMFID Runtime: code-grounded docs for circuit breaker state machine, retry storm amplification, backpressure propagation, wire-level config, traffic profile semantics. Every subsection cites src/engine/*.ts file:line. Explicit fan-in caveat: `state.metrics` is overwritten per `processComponent` call, so breaker/retry/backpressure signals are last-invocation-biased in fan-in topologies (ForwardResult refactor deferred). Done 2026-04-18.
+
+KB Phase 0.x complete. Next: UI Phase A-scaffold → B → C → A-content (see [simfid-ux-streams-a-b-c.md](~/.claude/plans/simfid-ux-streams-a-b-c.md) and [replicated-brewing-floyd.md](~/.claude/plans/replicated-brewing-floyd.md)).
+
+**Voice rules** (enforce on every new KB section):
+- Real-world anchors (e.g. Twitter fan-out, Redis, AWS API throttling) — never abstract.
+- Tradeoffs foregrounded. No pros without cons.
+- ASCII diagrams when structure matters (match §25 CQRS style).
+- Prose first, lists only when list-shaped.
+- Cross-references explicit (`see §12 for CDC mechanics`), not `as discussed elsewhere`.

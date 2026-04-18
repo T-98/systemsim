@@ -1,0 +1,19 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "Backpressure Propagation",
+    "source": "How-to — see acceptanceRate signaling travel upstream one hop per tick",
+    "tags": ["howto", "backpressure", "propagation"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+    { "type": "api_gateway", "label": "API Gateway", "config": { "rateLimitRps": 10000, "authMiddleware": "none", "backpressure": { "enabled": true } } },
+    { "type": "server", "label": "App Server", "config": { "instanceCount": 3, "processingTimeMs": 15, "maxConcurrent": 1000, "backpressure": { "enabled": true } } },
+    { "type": "database", "label": "Slow DB", "config": { "engine": "postgres", "writeThroughputRps": 30, "readThroughputRps": 60, "connectionPoolSize": 20, "backpressure": { "enabled": true } } }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "api_gateway-1" },
+    { "source": "api_gateway-1", "target": "server-2" },
+    { "source": "server-2", "target": "database-3" }
+  ]
+}
