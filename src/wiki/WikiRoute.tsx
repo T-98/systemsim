@@ -23,7 +23,7 @@ import { listTopicKeys, lookupTopic, type TopicCategory } from './topics';
 import type { WikiTab } from '../types';
 import TopicNav from './components/TopicNav';
 import TopicBody from './components/TopicBody';
-import { parseDocsHash, writeDocsHash, topicKeyToSlug, slugToTopicKey } from './docsHash';
+import { parseDocsHash, writeDocsHash, slugToTopicKey } from './docsHash';
 
 interface TabDef {
   id: WikiTab;
@@ -170,34 +170,47 @@ export default function WikiRoute() {
       <header
         className="flex items-center justify-between"
         style={{
-          padding: '12px 20px',
+          padding: '12px 24px',
           borderBottom: '1px solid var(--border-color)',
-          background: 'var(--bg-sidebar)',
+          background: 'var(--bg-nav)',
+          backdropFilter: 'blur(20px) saturate(1.4)',
+          WebkitBackdropFilter: 'blur(20px) saturate(1.4)',
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
         }}
       >
-        <div className="flex items-center gap-6">
+        <div className="flex items-center" style={{ gap: 24 }}>
           <button
             type="button"
             onClick={closeWiki}
             data-testid="wiki-back"
+            aria-label="Back to canvas"
             style={{
-              padding: '6px 12px',
-              borderRadius: 6,
+              width: 32,
+              height: 32,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: 8,
               background: 'transparent',
               border: '1px solid var(--border-color)',
               color: 'var(--text-secondary)',
-              fontSize: 13,
               cursor: 'pointer',
-              letterSpacing: '-0.12px',
             }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
           >
-            ← Back
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
           </button>
-          <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: '-0.24px' }}>
-            SystemSim Docs
+          <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.24px', color: 'var(--text-primary)' }}>
+            System<span style={{ color: 'var(--accent)' }}>Sim</span> Docs
           </div>
           <nav
-            className="flex items-center gap-1"
+            className="flex items-center"
+            style={{ gap: 4 }}
             data-testid="docs-tabs"
             role="tablist"
             aria-label="Documentation sections"
@@ -214,21 +227,19 @@ export default function WikiRoute() {
                   data-active={active ? 'true' : 'false'}
                   onClick={() => {
                     setTab(t.id);
-                    // Clear the focused topic so the effect above picks the first
-                    // visible one for the new tab.
                     setFocused(null);
                   }}
                   style={{
-                    padding: '6px 14px',
-                    borderRadius: 6,
-                    border: '1px solid transparent',
-                    background: active ? 'var(--bg-input)' : 'transparent',
+                    padding: '8px 12px',
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
                     color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                    borderColor: active ? 'var(--border-color)' : 'transparent',
                     fontSize: 13,
                     fontWeight: active ? 600 : 500,
                     letterSpacing: '-0.12px',
                     cursor: 'pointer',
+                    marginBottom: -1,
                   }}
                 >
                   {t.label}
@@ -237,9 +248,50 @@ export default function WikiRoute() {
             })}
           </nav>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>
-          {flatKeys.length} {activeTab.label.toLowerCase()} topics
-          {focused ? ` · ${topicKeyToSlug(focused)}` : ''}
+        <div className="flex items-center" style={{ gap: 12 }}>
+          <button
+            type="button"
+            data-testid="wiki-cmdk"
+            aria-label="Open search"
+            onClick={() => {
+              // Trigger the global CommandPalette listener.
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true }));
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '6px 10px 6px 12px',
+              borderRadius: 8,
+              background: 'var(--bg-input)',
+              border: '1px solid var(--border-color)',
+              color: 'var(--text-tertiary)',
+              fontSize: 12,
+              letterSpacing: '-0.12px',
+              cursor: 'pointer',
+              minWidth: 200,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-strong)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
+            </svg>
+            <span style={{ flex: 1, textAlign: 'left' }}>Search docs…</span>
+            <kbd
+              style={{
+                fontSize: 10,
+                fontFamily: 'inherit',
+                padding: '1px 6px',
+                borderRadius: 4,
+                background: 'var(--bg-card-elevated)',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-tertiary)',
+              }}
+            >
+              ⌘K
+            </kbd>
+          </button>
         </div>
       </header>
 
@@ -252,21 +304,20 @@ export default function WikiRoute() {
             width: 280,
             borderRight: '1px solid var(--border-color)',
             background: 'var(--bg-sidebar)',
-            padding: '12px 0',
+            padding: '24px 0',
           }}
         >
           {activeTab.categoryOrder.map((cat) => {
             const keys = grouped.get(cat) ?? [];
             if (keys.length === 0) return null;
             return (
-              <div key={cat} data-testid={`wiki-nav-group-${cat}`} style={{ marginBottom: 12 }}>
+              <div key={cat} data-testid={`wiki-nav-group-${cat}`} style={{ marginBottom: 24 }}>
                 <div
                   style={{
-                    padding: '6px 16px',
-                    fontSize: 11,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.6px',
-                    color: 'var(--text-tertiary)',
+                    padding: '0 24px 8px',
+                    fontSize: 12,
+                    letterSpacing: '-0.12px',
+                    color: 'var(--text-primary)',
                     fontWeight: 600,
                   }}
                 >
@@ -281,7 +332,7 @@ export default function WikiRoute() {
         <main
           className="flex-1 overflow-y-auto"
           data-testid="wiki-main"
-          style={{ padding: '32px 48px' }}
+          style={{ padding: '48px 48px 96px' }}
         >
           <TopicBody topicKey={focused} />
         </main>

@@ -77,6 +77,14 @@ function sanitize(html: string): string {
   const root = doc.getElementById('root');
   if (!root) return '';
   sanitizeNode(root);
+  // Post-process: wrap wide tables in a horizontally scrollable container so
+  // they don't blow out the article column. Matches .docs-table-scroll in CSS.
+  for (const table of Array.from(root.querySelectorAll('table'))) {
+    const wrap = doc.createElement('div');
+    wrap.className = 'docs-table-scroll';
+    table.parentNode?.insertBefore(wrap, table);
+    wrap.appendChild(table);
+  }
   return root.innerHTML;
 }
 
