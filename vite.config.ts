@@ -1,7 +1,7 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { generateReferenceTopics } from './scripts/generate-reference-topics';
+import { generateAllTopics } from './scripts/generate-reference-topics';
 import { resolve } from 'node:path';
 
 /**
@@ -11,23 +11,26 @@ import { resolve } from 'node:path';
  */
 function referenceTopicsPlugin(): Plugin {
   const kbPath = resolve(__dirname, 'system-design-knowledgebase.md');
+  const learnDir = resolve(__dirname, 'src/wiki/content/learn');
+  const howtoDir = resolve(__dirname, 'src/wiki/content/howto');
   return {
     name: 'systemsim-reference-topics',
     buildStart() {
       try {
-        generateReferenceTopics();
+        generateAllTopics();
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('[systemsim-reference-topics] buildStart failed:', err);
       }
     },
     configureServer(server) {
-      // Re-emit when the KB file changes.
       server.watcher.add(kbPath);
+      server.watcher.add(learnDir);
+      server.watcher.add(howtoDir);
       server.watcher.on('change', (file) => {
-        if (file === kbPath) {
+        if (file === kbPath || file.startsWith(learnDir) || file.startsWith(howtoDir)) {
           try {
-            generateReferenceTopics();
+            generateAllTopics();
             server.ws.send({ type: 'full-reload' });
           } catch (err) {
             // eslint-disable-next-line no-console

@@ -1,0 +1,19 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "Cache Stampede",
+    "source": "How-to — reproduce a cache miss storm",
+    "tags": ["howto", "cache", "stampede"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+    { "type": "server", "label": "App Server", "config": { "instanceCount": 4, "processingTimeMs": 20, "maxConcurrent": 500 } },
+    { "type": "cache", "label": "Redis Cache", "config": { "evictionPolicy": "lru", "ttlSeconds": 5, "maxMemoryMb": 256, "writeStrategy": "write-around" } },
+    { "type": "database", "label": "Origin DB", "config": { "engine": "postgres", "writeThroughputRps": 50, "readThroughputRps": 100, "connectionPoolSize": 20 } }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "server-1" },
+    { "source": "server-1", "target": "cache-2" },
+    { "source": "cache-2", "target": "database-3" }
+  ]
+}

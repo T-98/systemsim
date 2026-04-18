@@ -247,6 +247,17 @@ export default function LandingPage() {
           >
             Load session from file
           </button>
+          <span style={{ color: 'var(--border-color)' }}>|</span>
+          <button
+            data-testid="landing-learn"
+            onClick={() => useStore.getState().openWiki('userGuide.welcome')}
+            className="inline-flex items-center gap-1.5 transition-colors"
+            style={{ fontSize: '13px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+          >
+            Learn SystemSim →
+          </button>
         </div>
 
         <div className="mt-16 text-center animate-fade-in-3">

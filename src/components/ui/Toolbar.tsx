@@ -389,6 +389,26 @@ export default function Toolbar() {
           Save
         </button>
 
+        {/* Docs entry */}
+        <button
+          data-testid="toolbar-docs"
+          onClick={() => useStore.getState().openWiki('userGuide.welcome')}
+          className="rounded-lg transition-all duration-200 flex items-center justify-center"
+          style={{
+            height: '32px',
+            padding: '0 10px',
+            fontSize: 12,
+            color: 'var(--text-tertiary)',
+            border: '1px solid var(--border-color)',
+            letterSpacing: '-0.12px',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.borderColor = 'var(--border-strong)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+          title="Open SystemSim docs (⌘K to search)"
+        >
+          Docs
+        </button>
+
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}

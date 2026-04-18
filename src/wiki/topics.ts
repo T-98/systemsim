@@ -192,10 +192,19 @@ export const TOPICS: Record<string, Topic> = {
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — generated file may not exist until Vite's first buildStart hook.
 import { REFERENCE_TOPICS } from './generated/referenceTopics';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { USER_GUIDE_TOPICS, USER_GUIDE_ORDER } from './generated/learnTopics';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import { HOWTO_TOPICS } from './generated/howtoTopics';
 
-for (const [key, topic] of Object.entries(REFERENCE_TOPICS)) {
-  TOPICS[key] = topic;
-}
+for (const [key, topic] of Object.entries(REFERENCE_TOPICS)) TOPICS[key] = topic;
+for (const [key, topic] of Object.entries(USER_GUIDE_TOPICS)) TOPICS[key] = topic;
+for (const [key, topic] of Object.entries(HOWTO_TOPICS as Record<string, Topic>)) TOPICS[key] = topic;
+
+/** Ordered list of Learn topic keys, driving Prev/Next navigation. */
+export const LEARN_ORDER: string[] = USER_GUIDE_ORDER;
 
 /**
  * Lookup a topic, returning a safe placeholder if the key is unknown.

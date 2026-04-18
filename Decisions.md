@@ -555,6 +555,54 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Rejected:** Adding a `topic?: string` field to `LogEntry` and plumbing it through the engine (touches every `fireCallout` call site; deferred). Per-render `new RegExp(source, 'g')` (measurably slower at scale).
 - **Source:** [src/components/panels/liveLog/calloutPhrases.ts](src/components/panels/liveLog/calloutPhrases.ts), [src/components/panels/liveLog/LogGroupedRow.tsx](src/components/panels/liveLog/LogGroupedRow.tsx) `SingleRow`.
 
+### 47. Docs product is three tabs (Learn / Reference / How-to) — react.dev-inspired IA
+
+- **When:** Phase A-content (2026-04-18)
+- **Context:** The wiki needed to serve two distinct audiences at once: beginners working through a linear manual ("how do I use SystemSim?") and experienced users looking up one concept ("what's CQRS?"). Plus a third surface for canvas-loadable failure scenarios. Single-tab / flat nav conflates the three.
+- **Decision:** Three top-level tabs in `WikiRoute`:
+  - **Learn** (`userGuide.*`) — 18 hand-written pages, ordered via `USER_GUIDE_ORDER` for Prev/Next.
+  - **Reference** (`reference.*` + `component.*` + `concept.*` + `config.*` + `severity.*`) — 39 auto-imported KB sections + shared InfoIcon leaf pages.
+  - **How-to** (`howto.*`) — 5 hand-written scenarios with `<CanvasEmbed>` previews + "Take to canvas" CTAs.
+- **Why:** Matches react.dev's `/learn` vs `/reference` split, which multiple agent reviews surfaced as the cleanest pattern for dual-audience docs. Keeps the linear tutorial flow from bleeding into lookup territory.
+- **Rejected:** Single flat sidebar (loses the linear track). React Router (scope creep; existing appView-state routing is consistent with Decisions §39). Separate domain / subdomain for docs (fragments canvas → doc routing).
+- **Source:** [src/wiki/WikiRoute.tsx](src/wiki/WikiRoute.tsx), [src/wiki/docsHash.ts](src/wiki/docsHash.ts).
+
+### 48. KB Reference content is auto-imported at build time, never hand-synced
+
+- **When:** Phase A-content P2 (2026-04-18)
+- **Context:** The 44-section system-design-knowledgebase.md is the authoritative source. Hand-copying sections into topic bodies would drift the moment the KB is edited.
+- **Decision:** `scripts/generate-reference-topics.ts` runs as a Vite plugin at `buildStart` + watches the KB file during dev. Splits on `## N. Title`, emits `src/wiki/generated/referenceTopics.ts` merged into `TOPICS` at module load. Same pipeline also emits `USER_GUIDE_TOPICS` (from `src/wiki/content/learn/*.md`) and `HOWTO_TOPICS` (from `src/wiki/content/howto/*.md`).
+- **Why:** Single source of truth. KB edit → docs update on save. Authoring learn/howto content as markdown files instead of TypeScript string literals makes voice review + long-form authoring actually comfortable.
+- **Rejected:** Runtime fetch of markdown (adds loading states, breaks URL deep-linking). Inline TypeScript string literals (painful to author, no syntax highlighting).
+- **Source:** [scripts/generate-reference-topics.ts](scripts/generate-reference-topics.ts), [vite.config.ts](vite.config.ts).
+
+### 49. CanvasEmbed: inline preview + "Take to canvas" handoff; inline Run deferred
+
+- **When:** Phase A-content P4 (2026-04-18)
+- **Context:** react.dev's Sandpack is the gold standard for learn-by-doing docs. The SystemSim equivalent is a mini read-only canvas inline in how-to pages. Original plan approved the ambitious Option A (inline Run too).
+- **Decision:** Ship the preview + "Take to canvas" button now. Inline Run is stubbed (button disabled, labeled "Run inline (soon)"). The sim engine is currently coupled to the global Zustand store's `liveMetrics` / `liveLog` — instantiating a scoped engine with its own state requires a small refactor that's out of scope for the ship-now pressure on this phase.
+- **Why:** The preview + handoff round-trip delivers 80% of the learning value. The handoff — a button that drops the user into a fully editable canvas pre-loaded with the scenario — is the feature the plan's expected-outcome walkthrough actually requires. Inline Run is polish on top; shipping it now would delay the rest of A-content by an uncertain amount.
+- **Rejected:** Link-only "Load this example" (the preview is the distinctive feature — a flat link would be the same as the stub we had at A-scaffold). Full inline Run with a shared store (would pollute main-canvas state).
+- **Source:** [src/wiki/components/CanvasEmbed.tsx](src/wiki/components/CanvasEmbed.tsx), follow-up tracked to scope a scoped sim-engine instance.
+
+### 50. DOMParser-based allowlist sanitizer for MarkdownBody, not regex
+
+- **When:** Phase A-content P7 (2026-04-18)
+- **Context:** A Claude subagent independent review of the markdown renderer found 4 critical regex-sanitizer bypasses: unclosed `<script>`, unquoted attributes, HTML-entity / whitespace tricks on `javascript:` URLs, and missing coverage for `<object>` / `<embed>` / `<form action=javascript:>` / `data:image/svg+xml` / SVG-with-inline-handlers.
+- **Decision:** Replace the regex sanitizer with a DOMParser-based pass: parse the HTML, walk the tree, whitelist tags (17 allowed), whitelist per-tag attributes, scrub `href`/`src` against a URL protocol allowlist (`https?:`, `mailto:`, `#`, `/`), force `rel="noopener noreferrer"` on `target=_blank` links, and strip comments. SSR fallback: regex-strip all tags.
+- **Why:** Regex sanitizers are bypass-prone in well-known ways. DOMParser gives us a structured walk that closes those classes of attacks. Adds no deps (browser-native). Content is still 100% internal today; this is defense-in-depth for future user-supplied content.
+- **Rejected:** DOMPurify (new 20KB dep). Keeping the regex (known bypasses). `iframe srcdoc` approach (overengineered).
+- **Source:** [src/wiki/components/MarkdownBody.tsx](src/wiki/components/MarkdownBody.tsx) `sanitize` + `sanitizeNode`.
+
+### 51. `<CanvasEmbed>` extraction blanks code blocks before regex scan; validates slug
+
+- **When:** Phase A-content P7 (2026-04-18)
+- **Context:** The subagent review also flagged that `<CanvasEmbed template="x" />` written *inside* a fenced code block (for documentation purposes) would still be spliced as a live embed. Separately, the template slug was fetched as-is — a slug like `../../../secret` would traverse the path.
+- **Decision:** `splitOnEmbeds` scans a copy of the markdown with code blocks blanked to whitespace (preserves indexes); embed hits are then applied against the original markdown. The slug is validated against `^[a-zA-Z0-9_-]+$` at both the splitter (skip invalid matches silently) and the CanvasEmbed component (refuse to fetch). Fetch also uses `encodeURIComponent`.
+- **Why:** Code blocks are how we document the embed tag itself on Learn pages; they can't become live embeds. Slug validation at two boundaries ensures an upstream authoring mistake or a regression in the splitter can't produce an arbitrary fetch.
+- **Rejected:** Parsing via `marked` first and then searching the HTML (harder; `marked`'s output for unknown HTML tags is inconsistent).
+- **Source:** [src/wiki/components/MarkdownBody.tsx](src/wiki/components/MarkdownBody.tsx) `splitOnEmbeds`, [src/wiki/components/CanvasEmbed.tsx](src/wiki/components/CanvasEmbed.tsx) `useEffect` guard.
+
 ### 46. Pulse-clear timer is ref-tracked so rapid clicks don't kill newer pulses
 
 - **When:** Phase C2 (2026-04-18)

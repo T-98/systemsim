@@ -1033,3 +1033,59 @@ Renders either a single row or a collapsed group header with chevron. Detected p
 - [e2e/live-log-click-pulse.spec.ts](e2e/live-log-click-pulse.spec.ts) — row with componentId pulses + auto-clears; row without componentId no-op; InfoIcon clicks don't trigger row click.
 - [e2e/live-log-hover-tooltip.spec.ts](e2e/live-log-hover-tooltip.spec.ts) — each callout phrase resolves to its wiki topic; Learn more routes correctly.
 - [e2e/live-log-grouping.spec.ts](e2e/live-log-grouping.spec.ts) — 6-row collapse, expand reveals entries, <minRun doesn't collapse, severity change breaks the run, out-of-window break.
+
+## Docs product (Phase A-content)
+
+The wiki is a three-tab docs product modeled on react.dev (Learn/Reference split) + shadcn (airy typography chrome).
+
+### Three top-level tabs
+
+- **Learn** (`userGuide.*`) — 18 hand-written user-manual pages. Reading order via `USER_GUIDE_ORDER`. Source: `src/wiki/content/learn/NN-slug.md`.
+- **Reference** (`reference.*` + component/concept/config/severity leaves) — 39 auto-imported KB sections from [system-design-knowledgebase.md](system-design-knowledgebase.md), plus the InfoIcon leaf pages.
+- **How-to** (`howto.*`) — 5 canvas-loadable failure scenarios with `<CanvasEmbed>` previews. Source: `src/wiki/content/howto/NN-slug.md` + `public/templates/howto/<slug>.json`.
+
+### Build-time topic generation
+
+[scripts/generate-reference-topics.ts](scripts/generate-reference-topics.ts) + [vite.config.ts](vite.config.ts) plugin:
+- Reads [system-design-knowledgebase.md](system-design-knowledgebase.md) → `src/wiki/generated/referenceTopics.ts`.
+- Reads `src/wiki/content/learn/*.md` → `src/wiki/generated/learnTopics.ts` + `USER_GUIDE_ORDER` (filename-sorted).
+- Reads `src/wiki/content/howto/*.md` → `src/wiki/generated/howtoTopics.ts` (filename = `NN-slug.md` → topic key `howto.slug`, `howtoTemplate: slug`).
+- Runs on `buildStart` + re-runs on source file changes during `pnpm dev` with a full-reload trigger.
+- `pnpm run generate:reference-topics` for standalone runs.
+- `src/wiki/generated/` is gitignored; a stub fallback keeps fresh clones working before the first dev boot.
+
+### `src/wiki/components/MarkdownBody.tsx`
+Markdown → HTML via `marked`, sanitized via a DOMParser tag + attribute allowlist. Splits on `<CanvasEmbed template="<slug>" />` tags (code blocks blanked first so the tag inside a ``` fence doesn't splice). Slug validated via `^[a-zA-Z0-9_-]+$`; invalid matches silently dropped.
+
+### `src/wiki/components/CanvasEmbed.tsx`
+Inline preview + "Take to canvas" hand-off:
+- Fetches `/templates/howto/<slug>.json` (slug re-validated on mount; path-encoded in fetch).
+- Renders a read-only mini ReactFlow (`nodesDraggable={false}`, `panOnDrag={false}`, `zoomOnScroll={false}`).
+- "Take to canvas" → `replaceGraph({nodes, edges})` + `setAppMode('freeform')` + `closeWiki()` + `setAppView('canvas')`.
+- "Run inline" button is a disabled stub; inline simulation ships in a follow-up (scoped sim-engine state is coupled to the global Zustand store today).
+
+### `src/wiki/components/CommandPalette.tsx`
+Global ⌘K / Ctrl+K search.
+- Fuse.js in-memory index of ~60 topics (`title` weight 2, `shortDescription` weight 1, `body` truncated to 800 chars weight 0.5).
+- Arrow-key navigation, Enter to open via `openWiki(key)`.
+- Escape closes (only while palette is open — no-op otherwise).
+- `role="dialog" aria-modal="true"` + focus trap (Tab / Shift+Tab cycle within dialog) + focus-restore on close.
+- Outside-click closes; backdrop at `rgba(0,0,0,0.5)`.
+
+### Entry points
+
+- **Landing page** — "Learn SystemSim →" tertiary link (next to blank-canvas / load-session), routes to `userGuide.welcome`.
+- **Toolbar** — "Docs" button next to theme toggle on the canvas view.
+- **Canvas InfoIcons** — any `(i)` click → "Learn more" routes to the topic on the right tab (A-scaffold mechanism).
+- **⌘K** — global keyboard shortcut from anywhere.
+
+### Hash-based deep linking
+
+URLs are `#docs/<tab>/<slug>` (e.g. `#docs/learn/your-first-design`, `#docs/reference/10-caching-full-curriculum`). [src/wiki/docsHash.ts](src/wiki/docsHash.ts) encodes/decodes; `WikiRoute` parses on mount and writes on tab/topic change. Back/forward + manual edits round-trip.
+
+### E2E coverage
+
+- [e2e/docs-reference-track.spec.ts](e2e/docs-reference-track.spec.ts) — 39 auto-imported refs render; §10 Caching shows sub-sections; deep-link hash round-trips.
+- [e2e/docs-learn-track.spec.ts](e2e/docs-learn-track.spec.ts) — 18 Learn pages populate; deep-link to a specific page; landing "Learn SystemSim" button works.
+- [e2e/docs-howto-try-this.spec.ts](e2e/docs-howto-try-this.spec.ts) — embed renders, "Take to canvas" transfers graph + switches view, all 5 templates render without error.
+- [e2e/docs-search-cmdk.spec.ts](e2e/docs-search-cmdk.spec.ts) — ⌘K opens, typing narrows, Enter opens, Escape closes, ArrowDown + Enter opens second result.

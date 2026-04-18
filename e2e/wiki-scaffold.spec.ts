@@ -59,11 +59,10 @@ test.describe('Wiki scaffold', () => {
     // The auto-imported reference topics render via MarkdownBody, not the empty-state card.
     await expect(page.getByTestId('docs-markdown')).toBeVisible();
 
-    // Switching to How-to shows only the howto group, with empty-state bodies at P1.
+    // Switching to How-to shows only the howto group, with hand-written bodies from P3/P4.
     await page.getByTestId('docs-tab-howto').click();
     await expect(page.getByTestId('wiki-nav-group-howto')).toBeVisible();
-    await expect(page.getByTestId('wiki-empty-state')).toBeVisible();
-    await expect(page.getByTestId('wiki-empty-state')).toContainText('Content coming soon');
+    await expect(page.getByTestId('docs-markdown')).toBeVisible();
 
     await page.screenshot({ path: path.join(RESULTS_DIR, 'wiki-default.png'), fullPage: true });
   });

@@ -22,8 +22,19 @@ import DesktopOnlyNotice from './components/ui/DesktopOnlyNotice';
 import IntentHeader from './components/canvas/IntentHeader';
 import WikiRoute from './wiki/WikiRoute';
 import CoverageDebugRoute from './wiki/components/CoverageDebugRoute';
+import CommandPalette from './wiki/components/CommandPalette';
 
 export default function App() {
+  return (
+    <>
+      <AppView />
+      {/* Global ⌘K search overlay — listens for the shortcut and self-renders only when open. */}
+      <CommandPalette />
+    </>
+  );
+}
+
+function AppView() {
   const appView = useStore((s) => s.appView);
   const setAppView = useStore((s) => s.setAppView);
 

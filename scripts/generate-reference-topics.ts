@@ -17,8 +17,8 @@
  * work without any runtime indirection.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
+import { dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -26,6 +26,10 @@ const __dirname = dirname(__filename);
 const REPO_ROOT = resolve(__dirname, '..');
 const KB_PATH = resolve(REPO_ROOT, 'system-design-knowledgebase.md');
 const OUT_PATH = resolve(REPO_ROOT, 'src/wiki/generated/referenceTopics.ts');
+const LEARN_DIR = resolve(REPO_ROOT, 'src/wiki/content/learn');
+const HOWTO_DIR = resolve(REPO_ROOT, 'src/wiki/content/howto');
+const LEARN_OUT_PATH = resolve(REPO_ROOT, 'src/wiki/generated/learnTopics.ts');
+const HOWTO_OUT_PATH = resolve(REPO_ROOT, 'src/wiki/generated/howtoTopics.ts');
 const HEADER_WARN = '// AUTO-GENERATED from system-design-knowledgebase.md — do not edit by hand.';
 
 interface ReferenceSection {
@@ -162,6 +166,112 @@ function emitModule(sections: ReferenceSection[]): string {
   return lines.join('\n');
 }
 
+// -------------------------------------------------------------------------
+// Learn + How-to: hand-written markdown files compiled into topic records.
+// Filenames drive sort order: `01-welcome.md`, `02-first-design.md`, etc.
+// First `# Heading` in the file becomes the topic title; remaining content
+// becomes the body.
+// -------------------------------------------------------------------------
+
+interface HandwrittenSection {
+  /** Slug derived from filename (minus leading order prefix + `.md`). */
+  slug: string;
+  title: string;
+  shortDescription: string;
+  body: string;
+}
+
+/** Read `## N-slug.md` files from `dir`, emit sorted-by-filename topic sections. */
+export function splitHandwrittenSections(dir: string): HandwrittenSection[] {
+  if (!existsSync(dir)) return [];
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith('.md'))
+    .sort();
+  return files.map((f) => {
+    const raw = readFileSync(resolve(dir, f), 'utf8');
+    const baseName = basename(f, '.md');
+    const slug = baseName.replace(/^\d+[-_]/, '');
+
+    // First `# Heading` becomes the title; everything after becomes the body.
+    const headingRe = /^#\s+(.+)$/m;
+    const match = headingRe.exec(raw);
+    const title = match ? match[1].trim() : baseName;
+    const body = raw.trim();
+    const shortDescription = extractShortDescription(body);
+
+    return { slug, title, shortDescription, body };
+  });
+}
+
+function emitHandwrittenModule(
+  exportName: string,
+  category: string,
+  keyPrefix: string,
+  sections: HandwrittenSection[],
+  extras?: (s: HandwrittenSection) => Record<string, unknown>
+): string {
+  const lines: string[] = [
+    HEADER_WARN,
+    '// Hand-written markdown under src/wiki/content/ — regenerate via `pnpm run generate:reference-topics`.',
+    '',
+    "import type { Topic } from '../topics';",
+    '',
+    `export const ${exportName}: Record<string, Topic> = {`,
+  ];
+  for (const s of sections) {
+    lines.push(`  ${JSON.stringify(`${keyPrefix}.${s.slug}`)}: {`);
+    lines.push(`    title: ${JSON.stringify(s.title)},`);
+    lines.push(`    shortDescription: ${JSON.stringify(s.shortDescription)},`);
+    lines.push(`    body: ${JSON.stringify(s.body)},`);
+    lines.push(`    category: ${JSON.stringify(category)},`);
+    if (extras) {
+      for (const [k, v] of Object.entries(extras(s))) {
+        lines.push(`    ${k}: ${JSON.stringify(v)},`);
+      }
+    }
+    lines.push(`  },`);
+  }
+  lines.push('};');
+  lines.push('');
+  lines.push(`export const ${exportName.replace('_TOPICS', '_ORDER')}: string[] = ${JSON.stringify(sections.map((s) => `${keyPrefix}.${s.slug}`))};`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+export function generateLearnTopics(options?: { dir?: string; outPath?: string }): number {
+  const dir = options?.dir ?? LEARN_DIR;
+  const out = options?.outPath ?? LEARN_OUT_PATH;
+  const sections = splitHandwrittenSections(dir);
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, emitHandwrittenModule('USER_GUIDE_TOPICS', 'userGuide', 'userGuide', sections), 'utf8');
+  // eslint-disable-next-line no-console
+  console.log(`[generate-reference-topics] Emitted ${sections.length} userGuide topics → ${out}`);
+  return sections.length;
+}
+
+export function generateHowtoTopics(options?: { dir?: string; outPath?: string }): number {
+  const dir = options?.dir ?? HOWTO_DIR;
+  const out = options?.outPath ?? HOWTO_OUT_PATH;
+  const sections = splitHandwrittenSections(dir);
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(
+    out,
+    emitHandwrittenModule('HOWTO_TOPICS', 'howto', 'howto', sections, (s) => ({ howtoTemplate: s.slug })),
+    'utf8'
+  );
+  // eslint-disable-next-line no-console
+  console.log(`[generate-reference-topics] Emitted ${sections.length} howto topics → ${out}`);
+  return sections.length;
+}
+
+export function generateAllTopics(): { reference: number; learn: number; howto: number } {
+  return {
+    reference: generateReferenceTopics(),
+    learn: generateLearnTopics(),
+    howto: generateHowtoTopics(),
+  };
+}
+
 export function generateReferenceTopics(options?: { kbPath?: string; outPath?: string }): number {
   const kb = options?.kbPath ?? KB_PATH;
   const out = options?.outPath ?? OUT_PATH;
@@ -187,7 +297,7 @@ export function generateReferenceTopics(options?: { kbPath?: string; outPath?: s
 }
 
 // Standalone entry point: `tsx scripts/generate-reference-topics.ts`.
-// (Covers CI + manual refresh; Vite invokes the exported function programmatically.)
+// Runs all three generators (reference, learn, how-to).
 if (import.meta.url === `file://${process.argv[1]}`) {
-  generateReferenceTopics();
+  generateAllTopics();
 }

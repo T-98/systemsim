@@ -2,33 +2,28 @@
  * @file wiki/components/MarkdownBody.tsx
  *
  * Markdown → HTML renderer for wiki topic bodies. Uses `marked` (25KB,
- * no deps) and renders via `dangerouslySetInnerHTML` behind a small
- * allowlist sanitizer.
+ * no deps) with a hand-rolled sanitizer + custom `<CanvasEmbed>` splice.
  *
- * Content sources are all trusted/internal:
- *   - Learn pages: hand-written markdown files bundled with the app.
- *   - Reference pages: auto-imported from system-design-knowledgebase.md
- *     at build time.
- *   - How-to pages: hand-written markdown.
+ * CanvasEmbed integration:
+ *   Authors drop `<CanvasEmbed template="<slug>" />` tags into markdown
+ *   (used by how-to pages). This renderer splits the source on those
+ *   tags, renders each surrounding markdown chunk separately, and
+ *   interpolates <CanvasEmbed /> React components between them. The
+ *   renderer stays safe-by-default — the tag is recognized only in this
+ *   exact syntax, never as arbitrary HTML.
  *
- * The sanitizer is defense-in-depth against a future pipeline that might
- * introduce user-supplied content — not a hot-path concern today.
- *
- * Styling: topic-body prose styles live in index.css `.docs-prose`.
+ * Content sources are all trusted/internal (Learn pages hand-written,
+ * Reference auto-imported from the KB, How-to hand-written). The
+ * sanitizer is defense-in-depth for future user-supplied content.
  */
 
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import { marked } from 'marked';
+import CanvasEmbed from './CanvasEmbed';
 
-// Configure marked once at module load. GFM tables + headers with slugified ids.
-marked.use({
-  gfm: true,
-  breaks: false,
-  // Deterministic heading IDs so the right-rail TOC can anchor to them.
-  // The renderer below emits `id="<slugified heading text>"` on each heading.
-});
+marked.use({ gfm: true, breaks: false });
 
-/** Slugify a heading's text content into a URL-safe anchor id. */
+/** Slugify a heading into a URL-safe id. Used by the right-rail TOC later. */
 export function slugifyHeading(text: string): string {
   return text
     .toLowerCase()
@@ -39,40 +34,143 @@ export function slugifyHeading(text: string): string {
     .slice(0, 64);
 }
 
-interface RenderOpts {
-  /** Rewrites `#docs/...` cross-refs in the rendered HTML at mount time. */
-  baseHash?: string;
-}
-
-/**
- * Render a markdown string to HTML, returning a sanitized string ready
- * for `dangerouslySetInnerHTML`. Memoized on the markdown input.
- */
-export function renderMarkdown(md: string, _opts: RenderOpts = {}): string {
+/** Render a markdown string to sanitized HTML. Memoized on the input. */
+export function renderMarkdown(md: string): string {
   if (!md) return '';
   const raw = marked.parse(md, { async: false }) as string;
   return sanitize(raw);
 }
 
 /**
- * Tiny tag allowlist. Rejects `<script>`, `<iframe>`, `javascript:` URLs.
- * Keeps headings / paragraphs / lists / tables / code / a / img / blockquote.
+ * Allowlist sanitizer. Parses the HTML via DOMParser, walks the tree,
+ * and rebuilds the serialized output keeping only tags + attributes we
+ * expect. Defense-in-depth — our content is internal/trusted today, but
+ * this future-proofs us if the pipeline ever accepts user markdown.
+ *
+ * A regex sanitizer was too easy to bypass:
+ *   - unclosed `<script>`, `<iframe>`, `<object>`, `<embed>`, `<form>`
+ *   - unquoted attributes (`href=javascript:...`)
+ *   - HTML-entity / whitespace tricks (`java\tscript:`, `&#106;avascript:`)
+ *   - dangerous `data:image/svg+xml` URLs
+ *   - inline handlers inside foreign content (MathML, SVG)
  */
+const ALLOWED_TAGS = new Set([
+  'a', 'p', 'br', 'hr', 'span', 'div', 'strong', 'em', 'code', 'pre', 'blockquote',
+  'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+  'table', 'thead', 'tbody', 'tr', 'th', 'td',
+  'img',
+]);
+const ALLOWED_ATTRS: Record<string, Set<string>> = {
+  a: new Set(['href', 'title', 'rel', 'target']),
+  img: new Set(['src', 'alt', 'title', 'width', 'height']),
+  '*': new Set(['class', 'id']),
+};
+const SAFE_URL_RE = /^(https?:|mailto:|#|\/)/i;
+
 function sanitize(html: string): string {
-  // Drop any <script>...</script> or <iframe> blocks outright.
-  let out = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-  out = out.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
-  // Neutralize javascript: / data: on hrefs and srcs.
-  out = out.replace(/\s(href|src)\s*=\s*"(\s*javascript:|\s*data:text\/html)[^"]*"/gi, ' $1="#"');
-  out = out.replace(/\s(href|src)\s*=\s*'(\s*javascript:|\s*data:text\/html)[^']*'/gi, ' $1="#"');
-  // Drop inline event handlers.
-  out = out.replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '');
-  out = out.replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '');
-  return out;
+  if (typeof DOMParser === 'undefined') {
+    // SSR fallback: be conservative — strip all tags. Pages using this path
+    // won't exist in SystemSim today but we leave a safe default.
+    return html.replace(/<[^>]*>/g, '');
+  }
+  const doc = new DOMParser().parseFromString(`<div id="root">${html}</div>`, 'text/html');
+  const root = doc.getElementById('root');
+  if (!root) return '';
+  sanitizeNode(root);
+  return root.innerHTML;
+}
+
+function sanitizeNode(node: Node): void {
+  const children = Array.from(node.childNodes);
+  for (const child of children) {
+    if (child.nodeType === 1 /* element */) {
+      const el = child as Element;
+      const tag = el.tagName.toLowerCase();
+      if (!ALLOWED_TAGS.has(tag)) {
+        // Unknown tag → unwrap: keep safe text children, drop the element.
+        // Avoids dropping legitimate nested text when we remove e.g. <div> wrappers.
+        const safe = el.textContent ?? '';
+        node.replaceChild(document.createTextNode(safe), el);
+        continue;
+      }
+      // Whitelist attributes.
+      for (const attr of Array.from(el.attributes)) {
+        const name = attr.name.toLowerCase();
+        const perTag = ALLOWED_ATTRS[tag];
+        const wildcard = ALLOWED_ATTRS['*'];
+        const allowed = (perTag && perTag.has(name)) || (wildcard && wildcard.has(name));
+        if (!allowed) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+        // Scrub href/src URLs.
+        if ((name === 'href' || name === 'src') && !SAFE_URL_RE.test(attr.value.trim())) {
+          el.setAttribute(attr.name, '#');
+        }
+      }
+      // Force safe `rel` on anchors with target=_blank.
+      if (tag === 'a' && el.getAttribute('target') === '_blank') {
+        el.setAttribute('rel', 'noopener noreferrer');
+      }
+      sanitizeNode(el);
+    } else if (child.nodeType === 8 /* comment */) {
+      node.removeChild(child);
+    }
+  }
+}
+
+// Case-insensitive + matches self-closing / paired forms + tolerant of whitespace.
+const EMBED_RE = /<CanvasEmbed\s+template\s*=\s*"([^"]+)"\s*\/?>(?:<\/CanvasEmbed>)?/gi;
+// Slug allowlist for the embed template fetch (matches the filesystem naming).
+const SAFE_SLUG_RE = /^[a-zA-Z0-9_-]+$/;
+// Fenced + indented code blocks. We blank these out before scanning for embeds
+// so `<CanvasEmbed />` inside a code example doesn't get spliced as a live embed.
+const FENCED_CODE_RE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
+
+interface Segment {
+  kind: 'markdown' | 'embed';
+  content: string;
+}
+
+/** Replace each char inside matches with spaces so indexes outside match are unchanged. */
+function blankRanges(md: string, re: RegExp): string {
+  return md.replace(re, (m) => m.replace(/[^\n]/g, ' '));
+}
+
+/**
+ * Split markdown on CanvasEmbed tags. Scans over a copy of the source with
+ * code blocks blanked out so embeds inside code blocks aren't extracted;
+ * the extracted index ranges are then applied to the original string so
+ * the output preserves verbatim markdown.
+ */
+function splitOnEmbeds(md: string): Segment[] {
+  const segs: Segment[] = [];
+  const scannable = blankRanges(md, FENCED_CODE_RE);
+  let last = 0;
+  let m: RegExpExecArray | null;
+  EMBED_RE.lastIndex = 0;
+  while ((m = EMBED_RE.exec(scannable))) {
+    const slug = m[1].trim();
+    if (!SAFE_SLUG_RE.test(slug)) continue; // Silently drop — never fetch arbitrary paths.
+    if (m.index > last) segs.push({ kind: 'markdown', content: md.slice(last, m.index) });
+    segs.push({ kind: 'embed', content: slug });
+    last = m.index + m[0].length;
+  }
+  if (last < md.length) segs.push({ kind: 'markdown', content: md.slice(last) });
+  return segs;
 }
 
 export default function MarkdownBody({ markdown }: { markdown: string }) {
-  const html = useMemo(() => renderMarkdown(markdown), [markdown]);
+  const segments = useMemo(() => splitOnEmbeds(markdown), [markdown]);
+  const rendered = useMemo(
+    () =>
+      segments.map((s) => ({
+        kind: s.kind,
+        html: s.kind === 'markdown' ? renderMarkdown(s.content) : s.content,
+      })),
+    [segments]
+  );
+
   return (
     <div
       className="docs-prose"
@@ -84,7 +182,17 @@ export default function MarkdownBody({ markdown }: { markdown: string }) {
         letterSpacing: '-0.12px',
         maxWidth: 720,
       }}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    >
+      {rendered.map((seg, i) => {
+        if (seg.kind === 'embed') {
+          return <CanvasEmbed key={`embed-${i}`} template={seg.html} />;
+        }
+        return (
+          <Fragment key={`md-${i}`}>
+            <div dangerouslySetInnerHTML={{ __html: seg.html }} />
+          </Fragment>
+        );
+      })}
+    </div>
   );
 }
