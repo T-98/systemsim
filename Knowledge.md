@@ -638,3 +638,29 @@ end of tick:
 | Add a new LLM endpoint | New file under `api/` + [api/_shared/handler.ts](api/_shared/handler.ts) pattern |
 | Add a new template | New JSON in `/public/templates/` matching `CanonicalGraph` shape |
 | Add a new resilience pattern (e.g. rate limiter, bulkhead) | Same shape as [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts): types + evaluate fn + opt-in via `WireConfig` + hook into `forwardOverWire` |
+| Author a new system-design concept for the wiki | Add a section in [system-design-knowledgebase.md](system-design-knowledgebase.md) (authorial memory, prose-first, cross-referenced). Wiki copy in `src/wiki/topics.ts` derives from it — never the other way. See Decisions §35. |
+
+---
+
+## Knowledge Base (`system-design-knowledgebase.md`)
+
+**What it is.** Long-form authorial memory for the wiki layer. Parts I–VIII cover design thinking, fundamentals, building blocks, API layer, scaling & resilience, patterns & templates, extended patterns + case studies, and SIMFID runtime internals.
+
+**What it isn't.** Not served to users. Wiki cards are **curated derivatives** (short text + diagram + pre-configured exercise) authored into `src/wiki/topics.ts`.
+
+**Population order** (KB Phase 0.x):
+1. Phase 0.1 — skeleton + §1–§8 (Design thinking + fundamentals) — done
+2. Phase 0.2 — §9 Load Balancing, §10 Caching, §25 CQRS — done
+3. Phase 0.3 — §13 Message Queues, §21 Microservice Resilience — done
+4. Phase 0.4 — §12 Database Scaling — done
+5. Phase 0.5 — §11 Data Storage — done
+6. **Phase 0.6** — §22 Rate Limiting, §23 Saga, §24 Fan-Out/Fan-In, §26 Pre-Computing, §27 Unique IDs, **§33–§39 Part VII (Extended Patterns & Case Studies)** — done 2026-04-17
+7. Phase 0.7 — §14 Batch & Stream (Big Data) — pending
+8. Phase 0.8 — §40–§44 SIMFID Runtime (sourced from internal code, not external articles) — pending
+
+**Voice rules** (enforce on every new KB section):
+- Real-world anchors (e.g. Twitter fan-out, Redis, AWS API throttling) — never abstract.
+- Tradeoffs foregrounded. No pros without cons.
+- ASCII diagrams when structure matters (match §25 CQRS style).
+- Prose first, lists only when list-shaped.
+- Cross-references explicit (`see §12 for CDC mechanics`), not `as discussed elsewhere`.

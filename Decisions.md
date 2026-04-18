@@ -455,3 +455,21 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Why:** Runtime is hard to copy (requires deep distributed systems knowledge). Breadth commoditizes. Drawing tools are a race to the bottom.
 - **Rejected:** Feature breadth (commoditizes). LLM-generation focus (users can use ChatGPT).
 - **Source:** [memory/project_customer_interviews.md](~/.claude/projects/-Users-divyanshkhare-DeveloperWorkArea-systemsim/memory/project_customer_interviews.md), direction reflected in SIMFID Phase 1-3 scope.
+
+### 35. KB `system-design-knowledgebase.md` is authorial memory, not served content
+
+- **When:** KB Phase 0.6 (2026-04-17)
+- **Context:** The wiki/info-card promise in PRODUCT_VISION.md lines 5–6 needs well-structured long-form content to draw from. Options: (a) serve the KB directly as wiki pages, (b) curate derivative wiki pages from the KB.
+- **Decision:** KB is treated as **authorial memory** — long-form, prose-first, cross-referenced. Wiki copy in `src/wiki/topics.ts` is **curated derivatives** (1–2-sentence popovers, 3–5-paragraph wiki pages, diagrams, "Load in canvas" buttons). Never serve the KB verbatim.
+- **Why:** Wiki needs pacing, diagrams, and product-specific context (how SIMFID models the concept) that a reference doc shouldn't carry. KB needs completeness and cross-references a wiki UI would fight. Two audiences, two voices.
+- **Rejected:** Serving the KB as the wiki (loses product specificity; pace is wrong for UI consumption). Skipping the KB (forces the wiki writer to invent structure and leads to inconsistent voice across topics).
+- **Source:** [/Users/divyanshkhare/.claude/plans/replicated-brewing-floyd.md](~/.claude/plans/replicated-brewing-floyd.md), [system-design-knowledgebase.md](system-design-knowledgebase.md) header.
+
+### 36. KB structure: Part VII "Extended Patterns & Case Studies" for source material that didn't have canonical section slots
+
+- **When:** KB Phase 0.6 (2026-04-17)
+- **Context:** The original KB skeleton numbered §22 Rate Limiting through §27 Unique IDs under Parts V/VI. Five source articles (cache-first, two-stage, DB-per-service, DB optimization, CDC sync) plus two case studies (Kafka+Redis, MQ+cache) had no sections. Options: fold into existing sections (bloats them) or add new sections.
+- **Decision:** Added **Part VII — Extended Patterns & Case Studies** with §33–§39. SIMFID Runtime shifts to Part VIII (§40–§44). TOC + cross-references updated.
+- **Why:** Keeps the "one screen, one topic" constraint the topic registry needs. Case studies (§38, §39) are integration examples that benefit from standalone top-level status. Fold-into-§10 would have bloated Caching past readability.
+- **Rejected:** Folding into existing sections (§10 becomes 500 lines). Separate docs per pattern (fragments the "one canonical source" invariant).
+- **Source:** KB file revision 2026-04-17, Phase 0.6.
