@@ -473,3 +473,12 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Why:** Keeps the "one screen, one topic" constraint the topic registry needs. Case studies (§38, §39) are integration examples that benefit from standalone top-level status. Fold-into-§10 would have bloated Caching past readability.
 - **Rejected:** Folding into existing sections (§10 becomes 500 lines). Separate docs per pattern (fragments the "one canonical source" invariant).
 - **Source:** KB file revision 2026-04-17, Phase 0.6.
+
+### 37. KB §14 Big Data is one mega-section, sub-headed — not 18 separate top-level §s
+
+- **When:** KB Phase 0.7 (2026-04-17)
+- **Context:** 18 source articles on batch and stream processing needed to land in the KB. Options: (a) 18 top-level sections (§14 → §31 or similar — would force renumbering again); (b) one mega-section §14 with 6 groups × multiple sub-headings, matching the shape §10 Caching established (343 lines, multi-sub-heading).
+- **Decision:** Single §14 Batch & Stream Processing with sub-sections §14.1–§14.6 covering Foundations, Batch, Stream, Architectures, Delivery & Correctness, Serving Layer. Mirrors §10's shape.
+- **Why:** Consistency with §10 (the only other mega-topic in the KB). Avoids a second round of TOC renumbering. Lets the wiki topic registry pick individual sub-sections (e.g. `concept.watermark` → §14.3.3) without a separate §-per-topic naming burden.
+- **Rejected:** 18 top-level §s (churn in numbering, harder to navigate). Splitting across parts (batch in Part III, stream in Part V — loses the batch-stream-unified narrative).
+- **Source:** KB file §14 revision 2026-04-17, Phase 0.7.

@@ -30,7 +30,7 @@
 11. [Data Storage](#11-data-storage) *(populated in Data Storage pass)*
 12. [Database Scaling — Partitioning, Replication, Consistent Hashing](#12-database-scaling) *(populated in How to Scale Databases pass)*
 13. [Message Queues & Async Communication](#13-message-queues--async-communication) *(populated in Microservices pass)*
-14. [Batch & Stream Processing](#14-batch--stream-processing) *(populated in Big Data pass)*
+14. [Batch & Stream Processing](#14-batch--stream-processing)
 
 ### Part IV — API Layer
 15. [API Gateway](#15-api-gateway)
@@ -1457,7 +1457,470 @@ A real system uses both. Order service: sync call to payment (caller needs the r
 
 ## 14. Batch & Stream Processing
 
-*Populated during Big Data pass.*
+Once the working data no longer fits in a single request-response cycle — log lines by the billion, user events at millions-per-second, nightly analytics joining terabytes — you're in data-processing territory. Two families handle this work:
+
+- **Batch** — processes bounded inputs end-to-end. Runs on a schedule (nightly, hourly) or on demand. Latency: minutes to hours. Optimized for throughput and completeness.
+- **Stream** — processes unbounded inputs as they arrive. Runs continuously. Latency: milliseconds to seconds. Optimized for freshness.
+
+Modern systems run both, often on the same engine. This section walks the curriculum from Unix pipes (the ancestor of both) through the production architectures (Lambda, Kappa) that compose them.
+
+### 14.1 Foundations
+
+#### 14.1.1 Unix Pipelines — The Ancestor of Batch
+
+The Unix pipe is the origin of modern batch processing:
+
+```
+cat access.log | grep "ERROR" | awk '{print $7}' | sort | uniq -c | sort -rn | head
+```
+
+Each stage is a small, composable program that reads from stdin and writes to stdout. The pipe (`|`) connects them; the OS handles buffering.
+
+This design has aged remarkably well. Every modern batch engine — MapReduce, Spark, Flink — is in one sense "Unix pipes at scale, with shuffle between stages."
+
+**What Unix pipes taught us:**
+- **Composition over monoliths.** Small operators chained via a simple contract (bytes in, bytes out) beat giant programs that do everything.
+- **Backpressure via blocking I/O.** A slow downstream stage blocks the pipe, which blocks upstream. No explicit coordination.
+- **Failure = the pipeline dies.** Any stage crashes, the whole job fails. Simple, but unworkable at terabyte scale — the rerun cost is prohibitive.
+
+Distributed batch solves the failure-and-rerun-cost problem with checkpointing, partitioning, and per-stage retry — but the mental model stays the same.
+
+#### 14.1.2 Stream Processing Introduction — Unbounded Data and Message Brokers
+
+Streams are the complementary model: data arrives continuously, with no known end. You can't wait for "all the data" before you start — there's always more.
+
+The core stream-processing primitive is a **message broker** (§13) holding an append-only log. Producers write; consumers read; the log retains data for hours to days.
+
+```
+Producer ─▶ [ log: e1 e2 e3 e4 e5 e6 e7 ... ] ─▶ Consumer
+                ↑                      ↑
+             start            current offset
+```
+
+Stream processing sits on this substrate: jobs read the log, transform events, write derived streams or sinks. Kafka Streams, Flink, and similar frameworks provide the abstractions — windowing, state, joins — on top of the raw broker.
+
+**The unbounded constraint forces new primitives:**
+- **Windowing** (§14.3.2) — since you can't compute over "all data," bound by time or count.
+- **State management** — jobs accumulate state (running counts, joins) that must survive restarts.
+- **Watermarks** (§14.3.3) — since events arrive late, you need a notion of "we've waited enough, emit results now."
+
+These are the ideas §14.3 expands.
+
+### 14.2 Batch Processing
+
+#### 14.2.1 MapReduce — Map, Shuffle, Reduce
+
+Google's 2004 paper that kicked off the big-data era. The model: express any distributed computation as two functions.
+
+```
+Input ─▶ map(k, v) → list[(k', v')] ─▶ [shuffle by k'] ─▶ reduce(k', list[v']) → out
+```
+
+- **Map** — process one record, emit zero or more (key, value) pairs.
+- **Shuffle** — redistribute data so all values for a key land on one reducer.
+- **Reduce** — aggregate values per key.
+
+Classic example (word count):
+```
+map("the quick fox") → [("the", 1), ("quick", 1), ("fox", 1)]
+shuffle groups by word
+reduce("the", [1, 1, 1, 1]) → ("the", 4)
+```
+
+**What MapReduce got right:**
+- Automatic parallelism: the engine partitions input across many map workers, then many reduce workers.
+- Fault tolerance: if a worker dies, re-run its partition on another node. Intermediate state is on disk, so recovery is bounded.
+- Dead-simple mental model: two functions.
+
+**What MapReduce got wrong (and why Spark replaced it):**
+- Each job writes intermediate output to disk (HDFS). Multi-stage pipelines (map → reduce → map → reduce) meant many round trips through disk. Slow.
+- No interactive queries. Every question was a full job.
+- Shuffle was the bottleneck. Optimizing it required deep engine expertise.
+
+MapReduce is mostly historical now — the intellectual ancestor of Spark and Flink rather than a production choice. But the map/shuffle/reduce abstraction still shows up in modern engines, just hidden behind a higher-level API (SQL, DataFrames).
+
+#### 14.2.2 HDFS — Distributed File System for Big Data
+
+HDFS (Hadoop Distributed File System) is the storage layer MapReduce assumed and Spark still supports. One namenode tracks metadata; many datanodes hold data. Files are split into blocks (typically 128MB or 256MB), each replicated across three nodes for durability.
+
+```
+Namenode (metadata: file → [block_ids], block_id → [datanode_ids])
+    │
+    ├── Datanode 1: blocks [1a, 2c, 3a, ...]
+    ├── Datanode 2: blocks [1b, 2a, 3b, ...]
+    └── Datanode 3: blocks [1c, 2b, 3c, ...]  (3× replication)
+```
+
+**Why HDFS instead of a regular filesystem:**
+- **Scales to petabytes.** A single namespace across thousands of machines.
+- **High throughput over low latency.** Optimized for 128MB block scans, not small-file random reads.
+- **Data locality.** The scheduler runs computation on the node that holds the data — no "move the data, move the compute" tradeoff, they're co-located.
+- **Replication built in.** Lose a datanode, HDFS detects and re-replicates missing blocks automatically.
+
+**What HDFS isn't good at:**
+- **Small files.** The namenode holds metadata in RAM. Millions of small files exhaust it. Pack small files into sequence files, Parquet, or HBase.
+- **Low-latency access.** Seeking within a block is fine, but first-byte latency is high. Not a serving layer.
+- **POSIX semantics.** Append-only. No in-place updates. No random writes.
+
+In the cloud, HDFS has largely been replaced by object stores (S3, GCS, Azure Blob). Spark/Flink read directly from object storage, skipping HDFS entirely. HDFS remains common in on-prem Hadoop deployments and as a conceptual model for distributed storage.
+
+#### 14.2.3 Apache Spark — Batch Beyond MapReduce
+
+Spark's key insight in 2014: **keep intermediate data in RAM when possible.** MapReduce wrote intermediate results to HDFS; Spark prefers in-memory caching and only spills to disk when memory pressure forces it. Shuffle output is still materialized (commonly to disk) — the win is avoiding the eager HDFS round-trips MapReduce required between every stage.
+
+The abstraction: **Resilient Distributed Datasets (RDDs)** — immutable, partitioned collections with a lineage (the sequence of transformations that produced them). Lineage lets Spark **recompute** a lost partition from its inputs, so state doesn't need to be persisted between every stage for fault tolerance (only the inputs + the DAG).
+
+Higher-level APIs built on top:
+- **DataFrames / Datasets** — tabular abstraction with Catalyst optimizer. Most Spark code today is this.
+- **Spark SQL** — SQL over DataFrames.
+- **Structured Streaming** — streaming via micro-batches (§14.3.5).
+- **MLlib / GraphX** — domain-specific libraries, less used in practice.
+
+**Why Spark won over MapReduce:**
+- **10–100× faster** for iterative or multi-stage jobs (machine learning, graph algorithms).
+- **Interactive queries** — Spark shell + Spark SQL enable exploration.
+- **One engine, many workloads** — batch, streaming, SQL, ML, graph, all on the same substrate.
+
+**Where Spark hurts:**
+- **Memory pressure.** Big joins or skewed keys can spill to disk, eroding the performance advantage.
+- **Tuning.** Partition count, executor memory, shuffle settings — Spark jobs are notorious for needing deep tuning at scale.
+- **Streaming latency.** Structured Streaming's micro-batch model has seconds of latency, not milliseconds. For sub-second work, Flink is the better choice.
+
+Spark is the default production batch engine in 2025. Choose it unless you need sub-second stream latency (pick Flink) or your scale fits a single-node tool like DuckDB.
+
+#### 14.2.4 ETL vs ELT — Data Pipeline Transformation Patterns
+
+Three letters, different order, different architecture:
+
+**ETL — Extract, Transform, Load.** Pull from source, transform in a separate system (Spark, Informatica), load into warehouse. Transform happens *before* landing in the warehouse.
+
+```
+Source DB ─▶ Extract ─▶ Spark transform ─▶ Load ─▶ Warehouse
+```
+
+- **Pros:** cleaner data in the warehouse. Warehouse isn't burdened with transform compute.
+- **Cons:** need a separate transform engine + team. Raw data isn't kept — if transform logic was wrong, reprocessing requires re-extracting from source.
+
+**ELT — Extract, Load, Transform.** Pull raw data, dump into the warehouse, transform with warehouse SQL.
+
+```
+Source DB ─▶ Extract ─▶ Load ─▶ Warehouse ─▶ Transform (SQL) ─▶ marts
+```
+
+- **Pros:** raw data always available (replay-friendly). Warehouse SQL handles transforms, removing the separate engine. Tools like dbt make the transform layer first-class.
+- **Cons:** warehouse compute costs grow (you're paying cloud warehouse pricing for transform work).
+
+**Modern consensus: ELT wins in the cloud.** Snowflake/BigQuery/Databricks have enough compute to absorb the transform layer, and keeping raw data cheaply in S3/object storage makes "extract once, transform many times" viable. ETL persists where regulatory constraints require pre-warehouse redaction, or where transform logic is too heavy for SQL (e.g. ML feature engineering).
+
+### 14.3 Stream Processing
+
+#### 14.3.1 Modern Stream Processing — Flink and Kafka Streams
+
+Two production-grade stream processors dominate today:
+
+**Apache Flink** — true streaming engine. Records are processed one at a time with millisecond latency. Has a full state abstraction (keyed state, operator state) with exactly-once semantics through distributed checkpointing (the Chandy-Lamport algorithm).
+
+- **Pros:** sub-second latency, rich windowing + state, first-class event-time support, batch is a special case of bounded streaming.
+- **Cons:** operational complexity (cluster to run, checkpoints to manage), steeper learning curve than SQL-based tools.
+- **Used by:** Uber, Alibaba, Netflix for real-time dashboards, fraud detection, personalization.
+
+**Kafka Streams** — a library, not a cluster. Runs in your JVM process, reads from / writes to Kafka, stores state in local RocksDB backed by Kafka changelog topics. No separate cluster to operate.
+
+- **Pros:** radically simpler ops (just another microservice). Exactly-once by tight integration with Kafka. Fits naturally if you're already Kafka-centric.
+- **Cons:** tied to Kafka (no generic source/sink). Java/Scala only (KSQL exists for simple queries). Scales by partition count, so re-sharding is painful.
+- **Used by:** teams that already have Kafka and don't want a second cluster.
+
+**Rough mental model:**
+- Kafka Streams: **stream-processing as a library**.
+- Flink: **stream-processing as a platform**.
+
+Spark Structured Streaming is a third option (micro-batch, §14.3.5) — convenient if you're already on Spark, but higher latency than Flink.
+
+#### 14.3.2 Windowing — Tumbling, Sliding, Session
+
+Stream operators can't wait for "all the data" — but most aggregations need a bounded set. Windowing bounds a stream into finite chunks.
+
+**Tumbling windows.** Fixed size, non-overlapping.
+```
+[0s─10s) [10s─20s) [20s─30s) [30s─40s) ...
+```
+Simple. Every event belongs to exactly one window. Good for periodic aggregation — "hourly page views."
+
+**Sliding windows.** Fixed size, overlapping by a slide interval.
+```
+[0s─10s)
+     [5s─15s)
+          [10s─20s)
+```
+Smoother trend-lines. Events can land in multiple windows. Good for "rolling 5-minute average updated every minute."
+
+**Session windows.** Dynamic size, defined by a gap threshold. If two events for a key are within the gap, they're in the same session.
+```
+events: 1s, 3s, 4s,      ...pause...,      30s, 31s
+gap = 5s
+session 1: [1s, 3s, 4s]   session 2: [30s, 31s]
+```
+Matches natural user behavior. Good for "user engagement session," "ride segment," "call duration."
+
+**Count-based windows** (less common). "Every 100 events" instead of "every 10s." Useful when events are rare or bursty.
+
+#### 14.3.3 Event Time, Processing Time, and Watermarks
+
+Two clocks in a stream:
+
+- **Event time** — when the event *happened* (timestamp embedded in the event).
+- **Processing time** — when the system *saw* the event.
+
+They diverge. Network delays, client-side buffering, retries — events can arrive seconds, minutes, or hours late. For correct analytics ("page views at 9:00 PM") you usually want event time.
+
+**The problem:** if you window by event time, how do you know when to close a window? More events for that window might still be in flight.
+
+**The answer:** watermarks. A watermark is a monotonically advancing signal that says "we believe no more events with timestamp < X will arrive." When the watermark passes the window's end, close the window and emit.
+
+```
+events arrive: t=3, t=1, t=5, t=2, t=7, t=4, t=10, ...
+watermark advances: 1, 2, 3, 4, 5, 7, 7, 10 ...
+                    (never jumps backward)
+```
+
+**Lateness handling.** Even with watermarks, truly late events occasionally arrive after the window closed. Options:
+- **Drop them.** Simple; some data loss.
+- **Side output.** Route late events to a separate stream for reprocessing or alerting.
+- **Allow late-firings.** Re-open the window and emit an updated result. Powerful, but downstream must handle updates (idempotency or revision columns).
+
+Event-time + watermarks is the single biggest conceptual hurdle in stream processing. Miss it and your numbers will be subtly wrong during periods of lag.
+
+#### 14.3.4 Unified Batch and Stream — Flink, Spark, Beam
+
+A modern trend: one engine, one API, both bounded (batch) and unbounded (stream) data.
+
+The insight: **batch is a special case of streaming with a known end.** If your engine handles windows, state, and exactly-once at all, batch falls out of it naturally.
+
+- **Flink** treats batch as bounded streams. The same API works on both.
+- **Spark Structured Streaming** treats streams as infinite DataFrames processed incrementally.
+- **Apache Beam** is a portable API that compiles to Flink, Spark, Dataflow, etc. Promises write-once, run-anywhere — in practice, each runner has quirks.
+
+Benefits: one engine, one team, one mental model. Same pipeline code runs nightly over historical data and continuously over live data.
+
+Risks: abstraction leaks. Tuning a batch job on a streaming engine often requires engine-specific knobs.
+
+#### 14.3.5 Micro-Batch vs True Streaming
+
+A taxonomy point worth explicit note:
+
+- **True streaming** (Flink, Kafka Streams): process each event individually. Latency: single-digit ms possible.
+- **Micro-batch** (Spark Structured Streaming): accumulate events for N seconds, process as a batch. Latency: N seconds + processing time.
+
+Micro-batch is easier to implement (batch ops apply) and easier to tune (same as batch jobs). True streaming is harder but necessary for sub-second latency.
+
+For most business use cases (hourly dashboards, per-minute alerts) micro-batch is fine. For real-time ML inference, fraud detection, high-frequency trading-adjacent work: true streaming.
+
+### 14.4 Architectures
+
+#### 14.4.1 Lambda Architecture — Batch Layer + Speed Layer
+
+Before unified engines, teams ran batch for correctness and streaming for freshness. Lambda codified this.
+
+```
+ Events ─┬─▶ Batch Layer ───▶ Batch view ─┐
+         │                                 ├─▶ Serving Layer ─▶ Queries
+         └─▶ Speed Layer ──▶ Real-time view ┘
+```
+
+- **Batch layer** reprocesses all historical data periodically. Source of truth. Slow (hours).
+- **Speed layer** handles only recent events (since the last batch run). Fast (seconds) but **incomplete** — it has only the tail of the data, not the whole history. The results over its covered window can be fully accurate; the limitation is scope (a thin slice), not approximation.
+- **Serving layer** merges both: for old data, use batch view; for recent data, use speed view.
+
+**Pros:** batch correctness + streaming freshness. Bug in streaming? Batch will overwrite it next run.
+
+**Cons:**
+- **Two codebases.** The same logic exists in batch form and streaming form. They drift.
+- **Two ops stacks.** Two engines to tune, two pipelines to monitor.
+- **Merge complexity.** The serving layer has to combine batch and streaming results, handling overlap and deduplication.
+
+Lambda was the right answer in 2014. By 2020, most teams consolidated — see Kappa.
+
+#### 14.4.2 Kappa Architecture — Everything is a Stream
+
+Kappa's proposition: **one codebase, one pipeline.** Treat everything as a stream. Recompute history by replaying the stream from the beginning.
+
+```
+Events ─▶ Durable Log (Kafka) ─▶ Stream Processor ─▶ Views ─▶ Queries
+                               ↑
+                          replay from offset 0 to rebuild
+```
+
+- Source of truth: the durable log with infinite retention (or long enough to replay).
+- Reprocessing: spin up a second consumer from offset 0, let it catch up, cut over.
+
+**Pros:** one codebase, one engine, one ops burden. Reprocessing is just a rerun of the same code.
+
+**Cons:**
+- **Log retention cost.** Keeping months of events in Kafka is expensive at scale.
+- **Replay time.** Rebuilding a year of derived state from the raw log takes hours.
+- **Stream-engine maturity.** Requires an engine that handles both live and replay well (Flink, Kafka Streams).
+
+Kappa fits when: stream processing is already your production path, log retention is affordable, and you've consolidated onto one engine. Most modern teams running Flink + Kafka are Kappa without calling it that.
+
+#### 14.4.3 Real-Time Analytics — Patterns and Trade-offs
+
+Production real-time analytics (dashboards, fraud detection, operational metrics) usually combines three layers:
+
+1. **Ingestion** — Kafka (or similar) as the log of record.
+2. **Processing** — Flink/Kafka Streams/Spark computing aggregates, joins, windowed metrics.
+3. **Serving** — a fast OLAP store (Druid, Pinot, ClickHouse, Rockset) that accepts stream writes and answers sub-second queries.
+
+```
+Kafka ─▶ Flink ─▶ (Pinot / Druid / ClickHouse) ─▶ Dashboard
+```
+
+**Tradeoff axes for real-time analytics:**
+
+- **Query latency vs data freshness.** Druid and Pinot target both (sub-second queries on data seconds old) and are purpose-built for operational analytics. Warehouse-class engines like Snowflake are weaker on both axes for this workload — they prioritize flexible SQL at scale over low-latency, real-time-fresh serving — but "weaker on this workload" isn't "optimizes for neither": Snowflake is well-optimized for large ad-hoc analytical queries over warehouse-scale data.
+- **Query flexibility.** Pre-aggregated views are fast but rigid; OLAP engines allow arbitrary SQL at higher query cost.
+- **Cost.** Real-time OLAP is hot storage + always-on compute. Batch is cold storage + on-demand compute. Cost difference is 10×+.
+- **Consistency.** Real-time views lag the source by seconds. If "consistent with source DB" matters, you may need CDC (§37) + a second read path.
+
+The common architecture in 2025: Kafka → Flink → ClickHouse (or Pinot/Druid), with a dbt-managed ELT pipeline filling a Snowflake warehouse for ad-hoc analytics on the same data.
+
+### 14.5 Delivery & Correctness
+
+#### 14.5.1 Delivery Guarantees — At-Most-Once, At-Least-Once, Exactly-Once
+
+The three possible guarantees a pipeline can offer for each event:
+
+**At-most-once.** Events may be lost, never duplicated. Simplest. Rarely acceptable — data loss is usually worse than duplication. Used when the data is truly optional (sampled metrics, debug logs).
+
+**At-least-once.** Events are never lost; may be duplicated. The default for most message systems. Works fine if your consumer is idempotent.
+
+**Exactly-once.** Events are neither lost nor duplicated. The holy grail. Expensive — requires transactional coordination between source, processing, and sink.
+
+**The catch with "exactly-once":**
+
+Exactly-once *end-to-end* requires every hop (source → processor → sink) to participate in a coordinated commit — or for the sink to be idempotent enough that duplicate writes produce the same result. Flink's internal guarantees (exactly-once state via checkpointing) are not automatically end-to-end; whether the sink is actually exactly-once depends on its commit protocol.
+
+- Kafka source + Flink + Kafka sink with Kafka's transactional API: end-to-end exactly-once.
+- Kafka + Flink + Iceberg/Delta with committed snapshot writes: end-to-end exactly-once.
+- Kafka + Flink writing to a generic REST API: at-least-once, unless the API is idempotent by key.
+- Kafka + Flink writing to a plain DB: exactly-once only if you implement idempotent upserts or use a 2PC/XA-capable sink.
+
+**Practical stance:** aim for **at-least-once delivery + idempotent consumers** as the default. True exactly-once is available with Flink/Kafka Streams but comes with throughput and latency overhead. Worth it for financial ledgers, overkill for most analytics.
+
+See §13 for related message-queue semantics.
+
+#### 14.5.2 Pipeline Error Handling — DLQ, Retries, Monitoring
+
+When a pipeline stage can't process an event, three options:
+
+1. **Fail the job.** Simple; turns every poison pill into a page. Not viable at scale.
+2. **Skip and log.** Drops the event silently. Hidden data loss is the worst kind.
+3. **Retry, then route to a DLQ.** The production answer.
+
+**Dead Letter Queue (DLQ).** A side-channel topic (or queue) for events that failed N retries. The main pipeline continues; failed events land in the DLQ with error metadata.
+
+```
+Processor ─▶ (on error, after N retries) ─▶ DLQ
+                                              │
+                                              ▼
+                                      Manual review / replay tool
+```
+
+**Retry strategy.**
+- **Exponential backoff.** First retry: 1s. Second: 2s. Third: 4s. Caps around 60s. Prevents retry storms (§41).
+- **Retry only retryable errors.** 503 / timeout / transient DB errors: yes. Schema mismatch / parse error: no — a retry will fail the same way.
+- **Cap retries.** After N (typically 3–5), DLQ it.
+
+**Monitoring the DLQ.** A full DLQ is a red flag:
+- Rising DLQ → schema drift, upstream change, poison-pill input.
+- Constantly-populated DLQ → indicates a class of events you're silently losing.
+- DLQ size alerts should fire at thresholds (absolute count + rate of change).
+
+**Replay tools.** Once DLQ events are fixed (code change or manual fix), replay them through the normal pipeline. Design the replay path from day one — otherwise DLQ just becomes a graveyard.
+
+#### 14.5.3 Backfill and Reprocessing Strategies
+
+Reality: pipeline bugs ship. Schemas change. Business rules get rewritten. All three mean reprocessing historical data.
+
+**Two styles:**
+
+**Full rebuild.** Start from the raw source (durable log or DB), re-run the pipeline end-to-end, overwrite the derived state.
+- Simple to reason about.
+- Expensive (time, compute).
+- Requires long-retention raw data.
+
+**Incremental backfill.** Process only the affected window. Typical when a bug affected data between two dates.
+- Cheaper and faster.
+- Complex: need to identify affected records, re-emit, deduplicate at the sink.
+
+**Three dimensions to plan:**
+
+1. **Source of truth.** Is the raw log still there? How far back? If retention is 30 days and the bug landed 60 days ago, you've got a harder problem.
+2. **Sink behavior.** Can the sink accept reprocessed writes? Idempotent upserts are easy; append-only sinks (time-series DBs) are hard — duplicates become a problem.
+3. **Concurrent live traffic.** Backfill runs while the live pipeline continues. Are you running two pipelines (live + backfill) into the same sink? If so, ordering and deduplication matter.
+
+**Typical backfill pattern:**
+1. Pause or route live traffic aside (optional).
+2. Identify affected date range.
+3. Spin up a parallel pipeline instance reading the raw log from the start of the range.
+4. Write to a shadow sink or the live sink with idempotency keys.
+5. Validate; cut over if needed.
+
+**Kappa-aligned teams backfill by replaying the log with a second consumer.** Most teams don't have the log retention or engine capacity, so they backfill ad hoc. Either way, the pattern should be an explicit, tested capability — not something you build the first time you need it at 3am.
+
+### 14.6 Serving Layer
+
+#### 14.6.1 Materialized Views from Streams — Pre-Aggregation for Dashboards
+
+Dashboards need aggregated results (counts, sums, percentiles over windows). Recomputing these on every query is expensive. **Materialized views** from streams let the stream processor maintain them incrementally.
+
+```
+Stream ─▶ Flink (aggregate per 1min window, per user) ─▶ KV store ─▶ Dashboard
+```
+
+Every incoming event updates the aggregate. Queries read the pre-computed result.
+
+**Benefits:**
+- **Fast queries.** Reads scan pre-computed results instead of raw events. Actual cost still depends on result cardinality, index layout, and how many pre-computed rows the query touches — not literally O(1) in all shapes, but orders of magnitude cheaper than re-aggregating raw events per query.
+- **Freshness.** Aggregates lag the stream by the window size + watermark.
+- **Incremental work.** One event → one update. No full rescans.
+
+**Tradeoffs:**
+- **Schema rigidity.** If the dashboard wants a new breakdown, you re-run the pipeline to produce a new materialized view. Not ad-hoc friendly.
+- **Storage growth.** Many views = many KV stores or tables to manage.
+- **Recovery cost.** Losing the state means replaying the source log.
+- **Aggregates don't all compose incrementally.** Simple aggregates (count, sum, min, max) merge cleanly over windows. Exact quantiles (p50/p95/p99), distinct counts, and top-K do **not** — you'd need to retain the full dataset per window. Production code uses **mergeable sketches**: HLL for distinct counts, t-digest / DDSketch / HDR-histogram for percentiles, Count-Min Sketch for top-K. These trade bounded error for constant memory per window. Don't advertise p99 off a materialized view without naming the sketch and its error bounds.
+
+The §26 pre-computing tradeoff applies here, just at the stream-processor level. See §38 for a real-world composition (Kafka + Redis sorted sets as materialized views of a comment stream).
+
+#### 14.6.2 Time-Series Patterns — Bucketing, Rollups, Retention
+
+Time-series data (metrics, events, sensor readings) has characteristic shapes:
+- Always timestamp-indexed.
+- Append-only (past data doesn't change).
+- Raw data: high volume, high fidelity, short retention.
+- Aggregated data: lower volume, coarser resolution, longer retention.
+
+**Bucketing.** Group raw points into time buckets (1s, 1min, 5min). Store the bucket aggregate (mean, p95, count). Querying a wide range just reads bucket rows — a 1-year chart isn't 31M points, it's a few hundred buckets.
+
+**Rollups.** Progressively aggregate over time.
+```
+Raw 1s → 1min aggregate → 10min → 1h → 1d
+```
+- Retain 1s data for 24h.
+- Retain 1min data for 30d.
+- Retain 1h data for 2 years.
+- Retain 1d data forever.
+
+Query the coarsest resolution that satisfies the question.
+
+**Retention policies.** Automatic TTL on each resolution tier. Most time-series DBs (Prometheus, Graphite, InfluxDB, VictoriaMetrics) have this built in.
+
+**Cardinality.** The silent killer of time-series systems. Each unique combination of indexed dimensions (user_id, region, device, ...) becomes its own series. Unbounded dimensions (request_id, session_id) → billions of series → index explosion. The cross-system rule: **do not put unbounded or high-cardinality dimensions into indexed labels/tags.** The mechanism varies by engine — Influx has tags vs fields (fields aren't indexed), Prometheus has labels only (no fields equivalent — high-cardinality values simply don't belong in labels), ClickHouse uses regular columns (cardinality affects compression and primary-key design, not a separate "field" concept). Know your engine's model before deciding where high-cardinality values go.
+
+**Production defaults:**
+- **Prometheus** for metrics (pull model; Grafana pairing).
+- **ClickHouse** for high-cardinality time-series + analytics (query flexibility).
+- **TimescaleDB** when time-series has to live alongside relational data.
 
 ---
 

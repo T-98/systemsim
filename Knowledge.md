@@ -654,8 +654,8 @@ end of tick:
 3. Phase 0.3 — §13 Message Queues, §21 Microservice Resilience — done
 4. Phase 0.4 — §12 Database Scaling — done
 5. Phase 0.5 — §11 Data Storage — done
-6. **Phase 0.6** — §22 Rate Limiting, §23 Saga, §24 Fan-Out/Fan-In, §26 Pre-Computing, §27 Unique IDs, **§33–§39 Part VII (Extended Patterns & Case Studies)** — done 2026-04-17
-7. Phase 0.7 — §14 Batch & Stream (Big Data) — pending
+6. Phase 0.6 — §22 Rate Limiting, §23 Saga, §24 Fan-Out/Fan-In, §26 Pre-Computing, §27 Unique IDs, §33–§39 Part VII (Extended Patterns & Case Studies) — done 2026-04-17
+7. **Phase 0.7** — §14 Batch & Stream (Big Data): 18 sub-sections covering Unix Pipelines, Stream intro, MapReduce, HDFS, Spark, ETL vs ELT, Flink/Kafka Streams, Windowing, Event Time + Watermarks, Unified engines, Micro-batch, Lambda, Kappa, Real-Time Analytics, Delivery Guarantees, DLQ + Retries, Backfill, Materialized Views, Time-Series Patterns — done 2026-04-17
 8. Phase 0.8 — §40–§44 SIMFID Runtime (sourced from internal code, not external articles) — pending
 
 **Voice rules** (enforce on every new KB section):
