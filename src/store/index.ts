@@ -96,6 +96,16 @@ export interface AppState {
   setTheme: (theme: 'light' | 'dark') => void;
   toggleTheme: () => void;
 
+  // Wiki
+  /** When appView is 'wiki', which topic to open (deep-link replacement for no-router setup). */
+  wikiFocusedTopic: string | null;
+  /** appView the user was on before opening the wiki; used by the Back button. */
+  wikiReturnView: AppView;
+  openWiki: (topic?: string) => void;
+  openWikiCoverage: () => void;
+  setWikiFocusedTopic: (key: string | null) => void;
+  closeWiki: () => void;
+
   // Review (vision-to-intent handoff)
   reviewState: ReviewState | null;
   landingInput: ReviewInput | null;
@@ -230,6 +240,21 @@ export const useStore = create<AppState>((set, get) => ({
   setAppMode: (mode) => set({ appMode: mode }),
   setAppView: (view) => set({ appView: view }),
   setScenarioId: (id) => set({ scenarioId: id }),
+
+  // Wiki
+  wikiFocusedTopic: null,
+  wikiReturnView: 'canvas',
+  openWiki: (topic) => set((s) => ({
+    appView: 'wiki',
+    wikiFocusedTopic: topic ?? null,
+    wikiReturnView: s.appView === 'wiki' || s.appView === 'wiki-coverage' ? s.wikiReturnView : s.appView,
+  })),
+  openWikiCoverage: () => set((s) => ({
+    appView: 'wiki-coverage',
+    wikiReturnView: s.appView === 'wiki' || s.appView === 'wiki-coverage' ? s.wikiReturnView : s.appView,
+  })),
+  setWikiFocusedTopic: (key) => set({ wikiFocusedTopic: key }),
+  closeWiki: () => set((s) => ({ appView: s.wikiReturnView, wikiFocusedTopic: null })),
 
   // Review (vision-to-intent handoff)
   reviewState: null,

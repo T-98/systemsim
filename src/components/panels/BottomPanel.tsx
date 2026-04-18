@@ -17,6 +17,15 @@ import { useRef, useEffect } from 'react';
 import { useStore } from '../../store';
 import { downloadDebriefHtml } from '../../ai/generateDebriefHtml';
 import type { PerComponentSummary, ComponentType } from '../../types';
+import InfoIcon from '../ui/InfoIcon';
+
+const severityTopic: Record<string, string> = {
+  info: 'severity.info',
+  warning: 'severity.warning',
+  critical: 'severity.critical',
+  error: 'severity.error',
+  debrief: 'severity.debrief',
+};
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -170,14 +179,25 @@ function LogContent() {
           Waiting for simulation events...
         </div>
       ) : (
-        liveLog.map((entry, i) => (
-          <div key={i} style={severityStyle[entry.severity]}>
-            <span className="mr-2 select-none" style={{ color: 'var(--text-tertiary)', opacity: 0.5 }}>
-              [{formatTime(entry.time)}]
-            </span>
-            {entry.message}
-          </div>
-        ))
+        liveLog.map((entry, i) => {
+          const sevKey = severityTopic[entry.severity] ?? 'severity.info';
+          return (
+            <div key={i} style={{ ...severityStyle[entry.severity], display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
+              <span
+                className="mr-1 select-none"
+                data-testid="live-log-severity"
+                data-severity={entry.severity}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+              >
+                <span style={{ color: 'var(--text-tertiary)', opacity: 0.5 }}>
+                  [{formatTime(entry.time)}]
+                </span>
+                <InfoIcon topic={sevKey} side="top" ariaLabel={`${entry.severity} severity`} />
+              </span>
+              <span>{entry.message}</span>
+            </div>
+          );
+        })
       )}
       <div ref={endRef} />
     </div>

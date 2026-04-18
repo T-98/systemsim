@@ -260,7 +260,7 @@ export interface CanonicalGraph {
 export type SimulationStatus = 'idle' | 'running' | 'paused' | 'completed';
 export type ViewMode = 'particle' | 'aggregate';
 export type AppMode = 'scenario' | 'freeform';
-export type AppView = 'landing' | 'design' | 'review' | 'canvas';
+export type AppView = 'landing' | 'design' | 'review' | 'canvas' | 'wiki' | 'wiki-coverage';
 
 export interface Particle {
   id: string;

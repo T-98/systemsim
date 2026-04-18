@@ -18,6 +18,7 @@ import { generateDebrief, checkForHints } from '../../ai/debrief';
 import { runPreflight } from '../../engine/preflight';
 import RemixInput from './RemixInput';
 import ConfirmModal from './ConfirmModal';
+import InfoIcon from './InfoIcon';
 import UndoToast from './UndoToast';
 
 /**
@@ -248,25 +249,28 @@ export default function Toolbar() {
         {/* Sim controls */}
         {simulationStatus === 'idle' && (
           <>
-            <button
-              onClick={handleRun}
-              disabled={!hasNodes || !preflightClean}
-              className="rounded-lg font-medium transition-all"
-              title={!preflightClean ? 'Resolve preflight items first' : undefined}
-              style={{
-                padding: '6px 16px',
-                fontSize: '14px',
-                letterSpacing: '-0.224px',
-                background: hasNodes && preflightClean ? 'var(--accent)' : 'var(--bg-card)',
-                color: hasNodes && preflightClean ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
-                border: hasNodes && preflightClean ? 'none' : '1px solid var(--border-color)',
-                cursor: hasNodes && preflightClean ? 'pointer' : 'not-allowed',
-                transform: hasNodes && preflightClean ? 'scale(1.02)' : 'scale(1)',
-                transition: 'all 100ms ease',
-              }}
-            >
-              Run
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleRun}
+                disabled={!hasNodes || !preflightClean}
+                className="rounded-lg font-medium transition-all"
+                title={!preflightClean ? 'Resolve preflight items first' : undefined}
+                style={{
+                  padding: '6px 16px',
+                  fontSize: '14px',
+                  letterSpacing: '-0.224px',
+                  background: hasNodes && preflightClean ? 'var(--accent)' : 'var(--bg-card)',
+                  color: hasNodes && preflightClean ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
+                  border: hasNodes && preflightClean ? 'none' : '1px solid var(--border-color)',
+                  cursor: hasNodes && preflightClean ? 'pointer' : 'not-allowed',
+                  transform: hasNodes && preflightClean ? 'scale(1.02)' : 'scale(1)',
+                  transition: 'all 100ms ease',
+                }}
+              >
+                Run
+              </button>
+              <InfoIcon topic="concept.littlesLaw" side="bottom" ariaLabel="About the simulation runtime" />
+            </div>
             <button
               onClick={handleRunStressed}
               disabled={!hasNodes || !preflightClean}

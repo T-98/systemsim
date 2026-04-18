@@ -941,3 +941,42 @@ Key types that cross module boundaries. Add new types here, not in component fil
 - Debug E2E: add `--headed --debug` flags
 
 All E2E tests use `window.__SYSTEMSIM_STORE__` to inject scenarios and bypass preflight.
+
+## Wiki (Phase A-scaffold)
+
+Info-icon + wiki layer shipped at Phase A-scaffold. Bodies are empty until Phase A-content fills them from [system-design-knowledgebase.md](system-design-knowledgebase.md).
+
+### `src/components/ui/InfoIcon.tsx`
+Tiny `(i)` glyph with click-to-open popover. Used next to config field labels, traffic editor fields, canvas node labels, the toolbar Run button, and live-log severity badges.
+
+- Props: `topic: string`, `side?: 'top'|'bottom'|'left'|'right'`, `style?`, `ariaLabel?`.
+- Popover auto-flips sides when the preferred side clips the viewport.
+- Registers its topic key on mount into `window.__SYSTEMSIM_TOPIC_REFS__: Set<string>` (consumed by `/wiki/coverage`).
+- On open, focus moves to the "Learn more" button inside the popover. Escape closes and returns focus to the trigger.
+- Unknown topic keys resolve to a "Documentation coming soon." placeholder and never crash.
+
+### `src/wiki/topics.ts`
+Single source of truth for every topic the UI references.
+
+- `TOPICS: Record<string, Topic>` — declares every topic key.
+- `lookupTopic(key)` — returns `{ title, shortDescription, body, category, resolved }`. `resolved: false` on unknown keys.
+- `listTopicKeys()` — enumerates all declared keys (used by the coverage route).
+- Categories: `component | config | concept | howto | severity`.
+- How-to topics carry a `howtoTemplate` pointer for a future "Load in canvas" action.
+
+### `src/wiki/WikiRoute.tsx` (appView === 'wiki')
+Left nav grouped by category + main pane. Arrow keys navigate the topic list; Escape closes; Back button returns to the prior `appView`.
+
+### `src/wiki/components/CoverageDebugRoute.tsx` (appView === 'wiki-coverage')
+Dev-only diagnostic. Reads `window.__SYSTEMSIM_TOPIC_REFS__` and flags any referenced key that doesn't resolve in the registry. Enforced by `e2e/wiki-coverage.spec.ts` (zero unresolved is the A-scaffold invariant).
+
+### Store additions (`src/store/index.ts`)
+- `wikiFocusedTopic: string | null` — deep-link target; set via `openWiki(topic)` or `setWikiFocusedTopic(key)`.
+- `wikiReturnView: AppView` — remembered entry point so `closeWiki()` can go back.
+- `openWiki(topic?)`, `openWikiCoverage()`, `setWikiFocusedTopic(key)`, `closeWiki()`.
+- `AppView` now includes `'wiki' | 'wiki-coverage'`.
+
+### E2E coverage
+- [e2e/wiki-scaffold.spec.ts](e2e/wiki-scaffold.spec.ts) — /wiki opens, grouped nav renders, deep-link focuses, arrow-key nav, how-to stub, Back returns to prior view.
+- [e2e/info-icon-configpanel.spec.ts](e2e/info-icon-configpanel.spec.ts) — ConfigPanel has InfoIcons, popover opens, "Learn more" routes to wiki, Escape closes, wire config fields show icons.
+- [e2e/wiki-coverage.spec.ts](e2e/wiki-coverage.spec.ts) — registry covers all live references (zero unresolved).

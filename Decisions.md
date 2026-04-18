@@ -491,3 +491,21 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Why:** SIMFID's runtime fidelity is the product moat (Decisions §34). Docs that misrepresent engine behavior erode the moat. Grounding every claim in code reference + running codex review against the code catches drift during the writing pass itself.
 - **Rejected:** Abstract "how it works" prose without file:line cites (lets drift sneak in). Hiding the fan-in limitation (users would trip over it and lose trust).
 - **Source:** KB file §40–§44 revision 2026-04-18, Phase 0.8.
+
+### 39. Wiki route uses appView state, not URL routing
+
+- **When:** Phase A-scaffold (2026-04-18)
+- **Context:** The original A-scaffold plan called for `/wiki` and `/wiki/coverage` URL routes with hash-based deep-links (`/wiki#component.server`). The codebase has no router installed — the app routes by state (`appView`) read from the Zustand store, with top-level components mounted conditionally in [src/App.tsx](src/App.tsx:28-52).
+- **Decision:** Extended `AppView` with `'wiki' | 'wiki-coverage'` values. Deep-linking via a new `wikiFocusedTopic: string | null` store field. `openWiki(topic?)` and `openWikiCoverage()` store actions handle the transition; `closeWiki()` returns to the remembered `wikiReturnView`. No `react-router-dom` installed.
+- **Why:** Adding a router would touch every top-level view + all nav paths (LandingPage, ReviewMode, DesignFlow, Canvas) for one feature. State routing matches the existing pattern and keeps scope tight. URL deep-linking (share a link to a topic) is a later concern; it can land alongside a broader router migration if it ever becomes worth it.
+- **Rejected:** Installing React Router (scope creep). Using `window.location.hash` alone (wouldn't survive a reload without extra state wiring).
+- **Source:** [src/App.tsx](src/App.tsx), [src/store/index.ts](src/store/index.ts) `wiki*` actions, [src/types/index.ts](src/types/index.ts) `AppView`.
+
+### 40. Topic coverage enforced at dev time via `window.__SYSTEMSIM_TOPIC_REFS__`
+
+- **When:** Phase A-scaffold (2026-04-18)
+- **Context:** Every `<InfoIcon topic="..." />` reference across the app must resolve to a declared key in [src/wiki/topics.ts](src/wiki/topics.ts). Drift between what the UI references and what the registry declares is easy to introduce as new config fields, component types, or how-tos ship.
+- **Decision:** Every mounted InfoIcon registers its topic into a `Set<string>` on `window.__SYSTEMSIM_TOPIC_REFS__`. The dev-only `/wiki/coverage` route (appView === 'wiki-coverage') reads the set and flags any reference that doesn't resolve. [e2e/wiki-coverage.spec.ts](e2e/wiki-coverage.spec.ts) asserts the unresolved count is exactly zero — this runs in CI on every change.
+- **Why:** Static detection via grep/tsc doesn't work because many InfoIcon topic keys are computed (e.g. `config.${key}` on dynamic component config). A runtime check with an E2E assertion catches drift without coupling to TypeScript literals.
+- **Rejected:** TypeScript template-literal types over topic keys (breaks on dynamic keys). Grep-based CI check (false negatives on computed strings).
+- **Source:** [src/components/ui/InfoIcon.tsx](src/components/ui/InfoIcon.tsx) `registerRef`, [src/wiki/components/CoverageDebugRoute.tsx](src/wiki/components/CoverageDebugRoute.tsx), [e2e/wiki-coverage.spec.ts](e2e/wiki-coverage.spec.ts).

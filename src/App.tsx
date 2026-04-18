@@ -20,6 +20,8 @@ import HintCard from './components/ui/HintCard';
 import ReviewMode from './components/ui/ReviewMode';
 import DesktopOnlyNotice from './components/ui/DesktopOnlyNotice';
 import IntentHeader from './components/canvas/IntentHeader';
+import WikiRoute from './wiki/WikiRoute';
+import CoverageDebugRoute from './wiki/components/CoverageDebugRoute';
 
 export default function App() {
   const appView = useStore((s) => s.appView);
@@ -45,6 +47,14 @@ export default function App() {
 
   if (appView === 'design') {
     return <DesignFlow onComplete={() => setAppView('canvas')} />;
+  }
+
+  if (appView === 'wiki') {
+    return <WikiRoute />;
+  }
+
+  if (appView === 'wiki-coverage') {
+    return <CoverageDebugRoute />;
   }
 
   return (

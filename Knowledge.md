@@ -639,6 +639,8 @@ end of tick:
 | Add a new template | New JSON in `/public/templates/` matching `CanonicalGraph` shape |
 | Add a new resilience pattern (e.g. rate limiter, bulkhead) | Same shape as [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts): types + evaluate fn + opt-in via `WireConfig` + hook into `forwardOverWire` |
 | Author a new system-design concept for the wiki | Add a section in [system-design-knowledgebase.md](system-design-knowledgebase.md) (authorial memory, prose-first, cross-referenced). Wiki copy in `src/wiki/topics.ts` derives from it — never the other way. See Decisions §35. |
+| Add an InfoIcon next to a new field | `<InfoIcon topic="config.xxx" />` next to the label. Declare `config.xxx` in [src/wiki/topics.ts](src/wiki/topics.ts) (empty body is fine at A-scaffold; A-content fills it). Check `/wiki/coverage` shows zero unresolved. |
+| Add a new topic key | Add to the `TOPICS` record in [src/wiki/topics.ts](src/wiki/topics.ts) with category `component\|config\|concept\|howto\|severity`. Dynamic config keys auto-resolve via `topicForConfigKey(key)` → `config.${key}`. |
 
 ---
 

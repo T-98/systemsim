@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { useStore } from '../../store';
 import type { TrafficPhase, TrafficProfile } from '../../types';
+import InfoIcon from '../ui/InfoIcon';
 
 export default function TrafficEditor() {
   const trafficProfile = useStore((s) => s.trafficProfile);
@@ -78,12 +79,15 @@ export default function TrafficEditor() {
         onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
       >
-        <span
-          className="uppercase font-medium"
-          style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-tertiary)' }}
-        >
-          Traffic Profile
-        </span>
+        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          <span
+            className="uppercase font-medium"
+            style={{ fontSize: '10px', letterSpacing: '0.2em', color: 'var(--text-tertiary)' }}
+          >
+            Traffic Profile
+          </span>
+          <InfoIcon topic="config.traffic.phases" side="bottom" />
+        </div>
         <svg
           width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
           style={{ color: 'var(--text-tertiary)', transform: collapsed ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.2s' }}
@@ -105,7 +109,10 @@ export default function TrafficEditor() {
           />
         </div>
         <div className="w-20">
-          <label className="block font-medium" style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '4px', letterSpacing: '-0.12px' }}>Duration (s)</label>
+          <div className="flex items-center gap-1" style={{ marginBottom: '4px' }}>
+            <label className="block font-medium" style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>Duration (s)</label>
+            <InfoIcon topic="config.traffic.durationSeconds" side="bottom" />
+          </div>
           <input
             type="number"
             value={duration}
@@ -115,7 +122,10 @@ export default function TrafficEditor() {
           />
         </div>
         <div className="w-16">
-          <label className="block font-medium" style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginBottom: '4px', letterSpacing: '-0.12px' }}>Jitter %</label>
+          <div className="flex items-center gap-1" style={{ marginBottom: '4px' }}>
+            <label className="block font-medium" style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>Jitter %</label>
+            <InfoIcon topic="config.traffic.jitterPercent" side="bottom" />
+          </div>
           <input
             type="number"
             value={jitter}
