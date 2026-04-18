@@ -17,6 +17,9 @@ import type { ComponentType, CanonicalGraph } from '../../types';
 
 const TEXT_TO_DIAGRAM_ENABLED = import.meta.env.VITE_ENABLE_TEXT_TO_DIAGRAM === 'true';
 
+// GitHub URL for the project. Placeholder — fill in when the repo goes public.
+const GITHUB_URL = 'https://github.com/';
+
 export default function LandingPage() {
   const setAppMode = useStore((s) => s.setAppMode);
   const setAppView = useStore((s) => s.setAppView);
@@ -78,21 +81,109 @@ export default function LandingPage() {
         style={{ background: 'radial-gradient(ellipse, rgba(0,113,227,0.06) 0%, transparent 70%)' }}
       />
 
-      {/* Theme toggle */}
-      <button
-        onClick={toggleTheme}
-        className="absolute top-6 right-6 z-20 w-9 h-9 rounded-full flex items-center justify-center transition-colors duration-200"
-        style={{ background: 'var(--bg-card)', color: 'var(--text-tertiary)' }}
-        title="Toggle theme"
+      {/* Floating navbar — glass pill, top-right. DESIGN.md: inline styles + tokens, spacing rhythm 8/12/16. */}
+      <nav
+        data-testid="landing-nav"
+        aria-label="Site"
+        className="fixed z-20 flex items-center"
+        style={{
+          top: 16,
+          right: 16,
+          gap: 4,
+          padding: 4,
+          background: 'var(--bg-nav)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 980,
+          backdropFilter: 'blur(20px) saturate(1.4)',
+          WebkitBackdropFilter: 'blur(20px) saturate(1.4)',
+          boxShadow: 'var(--shadow-card)',
+        }}
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="5" />
-          <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
-          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-          <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
-          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-        </svg>
-      </button>
+        <div
+          style={{
+            padding: '8px 12px',
+            fontSize: 13,
+            fontWeight: 600,
+            letterSpacing: '-0.12px',
+            color: 'var(--text-primary)',
+          }}
+        >
+          System<span style={{ color: 'var(--accent)' }}>Sim</span>
+        </div>
+        <button
+          data-testid="landing-nav-docs"
+          type="button"
+          onClick={() => useStore.getState().openWiki('userGuide.welcome')}
+          style={{
+            padding: '8px 12px',
+            fontSize: 13,
+            letterSpacing: '-0.12px',
+            background: 'transparent',
+            color: 'var(--text-secondary)',
+            border: 'none',
+            borderRadius: 980,
+            cursor: 'pointer',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          Docs
+        </button>
+        <a
+          data-testid="landing-nav-github"
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="GitHub"
+          title="GitHub"
+          style={{
+            width: 32,
+            height: 32,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--text-tertiary)',
+            borderRadius: 980,
+            transition: 'background 140ms ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.338 4.695-4.566 4.943.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+          </svg>
+        </a>
+        <button
+          data-testid="landing-nav-theme"
+          type="button"
+          onClick={toggleTheme}
+          aria-label="Toggle theme"
+          title="Toggle theme"
+          style={{
+            width: 32,
+            height: 32,
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--text-tertiary)',
+            background: 'transparent',
+            border: 'none',
+            borderRadius: 980,
+            cursor: 'pointer',
+            transition: 'background 140ms ease',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="5" />
+            <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+            <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+          </svg>
+        </button>
+      </nav>
 
       <div className="relative z-10 max-w-[640px] w-full px-8">
         {/* Hero */}
