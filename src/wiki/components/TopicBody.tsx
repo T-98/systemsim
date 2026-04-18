@@ -14,6 +14,7 @@
 
 import { lookupTopic, type TopicCategory } from '../topics';
 import MarkdownBody from './MarkdownBody';
+import PrevNextFooter from './PrevNextFooter';
 
 const CATEGORY_LABEL: Record<TopicCategory, string> = {
   userGuide: 'Learn',
@@ -122,6 +123,8 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
       ) : (
         <MarkdownBody markdown={info.body} />
       )}
+
+      {info.category === 'userGuide' && <PrevNextFooter topicKey={topicKey} />}
 
       {info.category === 'howto' && (
         <div style={{ marginTop: 28 }}>
