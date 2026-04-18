@@ -89,13 +89,15 @@ export function extractHeadings(md: string): TocHeading[] {
 }
 
 /**
- * Render markdown to sanitized HTML with heading ids and a quiet anchor
- * affordance on h2/h3. Uses a per-call `Marked` instance so the dedup
- * counter is scoped to this render (no shared state across topics).
+ * Render markdown to sanitized HTML with stable heading ids. The caller
+ * passes in a shared `seenSlugs` map so the dedup counter spans the whole
+ * topic (across CanvasEmbed-split segments) and matches what
+ * `extractHeadings()` computes. If no map is passed we default to a
+ * fresh one, which is only correct when the input contains no embeds.
  */
-export function renderMarkdown(md: string): string {
+export function renderMarkdown(md: string, seenSlugs?: Map<string, number>): string {
   if (!md) return '';
-  const seen = new Map<string, number>();
+  const seen = seenSlugs ?? new Map<string, number>();
   const m = new Marked({ gfm: true, breaks: false });
   m.use({
     renderer: {
@@ -105,7 +107,11 @@ export function renderMarkdown(md: string): string {
       // marked v18 (parser is set per-parse on the renderer, not on `m`).
       heading(this: { parser: { parseInline(t: Tokens.Generic[]): string } }, token: Tokens.Heading): string {
         const textHtml = this.parser.parseInline(token.tokens as Tokens.Generic[]);
-        const plain = textHtml.replace(/<[^>]+>/g, '').trim();
+        // Slug source: plain text from the token stream, not the HTML — otherwise
+        // "A & B" becomes "a-amp-b" in the renderer and "a-b" in extractHeadings,
+        // breaking TOC href ↔ DOM-id parity. Use the same plainText() helper both
+        // paths use.
+        const plain = plainText(token.tokens as Tokens.Generic[]).trim();
         const base = slugifyHeading(plain);
         const id = uniqueId(base, seen);
         return `<h${token.depth} id="${id}">${textHtml}</h${token.depth}>\n`;
@@ -245,14 +251,16 @@ function splitOnEmbeds(md: string): Segment[] {
 
 export default function MarkdownBody({ markdown }: { markdown: string }) {
   const segments = useMemo(() => splitOnEmbeds(markdown), [markdown]);
-  const rendered = useMemo(
-    () =>
-      segments.map((s) => ({
-        kind: s.kind,
-        html: s.kind === 'markdown' ? renderMarkdown(s.content) : s.content,
-      })),
-    [segments]
-  );
+  const rendered = useMemo(() => {
+    // Share one slug counter across every markdown segment so duplicate
+    // headings separated by a <CanvasEmbed> get suffixed consistently and
+    // stay in sync with extractHeadings() (which walks the full body).
+    const seen = new Map<string, number>();
+    return segments.map((s) => ({
+      kind: s.kind,
+      html: s.kind === 'markdown' ? renderMarkdown(s.content, seen) : s.content,
+    }));
+  }, [segments]);
 
   return (
     <div

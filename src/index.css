@@ -208,12 +208,12 @@ input:focus, select:focus, textarea:focus {
 .docs-prose code {
   font-family: 'SF Mono', Menlo, Consolas, 'Geist Mono', ui-monospace, monospace;
   font-size: 13px;
-  padding: 2px 6px;
+  padding: 1px 6px;
   border-radius: 4px;
   background: var(--bg-input);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
-  letter-spacing: 0;
+  letter-spacing: -0.12px;
 }
 .docs-prose pre {
   margin: 16px 0;
@@ -264,7 +264,7 @@ input:focus, select:focus, textarea:focus {
 .docs-prose th,
 .docs-prose td {
   border-bottom: 1px solid var(--border-color);
-  padding: 10px 16px;
+  padding: 8px 16px;
   text-align: left;
   letter-spacing: -0.12px;
 }

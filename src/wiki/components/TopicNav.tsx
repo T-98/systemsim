@@ -28,6 +28,7 @@ export default function TopicNav({
             data-testid={`wiki-nav-item`}
             data-topic={key}
             data-active={active ? 'true' : 'false'}
+            aria-current={active ? 'page' : undefined}
             onClick={() => onSelect(key)}
             style={{
               display: 'block',
@@ -39,7 +40,7 @@ export default function TopicNav({
               color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
               fontSize: 13,
               fontWeight: active ? 600 : 400,
-              letterSpacing: '-0.12px',
+              letterSpacing: '-0.224px',
               cursor: 'pointer',
               transition: 'background 140ms ease',
             }}

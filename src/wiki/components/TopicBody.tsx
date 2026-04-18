@@ -68,12 +68,12 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
             data-testid="wiki-breadcrumb"
             style={{
               fontSize: 13,
-              letterSpacing: '-0.12px',
+              letterSpacing: '-0.224px',
               color: 'var(--text-tertiary)',
               marginBottom: 8,
             }}
           >
-            Reference <span style={{ padding: '0 6px' }}>›</span> {breadcrumbLabel}
+            Reference <span style={{ padding: '0 8px' }}>›</span> {breadcrumbLabel}
           </div>
         )}
         <h1

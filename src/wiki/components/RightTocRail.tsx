@@ -123,14 +123,15 @@ export default function RightTocRail({
                 data-testid="wiki-toc-item"
                 data-active={isActive ? 'true' : 'false'}
                 data-depth={h.level}
+                aria-current={isActive ? 'location' : undefined}
                 href={`#${h.id}`}
                 onClick={(e) => onClick(e, h.id)}
                 style={{
                   display: 'block',
                   padding: '4px 0 4px 8px',
-                  paddingLeft: h.level === 3 ? 20 : 8,
+                  paddingLeft: h.level === 3 ? 24 : 8,
                   fontSize: 13,
-                  letterSpacing: '-0.12px',
+                  letterSpacing: '-0.224px',
                   color: isActive ? 'var(--accent-link)' : 'var(--text-tertiary)',
                   textDecoration: 'none',
                   borderLeft: `2px solid ${isActive ? 'var(--accent)' : 'transparent'}`,

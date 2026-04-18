@@ -215,7 +215,6 @@ export default function WikiRoute() {
             className="flex items-center"
             style={{ gap: 4 }}
             data-testid="docs-tabs"
-            role="tablist"
             aria-label="Documentation sections"
           >
             {TABS.map((t) => {
@@ -224,8 +223,7 @@ export default function WikiRoute() {
                 <button
                   key={t.id}
                   type="button"
-                  role="tab"
-                  aria-selected={active}
+                  aria-current={active ? 'page' : undefined}
                   data-testid={`docs-tab-${t.id}`}
                   data-active={active ? 'true' : 'false'}
                   onClick={() => {
