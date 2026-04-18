@@ -262,6 +262,9 @@ export type ViewMode = 'particle' | 'aggregate';
 export type AppMode = 'scenario' | 'freeform';
 export type AppView = 'landing' | 'design' | 'review' | 'canvas' | 'wiki' | 'wiki-coverage';
 
+/** Top-level tab selection inside the wiki (Phase A-content docs product). */
+export type WikiTab = 'learn' | 'reference' | 'howto';
+
 export interface Particle {
   id: string;
   wireId: string;

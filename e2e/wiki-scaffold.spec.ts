@@ -37,23 +37,44 @@ test.describe('Wiki scaffold', () => {
   test.setTimeout(45000);
   test.beforeAll(() => ensureDir(RESULTS_DIR));
 
-  test('wiki opens, shows grouped nav, renders empty-state body', async ({ page }) => {
+  test('wiki opens with three top tabs and a scoped sidebar per tab', async ({ page }) => {
     await gotoLanding(page);
     await openWikiVia(page);
 
     await expect(page.getByTestId('wiki-nav')).toBeVisible();
     await expect(page.getByTestId('wiki-main')).toBeVisible();
+    await expect(page.getByTestId('docs-tabs')).toBeVisible();
 
-    // Groups render
-    for (const cat of ['component', 'concept', 'config', 'howto', 'severity']) {
-      await expect(page.getByTestId(`wiki-nav-group-${cat}`)).toBeVisible();
+    // All three tabs render
+    for (const tab of ['learn', 'reference', 'howto']) {
+      await expect(page.getByTestId(`docs-tab-${tab}`)).toBeVisible();
     }
 
-    // A focused topic renders empty state at Phase A-scaffold
+    // Switching to Reference shows the full set of groups — auto-imported
+    // reference topics plus the shared component / concept / config / severity leaves.
+    await page.getByTestId('docs-tab-reference').click();
+    for (const cat of ['reference', 'component', 'concept', 'config', 'severity']) {
+      await expect(page.getByTestId(`wiki-nav-group-${cat}`)).toBeVisible();
+    }
+    // The auto-imported reference topics render via MarkdownBody, not the empty-state card.
+    await expect(page.getByTestId('docs-markdown')).toBeVisible();
+
+    // Switching to How-to shows only the howto group, with empty-state bodies at P1.
+    await page.getByTestId('docs-tab-howto').click();
+    await expect(page.getByTestId('wiki-nav-group-howto')).toBeVisible();
     await expect(page.getByTestId('wiki-empty-state')).toBeVisible();
     await expect(page.getByTestId('wiki-empty-state')).toContainText('Content coming soon');
 
     await page.screenshot({ path: path.join(RESULTS_DIR, 'wiki-default.png'), fullPage: true });
+  });
+
+  test('tab selection writes #docs/<tab> to the URL hash', async ({ page }) => {
+    await gotoLanding(page);
+    await openWikiVia(page);
+    await page.getByTestId('docs-tab-reference').click();
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toContain('#docs/reference');
+    await page.getByTestId('docs-tab-howto').click();
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toContain('#docs/howto');
   });
 
   test('deep-link to a specific topic focuses that entry', async ({ page }) => {

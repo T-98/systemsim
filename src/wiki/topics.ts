@@ -15,7 +15,16 @@
  * debug route enforces this (flags unresolved keys at dev time).
  */
 
-export type TopicCategory = 'component' | 'config' | 'concept' | 'howto' | 'severity';
+export type TopicCategory =
+  | 'component'
+  | 'config'
+  | 'concept'
+  | 'howto'
+  | 'severity'
+  /** Hand-written user-manual pages (the Learn track). */
+  | 'userGuide'
+  /** Auto-imported at build time from system-design-knowledgebase.md (the Reference track). */
+  | 'reference';
 
 export interface Topic {
   title: string;
@@ -174,6 +183,19 @@ export const TOPICS: Record<string, Topic> = {
   'severity.debrief': empty('Debrief', 'severity'),
   'severity.critical': empty('Critical', 'severity'),
 };
+
+// Merge in auto-generated reference topics at module load. The generator
+// emits one entry per top-level `## N. Title` section of
+// `system-design-knowledgebase.md`; see `scripts/generate-reference-topics.ts`.
+// The stub below is a safe fallback when the generator hasn't run yet
+// (e.g. fresh clone before `pnpm dev`); the real file overwrites it.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — generated file may not exist until Vite's first buildStart hook.
+import { REFERENCE_TOPICS } from './generated/referenceTopics';
+
+for (const [key, topic] of Object.entries(REFERENCE_TOPICS)) {
+  TOPICS[key] = topic;
+}
 
 /**
  * Lookup a topic, returning a safe placeholder if the key is unknown.

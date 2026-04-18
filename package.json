@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "eval:describe-intent": "tsx evals/describe-intent/describeIntent.eval.ts"
+    "eval:describe-intent": "tsx evals/describe-intent/describeIntent.eval.ts",
+    "generate:reference-topics": "tsx scripts/generate-reference-topics.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
@@ -30,6 +31,7 @@
     "@dagrejs/dagre": "^3.0.0",
     "@xyflow/react": "^12.10.2",
     "framer-motion": "^12.38.0",
+    "marked": "^18.0.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "uuid": "^13.0.0",

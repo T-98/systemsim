@@ -13,6 +13,7 @@
  */
 
 import { lookupTopic } from '../topics';
+import MarkdownBody from './MarkdownBody';
 
 export default function TopicBody({ topicKey }: { topicKey: string | null }) {
   if (!topicKey) {
@@ -77,17 +78,7 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
           Content coming soon — we're building our knowledge base.
         </div>
       ) : (
-        <div
-          style={{
-            fontSize: 15,
-            lineHeight: 1.65,
-            color: 'var(--text-secondary)',
-            letterSpacing: '-0.12px',
-            whiteSpace: 'pre-wrap',
-          }}
-        >
-          {info.body}
-        </div>
+        <MarkdownBody markdown={info.body} />
       )}
 
       {info.category === 'howto' && (

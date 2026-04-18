@@ -30,3 +30,6 @@ evals/**/.evals-output/
 
 test-results
 system-desigmn-knowledge-base
+
+# Build-time generated wiki reference content (regenerated from system-design-knowledgebase.md)
+src/wiki/generated/

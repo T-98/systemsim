@@ -176,3 +176,78 @@ input:focus, select:focus, textarea:focus {
   50% { box-shadow: 0 0 0 6px var(--accent-ring); }
 }
 .simfid-pulse { animation: simfid-pulse 0.75s ease-in-out 2; }
+
+/* Wiki prose — shadcn-inspired airy typography, monochrome + one accent.
+ * Applied via MarkdownBody's .docs-prose class. Matches DESIGN.md tokens:
+ * Inter everywhere, negative letter-spacing, 4/8/12/16/24/32/48 spacing rhythm,
+ * 720px max content width (set inline on the wrapper). */
+.docs-prose h1,
+.docs-prose h2,
+.docs-prose h3,
+.docs-prose h4 {
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  line-height: 1.25;
+  scroll-margin-top: 80px;
+}
+.docs-prose h1 { font-size: 28px; margin: 24px 0 12px; }
+.docs-prose h2 { font-size: 22px; margin: 32px 0 12px; border-top: 1px solid var(--border-color); padding-top: 24px; }
+.docs-prose h2:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+.docs-prose h3 { font-size: 17px; margin: 24px 0 8px; letter-spacing: -0.24px; }
+.docs-prose h4 { font-size: 14px; margin: 16px 0 6px; letter-spacing: -0.12px; text-transform: uppercase; color: var(--text-tertiary); }
+.docs-prose p { margin: 12px 0; }
+.docs-prose ul,
+.docs-prose ol { margin: 12px 0; padding-left: 20px; }
+.docs-prose li { margin: 4px 0; }
+.docs-prose li > p { margin: 4px 0; }
+.docs-prose strong { color: var(--text-primary); font-weight: 600; }
+.docs-prose em { color: var(--text-primary); }
+.docs-prose a { color: var(--accent); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.docs-prose a:hover { text-decoration-thickness: 2px; }
+.docs-prose code {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 0.92em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  letter-spacing: 0;
+}
+.docs-prose pre {
+  margin: 16px 0;
+  padding: 14px 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.docs-prose pre code {
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  font-size: inherit;
+}
+.docs-prose blockquote {
+  margin: 16px 0;
+  padding: 4px 16px;
+  border-left: 3px solid var(--accent);
+  color: var(--text-tertiary);
+}
+.docs-prose table {
+  margin: 16px 0;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.docs-prose th,
+.docs-prose td {
+  border-bottom: 1px solid var(--border-color);
+  padding: 8px 12px;
+  text-align: left;
+}
+.docs-prose th { color: var(--text-primary); font-weight: 600; }
+.docs-prose hr { margin: 24px 0; border: none; border-top: 1px solid var(--border-color); }
+.docs-prose img { max-width: 100%; border-radius: 8px; margin: 12px 0; }

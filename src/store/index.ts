@@ -52,6 +52,7 @@ import type {
   AIDebrief,
   CanonicalGraph,
   TableAccess,
+  WikiTab,
 } from '../types';
 import type { DescribeIntentOutput } from '../ai/describeIntentSchema';
 import { buildAdjacency, bfs, findEntryPoints } from '../engine/graphTraversal';
@@ -101,9 +102,12 @@ export interface AppState {
   wikiFocusedTopic: string | null;
   /** appView the user was on before opening the wiki; used by the Back button. */
   wikiReturnView: AppView;
+  /** Which top-level tab is active: Learn (user manual) / Reference (KB) / How-to (scenarios). */
+  wikiTab: WikiTab;
   openWiki: (topic?: string) => void;
   openWikiCoverage: () => void;
   setWikiFocusedTopic: (key: string | null) => void;
+  setWikiTab: (tab: WikiTab) => void;
   closeWiki: () => void;
 
   // Review (vision-to-intent handoff)
@@ -244,16 +248,29 @@ export const useStore = create<AppState>((set, get) => ({
   // Wiki
   wikiFocusedTopic: null,
   wikiReturnView: 'canvas',
-  openWiki: (topic) => set((s) => ({
-    appView: 'wiki',
-    wikiFocusedTopic: topic ?? null,
-    wikiReturnView: s.appView === 'wiki' || s.appView === 'wiki-coverage' ? s.wikiReturnView : s.appView,
-  })),
+  wikiTab: 'learn',
+  openWiki: (topic) => set((s) => {
+    // Heuristic: if the topic's key hints at a tab, auto-switch. Otherwise keep current.
+    let tab = s.wikiTab;
+    if (topic) {
+      if (topic.startsWith('userGuide.')) tab = 'learn';
+      else if (topic.startsWith('reference.')) tab = 'reference';
+      else if (topic.startsWith('howto.')) tab = 'howto';
+      else tab = 'reference'; // component.*, concept.*, config.*, severity.* default to Reference
+    }
+    return {
+      appView: 'wiki',
+      wikiFocusedTopic: topic ?? null,
+      wikiTab: tab,
+      wikiReturnView: s.appView === 'wiki' || s.appView === 'wiki-coverage' ? s.wikiReturnView : s.appView,
+    };
+  }),
   openWikiCoverage: () => set((s) => ({
     appView: 'wiki-coverage',
     wikiReturnView: s.appView === 'wiki' || s.appView === 'wiki-coverage' ? s.wikiReturnView : s.appView,
   })),
   setWikiFocusedTopic: (key) => set({ wikiFocusedTopic: key }),
+  setWikiTab: (tab) => set({ wikiTab: tab }),
   closeWiki: () => set((s) => ({ appView: s.wikiReturnView, wikiFocusedTopic: null })),
 
   // Review (vision-to-intent handoff)
