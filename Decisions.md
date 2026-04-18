@@ -536,3 +536,30 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Why:** Claude Sonnet 4.6 is the right model for structured-JSON text tasks (Opus would be overkill here; describe-intent uses Opus only because it's vision-heavy). Tool-choice guarantees the model emits the right shape. Hand-rolled validator matches existing pattern for consistency. Abort-on-unmount via AbortController + AbortSignal propagated through callAIEndpoint.
 - **Rejected:** Free-form Claude response + post-hoc parsing (fragile). Zod schema (inconsistent with describeIntentSchema). Not persisting the generation to the store (breaks "NL → canvas picks it up immediately" UX).
 - **Source:** [api/traffic-intent.ts](api/traffic-intent.ts), [src/ai/trafficIntent.ts](src/ai/trafficIntent.ts), [src/ai/trafficIntentSchema.ts](src/ai/trafficIntentSchema.ts), [src/ai/trafficIntentPrompt.ts](src/ai/trafficIntentPrompt.ts), [src/components/panels/TrafficEditor.tsx](src/components/panels/TrafficEditor.tsx) `handleGenerate`.
+
+### 44. Live log filter + group state is panel-local, not store-resident
+
+- **When:** Phase C1 / C4 (2026-04-18)
+- **Context:** The live log needed severity + component filters and collapsed group rows. Each has transient state (which chips are active, which groups are expanded). Options: put the state in the Zustand store (shared, survives remounts) or keep it local to the LogContent component (session-only).
+- **Decision:** Panel-local state via `useState`. `filter` and `expanded` live in the component; unmount resets them.
+- **Why:** Filter + expand states are inherently ephemeral — they shouldn't affect what any other component sees, and they shouldn't be persisted across sim runs or navigations. Keeping them out of the store avoids needless rerenders on every keystroke and keeps the store surface focused on simulation state.
+- **Rejected:** Store-resident state (cross-component coupling; needless persistence; more rerender surface).
+- **Source:** [src/components/panels/BottomPanel.tsx](src/components/panels/BottomPanel.tsx) `LogContent`.
+
+### 45. Callout phrase detection via pre-compiled module-level regexes
+
+- **When:** Phase C3 (2026-04-18)
+- **Context:** Engine log entries carry only free-text messages — no structured topic field on `LogEntry` (confirmed in `SimulationEngine.ts:224` `fireCallout`). To link phrases like "Circuit breaker opened", "ρ=0.92", "signaling backpressure" to wiki topics, detection has to happen at render time.
+- **Decision:** [src/components/panels/liveLog/calloutPhrases.ts](src/components/panels/liveLog/calloutPhrases.ts) declares a list of `{ topic, pattern }` pairs. Regexes are pre-compiled once at module load with the `g` flag (not rebuilt per call). `segmentMessage` splits a message into text + phrase segments and caches results in a bounded Map (500 entries, FIFO eviction). First-declared-pattern-wins on overlap.
+- **Why:** Rebuilding RegExp objects per render per message was O(rows × patterns × length) in the hot path (codex flagged this). Module-level precompile + per-message memoization brings segmentation to near-free on re-render. Bounded cache avoids unbounded memory growth.
+- **Rejected:** Adding a `topic?: string` field to `LogEntry` and plumbing it through the engine (touches every `fireCallout` call site; deferred). Per-render `new RegExp(source, 'g')` (measurably slower at scale).
+- **Source:** [src/components/panels/liveLog/calloutPhrases.ts](src/components/panels/liveLog/calloutPhrases.ts), [src/components/panels/liveLog/LogGroupedRow.tsx](src/components/panels/liveLog/LogGroupedRow.tsx) `SingleRow`.
+
+### 46. Pulse-clear timer is ref-tracked so rapid clicks don't kill newer pulses
+
+- **When:** Phase C2 (2026-04-18)
+- **Context:** Clicking a log row with a componentId sets `pulseTarget = node:ID` for 600ms then clears. Naive implementation: one `setTimeout` per click → two rapid clicks leave two pending timers, the first fires mid-second-pulse and clears it early.
+- **Decision:** Keep a `pulseTimerRef: useRef<Timeout | null>`. Each click cancels the previous timer via `clearTimeout` before installing a new one. Unmount cleanup clears any in-flight timer.
+- **Why:** Rapid clicks are realistic (users scan the log). Race-safe timer management is cheap to implement and avoids visual jank.
+- **Rejected:** No timer tracking (races). Storing timer in state (forces rerender on every click).
+- **Source:** [src/components/panels/BottomPanel.tsx](src/components/panels/BottomPanel.tsx) `LogContent` `pulseTimerRef`.

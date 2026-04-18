@@ -13,25 +13,18 @@
  * See Decisions.md #21, #25, #26.
  */
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../store';
 import { downloadDebriefHtml } from '../../ai/generateDebriefHtml';
 import type { PerComponentSummary, ComponentType } from '../../types';
-import InfoIcon from '../ui/InfoIcon';
+import LogFilter, { applyLogFilter, EMPTY_FILTER, type LogFilterValue } from './liveLog/LogFilter';
+import LogGroupedRow from './liveLog/LogGroupedRow';
+import { groupLogs } from './liveLog/groupLogs';
 
-const severityTopic: Record<string, string> = {
-  info: 'severity.info',
-  warning: 'severity.warning',
-  critical: 'severity.critical',
-  error: 'severity.error',
-  debrief: 'severity.debrief',
-};
+const PULSE_CLEAR_MS = 600;
 
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
+// formatTime moved to ./liveLog/formatTime.ts (shared with LogGroupedRow).
+// Leaving this comment as a breadcrumb; debrief content below doesn't need it.
 
 /**
  * The panel itself. Hidden when sim is idle and panel is closed; otherwise
@@ -153,53 +146,104 @@ function TabButton({ label, active, onClick, badge }: { label: string; active: b
 
 function LogContent() {
   const liveLog = useStore((s) => s.liveLog);
+  const nodes = useStore((s) => s.nodes);
+  const setPulseTarget = useStore((s) => s.setPulseTarget);
+  const setSelectedNodeId = useStore((s) => s.setSelectedNodeId);
   const endRef = useRef<HTMLDivElement>(null);
+  // Track the most recent pulse-clear timer so rapid clicks don't early-clear
+  // a newer pulse. Also cleared on unmount.
+  const pulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Panel-local filter state (session-only, not in the store).
+  const [filter, setFilter] = useState<LogFilterValue>(EMPTY_FILTER);
+  // Per-group expand state (panel-local).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Clear any in-flight pulse timer on unmount.
+  useEffect(() => () => {
+    if (pulseTimerRef.current) {
+      clearTimeout(pulseTimerRef.current);
+      pulseTimerRef.current = null;
+    }
+  }, []);
+
+  // Component dropdown options: only components referenced in the log,
+  // resolved to their current node labels (falls back to id if no label).
+  const componentOptions = useMemo(() => {
+    const idSet = new Set<string>();
+    for (const e of liveLog) if (e.componentId) idSet.add(e.componentId);
+    const byId = new Map(nodes.map((n) => [n.id, (n.data.label as string) ?? n.id]));
+    return [...idSet].map((id) => ({ id, label: byId.get(id) ?? id }));
+  }, [liveLog, nodes]);
+
+  const filtered = useMemo(() => applyLogFilter(liveLog, filter), [liveLog, filter]);
+  const rows = useMemo(() => groupLogs(filtered), [filtered]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [liveLog.length]);
+  }, [filtered.length]);
 
-  const severityStyle: Record<string, React.CSSProperties> = {
-    info: { color: 'var(--text-tertiary)' },
-    warning: { color: 'var(--warning)' },
-    critical: { color: 'var(--destructive)' },
+  const onRowClick = (componentId: string | undefined) => {
+    if (!componentId) return;
+    setSelectedNodeId(componentId);
+    setPulseTarget(`node:${componentId}`);
+    // Cancel any pending clear so a rapid second click doesn't snuff the
+    // newer pulse early. The timer installed below becomes the canonical one.
+    if (pulseTimerRef.current) clearTimeout(pulseTimerRef.current);
+    pulseTimerRef.current = setTimeout(() => {
+      setPulseTarget(null);
+      pulseTimerRef.current = null;
+    }, PULSE_CLEAR_MS);
+  };
+
+  const onToggleExpand = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   return (
-    <div
-      style={{
-        padding: '8px 16px',
-        fontFamily: "'Geist Mono', monospace",
-        fontSize: 12,
-        letterSpacing: '-0.12px',
-      }}
-    >
-      {liveLog.length === 0 ? (
-        <div style={{ color: 'var(--text-tertiary)', opacity: 0.5, paddingTop: 8 }}>
-          Waiting for simulation events...
-        </div>
-      ) : (
-        liveLog.map((entry, i) => {
-          const sevKey = severityTopic[entry.severity] ?? 'severity.info';
-          return (
-            <div key={i} style={{ ...severityStyle[entry.severity], display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
-              <span
-                className="mr-1 select-none"
-                data-testid="live-log-severity"
-                data-severity={entry.severity}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-              >
-                <span style={{ color: 'var(--text-tertiary)', opacity: 0.5 }}>
-                  [{formatTime(entry.time)}]
-                </span>
-                <InfoIcon topic={sevKey} side="top" ariaLabel={`${entry.severity} severity`} />
-              </span>
-              <span>{entry.message}</span>
-            </div>
-          );
-        })
-      )}
-      <div ref={endRef} />
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <LogFilter
+        value={filter}
+        onChange={setFilter}
+        components={componentOptions}
+        shown={filtered.length}
+        total={liveLog.length}
+      />
+      <div
+        style={{
+          padding: '8px 16px',
+          fontFamily: "'Geist Mono', monospace",
+          fontSize: 12,
+          letterSpacing: '-0.12px',
+          overflowY: 'auto',
+        }}
+      >
+        {liveLog.length === 0 ? (
+          <div style={{ color: 'var(--text-tertiary)', opacity: 0.5, paddingTop: 8 }}>
+            Waiting for simulation events...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div data-testid="log-filter-empty" style={{ color: 'var(--text-tertiary)', opacity: 0.7, paddingTop: 8 }}>
+            No events match the current filter.
+          </div>
+        ) : (
+          rows.map((row) => (
+            <LogGroupedRow
+              key={row.id}
+              row={row}
+              expanded={expanded.has(row.id)}
+              onToggleExpand={onToggleExpand}
+              onRowClick={onRowClick}
+            />
+          ))
+        )}
+        <div ref={endRef} />
+      </div>
     </div>
   );
 }

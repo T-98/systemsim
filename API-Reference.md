@@ -1008,3 +1008,28 @@ SVG preview of a `TrafficProfile`'s phase sequence. Rendered above the phase lis
 - [e2e/traffic-panel-scroll.spec.ts](e2e/traffic-panel-scroll.spec.ts) — sidebar width at ≥1200 / <1200, manual collapse, scroll behavior.
 - [e2e/traffic-phase-curve.spec.ts](e2e/traffic-phase-curve.spec.ts) — curve renders, mutates on phase edit, tooltip on hover, all 5 shapes.
 - [e2e/traffic-nl-input.spec.ts](e2e/traffic-nl-input.spec.ts) — success / 500 / 429 / loading states via `page.route` stub.
+
+## Live Log 2.0 (Phase C)
+
+### `src/components/panels/liveLog/LogFilter.tsx`
+Severity chips (info / warning / critical, multi-select) + component dropdown + `N / M events` counter. Session-only panel-local state; `applyLogFilter` is a pure helper used by `LogContent`.
+
+### `src/components/panels/liveLog/groupLogs.ts`
+Pure function. Collapses runs of ≥5 same-componentId + same-severity events inside a 2-second window into a single `GroupedRow` (`{ kind: 'group', entries, ... }`). Visual only — never mutates `liveLog`. Entries without componentId never group.
+
+### `src/components/panels/liveLog/calloutPhrases.ts`
+Maps free-text engine messages to wiki topic keys via pre-compiled module-level regexes (bounded memoization cache). `segmentMessage(text)` returns alternating text / phrase segments the renderer walks. `CALLOUT_PHRASES` is the extensible authoritative list — add new phrases here when the engine emits new callouts.
+
+### `src/components/panels/liveLog/LogGroupedRow.tsx`
+Renders either a single row or a collapsed group header with chevron. Detected phrases render as underlined text + adjacent InfoIcon trigger. Row click → `setPulseTarget(node:${id})` + 600ms clear (timer ref-tracked in BottomPanel so rapid clicks don't race). Group header and rows are `role="button" tabIndex={0}` with Enter/Space keyboard handlers.
+
+### `BottomPanel.tsx` LogContent refactor
+- Pipeline: apply filter → group → render.
+- `filter`, `expanded`, `pulseTimerRef` are panel-local.
+- Component dropdown options derived from nodes referenced in the log (resolved to current node labels).
+
+### E2E coverage
+- [e2e/live-log-filter.spec.ts](e2e/live-log-filter.spec.ts) — severity chips, component dropdown, counter, reset, empty-filter state.
+- [e2e/live-log-click-pulse.spec.ts](e2e/live-log-click-pulse.spec.ts) — row with componentId pulses + auto-clears; row without componentId no-op; InfoIcon clicks don't trigger row click.
+- [e2e/live-log-hover-tooltip.spec.ts](e2e/live-log-hover-tooltip.spec.ts) — each callout phrase resolves to its wiki topic; Learn more routes correctly.
+- [e2e/live-log-grouping.spec.ts](e2e/live-log-grouping.spec.ts) — 6-row collapse, expand reveals entries, <minRun doesn't collapse, severity change breaks the run, out-of-window break.
