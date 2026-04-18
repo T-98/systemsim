@@ -17,12 +17,13 @@
  * still reachable via [src/wiki/components/CoverageDebugRoute.tsx](src/wiki/components/CoverageDebugRoute.tsx).
  */
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { listTopicKeys, lookupTopic, type TopicCategory } from './topics';
 import type { WikiTab } from '../types';
 import TopicNav from './components/TopicNav';
 import TopicBody from './components/TopicBody';
+import RightTocRail from './components/RightTocRail';
 import { parseDocsHash, writeDocsHash, slugToTopicKey } from './docsHash';
 
 interface TabDef {
@@ -79,6 +80,8 @@ export default function WikiRoute() {
   const setTab = useStore((s) => s.setWikiTab);
 
   const activeTab = getTab(tab);
+  const mainRef = useRef<HTMLElement | null>(null);
+  const showToc = useMediaQuery('(min-width: 1280px)');
 
   // Topics visible in the current tab, grouped by category.
   const allKeys = useMemo(() => listTopicKeys(), []);
@@ -330,11 +333,25 @@ export default function WikiRoute() {
         </nav>
 
         <main
+          ref={mainRef}
           className="flex-1 overflow-y-auto"
           data-testid="wiki-main"
-          style={{ padding: '48px 48px 96px' }}
+          style={{
+            display: 'flex',
+            gap: 32,
+            padding: '48px 48px 96px',
+          }}
         >
-          <TopicBody topicKey={focused} />
+          <div style={{ flex: 1, minWidth: 0, maxWidth: 720 }}>
+            <TopicBody topicKey={focused} />
+          </div>
+          {showToc && focused && (
+            <RightTocRail
+              markdown={lookupTopic(focused).body || ''}
+              scrollRootRef={mainRef}
+              topicKey={focused}
+            />
+          )}
         </main>
       </div>
     </div>
@@ -343,3 +360,17 @@ export default function WikiRoute() {
 
 // Re-export so existing imports keep working while callers migrate to the new name.
 export { slugToTopicKey };
+
+function useMediaQuery(query: string): boolean {
+  const getMatch = () => typeof window !== 'undefined' && window.matchMedia(query).matches;
+  const [matches, setMatches] = useState<boolean>(getMatch);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia(query);
+    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches);
+    setMatches(mql.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}

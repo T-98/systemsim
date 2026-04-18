@@ -18,12 +18,19 @@
  */
 
 import { Fragment, useMemo } from 'react';
-import { marked } from 'marked';
+import { marked, Marked, Lexer, type Tokens } from 'marked';
 import CanvasEmbed from './CanvasEmbed';
 
 marked.use({ gfm: true, breaks: false });
 
-/** Slugify a heading into a URL-safe id. Used by the right-rail TOC later. */
+/** A heading extracted from a topic's body for the right-rail TOC. */
+export interface TocHeading {
+  level: 2 | 3;
+  text: string;
+  id: string;
+}
+
+/** Slugify a heading into a URL-safe id. */
 export function slugifyHeading(text: string): string {
   return text
     .toLowerCase()
@@ -34,10 +41,76 @@ export function slugifyHeading(text: string): string {
     .slice(0, 64);
 }
 
-/** Render a markdown string to sanitized HTML. Memoized on the input. */
+/**
+ * Dedup a slug against a running counter. Same algorithm used by both the
+ * heading renderer and the extractHeadings walker so the generated DOM ids
+ * match the TOC hrefs exactly.
+ */
+function uniqueId(base: string, seen: Map<string, number>): string {
+  const n = seen.get(base) ?? 0;
+  seen.set(base, n + 1);
+  return n === 0 ? base : `${base}-${n + 1}`;
+}
+
+/** Extract plain text from an inline token list (strip HTML). */
+function plainText(tokens: Tokens.Generic[] | undefined): string {
+  if (!tokens) return '';
+  let out = '';
+  for (const t of tokens) {
+    if (typeof (t as Tokens.Text).text === 'string') out += (t as Tokens.Text).text;
+    // Recurse into nested inline tokens (link/em/strong/etc.)
+    if ((t as Tokens.Generic).tokens) out += plainText((t as Tokens.Generic).tokens);
+  }
+  return out;
+}
+
+/**
+ * Walk the markdown token stream and return the h2/h3 headings with
+ * stable, deduped ids. Uses the same dedup counter as the renderer so
+ * the TOC's `href="#id"` matches the rendered `<h2 id="id">` exactly.
+ */
+export function extractHeadings(md: string): TocHeading[] {
+  if (!md) return [];
+  const lexer = new Lexer({ gfm: true, breaks: false });
+  const tokens = lexer.lex(md);
+  const seen = new Map<string, number>();
+  const out: TocHeading[] = [];
+  for (const tok of tokens) {
+    if (tok.type !== 'heading') continue;
+    const h = tok as Tokens.Heading;
+    const text = plainText(h.tokens as Tokens.Generic[]).trim();
+    const base = slugifyHeading(text);
+    const id = uniqueId(base, seen);
+    if (h.depth === 2 || h.depth === 3) {
+      out.push({ level: h.depth, text, id });
+    }
+  }
+  return out;
+}
+
+/**
+ * Render markdown to sanitized HTML with heading ids and a quiet anchor
+ * affordance on h2/h3. Uses a per-call `Marked` instance so the dedup
+ * counter is scoped to this render (no shared state across topics).
+ */
 export function renderMarkdown(md: string): string {
   if (!md) return '';
-  const raw = marked.parse(md, { async: false }) as string;
+  const seen = new Map<string, number>();
+  const m = new Marked({ gfm: true, breaks: false });
+  m.use({
+    renderer: {
+      heading(token: Tokens.Heading): string {
+        // parseInline runs the same inline rules marked uses for regular text.
+        const textHtml = (m as unknown as { parser: { parseInline(t: Tokens.Generic[]): string } })
+          .parser.parseInline(token.tokens as Tokens.Generic[]);
+        const plain = textHtml.replace(/<[^>]+>/g, '').trim();
+        const base = slugifyHeading(plain);
+        const id = uniqueId(base, seen);
+        return `<h${token.depth} id="${id}">${textHtml}</h${token.depth}>\n`;
+      },
+    },
+  });
+  const raw = m.parse(md, { async: false }) as string;
   return sanitize(raw);
 }
 

@@ -278,17 +278,7 @@ input:focus, select:focus, textarea:focus {
 .docs-prose hr { margin: 32px 0; border: none; border-top: 1px solid var(--border-color); }
 .docs-prose img { max-width: 100%; border-radius: 8px; margin: 12px 0; }
 
-/* Heading anchor affordance — quiet link icon appears on hover. */
-.docs-prose h2, .docs-prose h3 { position: relative; }
-.docs-prose h2 > a.anchor,
-.docs-prose h3 > a.anchor {
-  position: absolute;
-  left: -24px;
-  color: var(--text-tertiary);
-  text-decoration: none;
-  opacity: 0;
-  transition: opacity 120ms ease;
-  font-weight: 400;
-}
-.docs-prose h2:hover > a.anchor,
-.docs-prose h3:hover > a.anchor { opacity: 1; }
+/* Headings get `id` attributes from MarkdownBody so the right-rail TOC can
+   scroll to them via IntersectionObserver + scrollIntoView. Keep scroll-
+   margin so the sticky header doesn't occlude the target heading. */
+.docs-prose h2, .docs-prose h3 { scroll-margin-top: 72px; }
