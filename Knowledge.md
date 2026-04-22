@@ -510,7 +510,140 @@ Phase C of tick:
 
 **No-traffic guard:** if the target got 0 RPS this tick (upstream wire breaker OPEN, quiet phase), its `errorRate` was reset to 0 at tick start — recomputing `acceptanceRate = 1` would falsely heal the signal. The update is skipped on no-traffic ticks; prior value persists.
 
-**Known limitation (shared with 3.2):** multi-inbound fan-in causes order-dependent `acceptanceRate` because processor metrics are not aggregated per tick. Proper fix requires refactoring processors to accumulate. Documented; deferred to a future architectural pass.
+**Known limitation (shared with 3.2) — fixed 2026-04-22:** multi-inbound fan-in used to cause order-dependent `acceptanceRate` because processor metrics were not aggregated per tick. Fixed in commit `bef3a01` — see the next subsection for the full mechanics.
+
+### Fan-in correctness and the 3-phase tick (2026-04-22)
+
+**Files:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `tick` / `emitOutbound` / `runComponent`, [src/engine/graphTraversal.ts](src/engine/graphTraversal.ts) `topologicalOrder`, [src/engine/__tests__/fanIn.test.ts](src/engine/__tests__/fanIn.test.ts).
+
+**The bug.** Before this refactor, `processComponent(target)` ran once per inbound call — in a fan-in topology `SRV-A → DB, SRV-B → DB`, DB's processor ran twice per tick, each run overwriting `state.metrics.*` last-write-wins. Breaker evaluation, retry amplification, and `acceptanceRate` all read the biased last-write value. Two different upstream wires observed two different mid-tick slices of the same target.
+
+**The fix in one sentence.** Split each tick into three phases: (A) compute a topological order of components and identify back edges, (B) run every component's processor exactly once with its true aggregated inbound, (C) observe per-wire signals against the target's true aggregate `errorRate`.
+
+#### Before / after — the diamond case
+
+![fan-in before/after](docs/images/fan-in-before-after.svg)
+
+ASCII version for terminals and code diffs:
+
+```
+BEFORE — recursive forwardOverWire, last-invocation wins
+────────────────────────────────────────────────────────
+
+         ┌─────────┐          ┌─────────┐
+         │  SRV-A  │─────20──►│         │
+         └─────────┘          │         │
+                              │   DB    │
+         ┌─────────┐          │         │
+         │  SRV-B  │─────20──►│         │
+         └─────────┘          └─────────┘
+
+  tick() — recursive
+  ────────────────────────────────────────────────
+  processComponent(LB)
+    forwardOverWire(LB, SRV-A, 20rps)
+      processComponent(SRV-A)
+        forwardOverWire(SRV-A, DB, 20rps)
+          processComponent(DB, 20rps)       ◄ run 1
+          DB.metrics.errorRate = e_A        ◄ write 1
+    forwardOverWire(LB, SRV-B, 20rps)
+      processComponent(SRV-B)
+        forwardOverWire(SRV-B, DB, 20rps)
+          processComponent(DB, 20rps)       ◄ run 2
+          DB.metrics.errorRate = e_B        ◄ OVERWRITES e_A
+  end-of-tick
+    evaluateBreakers reads DB.errorRate = e_B   ← biased
+
+
+AFTER — 3-phase tick, one call per component
+─────────────────────────────────────────────
+
+         ┌─────────┐      +20 rps ─┐
+         │  SRV-A  │──────────────►│
+         └─────────┘               │
+                              ┌─────────┐
+                              │   DB    │   Σ = 40 rps aggregate,
+                              │         │   one processor call,
+         ┌─────────┐          │         │   one errorRate write
+         │  SRV-B  │──────────►│         │
+         └─────────┘      +20 rps ─┘
+
+  tick() — 3-phase scheduler
+  ────────────────────────────────────────────────
+  Phase A  order = [LB, SRV-A, SRV-B, DB]   backEdges = ∅
+  Phase B
+    runComponent(LB)     emit → inboundRps[SRV-A] += 20
+                         emit → inboundRps[SRV-B] += 20
+    runComponent(SRV-A)  emit → inboundRps[DB] += 20
+    runComponent(SRV-B)  emit → inboundRps[DB] += 20
+    runComponent(DB, 40)                    ◄ single call
+    DB.metrics.errorRate = e_aggregate      ◄ single write
+  Phase C
+    wire(SRV-A→DB).lastObservedErrorRate = e_aggregate
+    wire(SRV-B→DB).lastObservedErrorRate = e_aggregate   (same value)
+```
+
+#### Impact table
+
+| Signal | Before | After |
+|---|---|---|
+| `DB.metrics.errorRate` | last caller's slice (`e_B`) | true aggregate (`e_agg`) |
+| `wire(SRV-A → DB).lastObservedErrorRate` | `e_A` | `e_agg` |
+| `wire(SRV-B → DB).lastObservedErrorRate` | `e_B` | `e_agg` (identical) |
+| Breaker evaluation | biased to `e_B` | reads aggregate |
+| Retry amplification | different per inbound wire | identical across wires |
+| `acceptanceRate` (backpressure) | derived from `e_B` | derived from `e_agg` |
+| Processor calls per tick | N per target (N = inbound count) | 1 per component |
+
+#### Cycle handling
+
+Pre-fix, cycles were detected by the path-based `callStack` guard and the cycle-closing request was silently dropped (with a warning log). Post-fix, `topologicalOrder` explicitly identifies back edges; `emitOutbound` routes back-edge traffic into `pendingInbound`, which is merged into the next tick's inbound accumulators at tick start. Traffic is preserved, not lost.
+
+![cycle deferred](docs/images/cycle-deferred-inbound.svg)
+
+ASCII:
+
+```
+BEFORE — cycle detected, back edge dropped
+──────────────────────────────────────────
+
+      ┌─────────┐          ┌─────────┐
+      │    A    │────────► │    B    │
+      │ (entry) │          │         │
+      └─────────┘ ◄ ─ ─ ─ ─└─────────┘
+                  back edge
+                  (DROPPED)
+
+  WARNING: Cycle detected — skipping to prevent infinite loop
+
+
+AFTER — back edge deferred to next tick
+───────────────────────────────────────
+
+      ┌─────────┐          ┌─────────┐
+      │    A    │────────► │    B    │
+      │ (entry) │          │         │
+      └─────────┘ ◄ ─ ─ ─ ─└─────────┘
+                  back edge
+                  → pendingInbound[A]
+
+  tick N      : emit(B → A) flagged by backEdges → pendingInbound[A] += eff
+  tick N+1    : pendingInbound merged into inboundRps at tick start,
+                plus one tickInterval (1000 ms) of scheduling delay added
+                to accumulatedLatencyMs. A processes normally.
+```
+
+#### Why not a simpler fix?
+
+Three alternatives considered and rejected:
+
+1. **Memoize `processComponent` within a tick.** Couldn't work — processors mutate state (queue depth, connection pool counters, `accumulatedErrors`). Running once "for real" and once "for bookkeeping" would either under-count or double-count mutations.
+2. **Two-sub-pass latency aggregation** (downstream-first latency, upstream-second execution) so LB/gateway p50 reflects same-tick downstream state. Rejected — the one-tick lag is invisible at 1 Hz tick rate and consistent with the lag retry + backpressure already use.
+3. **Per-wire `errorRate` tracking without aggregating the target.** Would narrow the breaker bias but still leaves `target.metrics.*` and `acceptanceRate` order-dependent.
+
+#### Review artifacts
+
+Decisions [§52](Decisions.md). Knowledge base [§40.6](system-design-knowledgebase.md#406-fan-in-behavior--aggregate-errorrate-fixed-2026-04-22), [§41.2](system-design-knowledgebase.md#412-signal-previous-tick-aggregate-error-rate-updated-2026-04-22), [§42.5](system-design-knowledgebase.md#425-fan-in-behavior--aggregate-acceptancerate-fixed-2026-04-22). Unit tests in [`src/engine/__tests__/fanIn.test.ts`](src/engine/__tests__/fanIn.test.ts) encode the aggregate invariants so future engine changes can't regress this.
 
 ### Simulation engine
 
@@ -520,18 +653,19 @@ Phase C of tick:
 
 **Internal state per component:** `ComponentState { queueDepth, currentConnections, memoryUsed, cacheEntries, shardLoads, accumulatedErrors, totalRequests, crashed, instanceCount, lastComputedLatencyMs }`
 
-**Per-tick flow:**
+**Per-tick flow (3-phase scheduler, post 2026-04-22):**
 1. `getCurrentRps()` — reads the current traffic phase (or returns max if stressed)
-2. For each entry point (explicit `isEntry` flag, else zero-indegree nodes), call `processComponent(id, rps, 0)`
-3. `processComponent` dispatches to type-specific handler:
-    - `processLoadBalancer` — distributes RPS across healthy backends, p50/p99 reflects max(downstream latency + wire)
+2. **Phase A** — `topologicalOrder(edges, entryPoints)` yields `{order, backEdges}`. Merge any back-edge traffic deferred from the previous tick (`pendingInbound`) into `inboundRps` / `inboundLat`, adding one tickInterval of scheduling delay. Seed entry points with `rpsPerEntry`.
+3. **Phase B** — `runComponent(id)` for each `id` in `order`, exactly once. Each processor reads `Σ inboundRps[id]` and an rps-weighted `accumulatedLatencyMs`, then dispatches to the type-specific handler:
+    - `processLoadBalancer` — distributes RPS across healthy backends, p50/p99 reflects max(downstream latency + wire), now one-tick-lagged
     - `processApiGateway` — rate limit rejection + rate limit callout
     - `processServer` — `computeQueueing(...)` from [QueueingModel.ts](src/engine/QueueingModel.ts), saturation callout at ρ≥0.85
     - `processCache` — `computeCacheModel(...)` from [WorkingSetCache.ts](src/engine/WorkingSetCache.ts), Zipfian hit rate, cold-start warmup, stampede detection, miss-storm callout
     - `processQueue` — Little's-Law-ish depth model, 70% capacity callout, overflow log, DLQ handling
     - `processDatabase` — connection pool, throughput limits, hot-shard Pareto distribution, pool-pressure callout at 80%
     - `processWebSocketGateway`, `processFanout`, `processCdn`, `processExternal`, `processAutoscaler`
-4. `callStack` Set guards against cycles (path-based, not flat)
+    Processors emit outbound via `emitOutbound(src, tgt, rps, accLat, logs, backEdges)` / `emitToDownstreams(...)` — no recursion. Back-edge and late-to-target deliveries are deferred into `pendingInbound`.
+4. **Phase C** — for every wire with `target.metrics.rps > 0`, write `wire.lastObservedErrorRate = target.metrics.errorRate` (true aggregate). `evaluateBreakers` and the `acceptanceRate` update proceed against the aggregate.
 5. `updateComponentHealth` transitions healthy → warning (>70%) → critical (>95%) → crashed (>98% with 30% prob)
 6. `updateParticles` — visual packets for wire animation
 

@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" font-family="-apple-system, Inter, sans-serif">
+  <style>
+    .bg { fill: #ffffff; }
+    .title { font-size: 18px; font-weight: 600; fill: #1d1d1f; letter-spacing: -0.32px; }
+    .subtitle { font-size: 13px; fill: rgba(0,0,0,0.48); letter-spacing: -0.12px; }
+    .divider { stroke: rgba(0,0,0,0.08); stroke-width: 1; }
+    .node { fill: #f5f5f7; stroke: rgba(0,0,0,0.12); stroke-width: 1; }
+    .node-text { font-size: 13px; font-weight: 500; fill: #1d1d1f; text-anchor: middle; letter-spacing: -0.12px; }
+    .wire { stroke: rgba(0,0,0,0.4); stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+    .wire-dashed { stroke: #ff9f0a; stroke-width: 2; fill: none; stroke-dasharray: 6 3; marker-end: url(#arrow-amber); }
+    .wire-green { stroke: #34c759; stroke-width: 2; fill: none; marker-end: url(#arrow-green); }
+    .label { font-size: 11px; fill: rgba(0,0,0,0.48); letter-spacing: -0.12px; }
+    .anno { font-size: 12px; fill: rgba(0,0,0,0.8); letter-spacing: -0.12px; }
+    .anno-amber { font-size: 12px; fill: #ff9f0a; font-weight: 500; letter-spacing: -0.12px; }
+    .anno-blue { font-size: 12px; fill: #0071e3; font-weight: 500; letter-spacing: -0.12px; }
+    .anno-red { font-size: 12px; fill: #ff3b30; font-weight: 500; letter-spacing: -0.12px; }
+    .mono { font-family: 'SF Mono', Menlo, monospace; font-size: 11px; fill: rgba(0,0,0,0.8); }
+    .mono-red { font-family: 'SF Mono', Menlo, monospace; font-size: 11px; fill: #ff3b30; }
+    .mono-amber { font-family: 'SF Mono', Menlo, monospace; font-size: 11px; fill: #ff9f0a; }
+    .mono-blue { font-family: 'SF Mono', Menlo, monospace; font-size: 11px; fill: #0071e3; }
+    .panel { fill: #fafafc; stroke: rgba(0,0,0,0.08); stroke-width: 1; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="rgba(0,0,0,0.4)"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ff9f0a"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#34c759"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="1200" height="520"/>
+
+  <!-- Divider between BEFORE and AFTER -->
+  <line class="divider" x1="600" y1="40" x2="600" y2="500"/>
+
+  <!-- ============================================================= -->
+  <!-- LEFT: BEFORE — cycle logged + dropped                          -->
+  <!-- ============================================================= -->
+  <text class="title" x="40" y="40">Before — cycle detected, back edge dropped</text>
+  <text class="subtitle" x="40" y="62">Path-based callStack detection refuses to recurse. Traffic is lost.</text>
+
+  <!-- Topology -->
+  <g transform="translate(40, 90)">
+    <rect class="node" x="80" y="30" width="100" height="44" rx="8"/>
+    <text class="node-text" x="130" y="57">A (entry)</text>
+
+    <rect class="node" x="320" y="30" width="100" height="44" rx="8"/>
+    <text class="node-text" x="370" y="57">B</text>
+
+    <!-- Forward A → B -->
+    <path class="wire" d="M 180 52 L 320 52"/>
+    <text class="label" x="240" y="46">forward</text>
+
+    <!-- Back edge B → A (red, dropped) -->
+    <path class="wire-dashed" stroke="#ff3b30" d="M 320 72 Q 250 130 180 72"/>
+    <text class="anno-red" x="250" y="132" text-anchor="middle">back edge</text>
+
+    <!-- Warning icon / log -->
+    <rect x="0" y="150" width="480" height="40" rx="8" fill="#ff3b30" fill-opacity="0.08" stroke="#ff3b30" stroke-opacity="0.2"/>
+    <text class="mono-red" x="16" y="176">WARNING: Cycle detected — skipping to prevent infinite loop</text>
+  </g>
+
+  <!-- Sequence -->
+  <g transform="translate(40, 320)">
+    <rect class="panel" x="0" y="0" width="520" height="170" rx="8"/>
+    <text class="anno" x="16" y="24" font-weight="500">Per-tick call path</text>
+    <text class="mono" x="16" y="52">processComponent(A)                # A on callStack</text>
+    <text class="mono" x="16" y="72">  forwardOverWire(A → B)</text>
+    <text class="mono" x="16" y="92">    processComponent(B)            # B on callStack</text>
+    <text class="mono" x="16" y="112">      forwardOverWire(B → A)</text>
+    <text class="mono-red" x="16" y="132">        A already on callStack → log + RETURN</text>
+    <text class="mono-red" x="16" y="152">        back-edge traffic dropped silently</text>
+  </g>
+
+  <!-- ============================================================= -->
+  <!-- RIGHT: AFTER — back edge deferred, delivered next tick         -->
+  <!-- ============================================================= -->
+  <text class="title" x="640" y="40">After — back edge deferred to next tick, no traffic loss</text>
+  <text class="subtitle" x="640" y="62">topologicalOrder marks "B|A" as a back edge; emitOutbound routes into pendingInbound.</text>
+
+  <!-- Topology -->
+  <g transform="translate(640, 90)">
+    <rect class="node" x="80" y="30" width="100" height="44" rx="8"/>
+    <text class="node-text" x="130" y="57">A (entry)</text>
+
+    <rect class="node" x="320" y="30" width="100" height="44" rx="8"/>
+    <text class="node-text" x="370" y="57">B</text>
+
+    <!-- Forward A → B (green) -->
+    <path class="wire-green" d="M 180 52 L 320 52"/>
+    <text class="label" x="240" y="46">forward</text>
+
+    <!-- Back edge B → A (amber dashed = deferred) -->
+    <path class="wire-dashed" d="M 320 72 Q 250 130 180 72"/>
+    <text class="anno-amber" x="250" y="132" text-anchor="middle">back edge → pendingInbound</text>
+
+    <!-- Info badge -->
+    <rect x="0" y="150" width="480" height="40" rx="8" fill="rgba(0,113,227,0.08)" stroke="#0071e3" stroke-opacity="0.2"/>
+    <text class="mono-blue" x="16" y="176">Deferred traffic merged into A's inbound at start of tick N+1</text>
+  </g>
+
+  <!-- Sequence -->
+  <g transform="translate(640, 320)">
+    <rect class="panel" x="0" y="0" width="520" height="170" rx="8"/>
+    <text class="anno" x="16" y="24" font-weight="500">Per-tick scheduler</text>
+    <text class="mono" x="16" y="52">Phase A: order = [A, B], backEdges = {"B|A"}</text>
+    <text class="mono" x="16" y="72">Phase B: runComponent(A) → emitOutbound(A → B)</text>
+    <text class="mono" x="16" y="92">         runComponent(B) → emitOutbound(B → A)</text>
+    <text class="mono-amber" x="16" y="112">                         edge in backEdges → pendingInbound[A]</text>
+    <text class="mono-blue" x="16" y="140">Next tick: pendingInbound merged (+ tickInterval×1000 ms</text>
+    <text class="mono-blue" x="16" y="156">           scheduling delay) into inboundRps/Lat</text>
+  </g>
+</svg>
