@@ -424,12 +424,17 @@ export class SimulationEngine {
     this.processedThisTick.clear();
 
     // Merge any back-edge traffic that was deferred from the previous tick.
-    // pendingInbound is emptied here; fresh deferrals are added during Phase B.
+    // Each deferred hop incurs a full tick of scheduling delay (~tickInterval
+    // seconds) in addition to the wire latency captured at deferral time —
+    // add it to the latency numerator here so cycles don't under-report
+    // accumulatedLatencyMs. pendingInbound is emptied; fresh deferrals added
+    // during Phase B accumulate for the following tick.
+    const tickDelayMs = this.tickInterval * 1000;
     this.pendingInbound.forEach((pending, id) => {
       if (pending.rps <= 0) return;
       this.inboundRps.set(id, (this.inboundRps.get(id) ?? 0) + pending.rps);
       const acc = this.inboundLat.get(id) ?? { num: 0, denom: 0 };
-      acc.num += pending.latNum;
+      acc.num += pending.latNum + pending.rps * tickDelayMs;
       acc.denom += pending.rps;
       this.inboundLat.set(id, acc);
     });
@@ -633,10 +638,6 @@ export class SimulationEngine {
 
     outcome.rpsEffective = eff;
 
-    if (wire?.breaker && eff > 0) {
-      wire.breaker.hadTrafficThisTick = true;
-    }
-
     const wireLatency = this.getWireLatency(sourceId, targetId);
     const targetAccLat = outboundAccLat + wireLatency;
 
@@ -645,12 +646,21 @@ export class SimulationEngine {
     if (eff > 0) {
       if (deferred) {
         // Cycle closers (or delivery to an already-processed node) can't be
-        // served this tick. Defer to next tick so traffic isn't silently dropped.
+        // served this tick. Defer to next tick so traffic isn't silently
+        // dropped. Crucially: we do NOT set `hadTrafficThisTick` on the wire's
+        // breaker here — the request has not actually been delivered yet, so a
+        // HALF_OPEN probe cannot advance toward CLOSED on an undelivered probe.
+        // The NEXT tick's emitOutbound sees this as fresh inbound (merged in at
+        // tick start) and only then sets `hadTrafficThisTick` if delivery
+        // succeeds.
         const p = this.pendingInbound.get(targetId) ?? { rps: 0, latNum: 0 };
         p.rps += eff;
         p.latNum += eff * targetAccLat;
         this.pendingInbound.set(targetId, p);
       } else {
+        // Real delivery this tick. Safe to mark the breaker as having seen
+        // traffic and to contribute to the target's aggregated inbound.
+        if (wire?.breaker) wire.breaker.hadTrafficThisTick = true;
         this.inboundRps.set(targetId, (this.inboundRps.get(targetId) ?? 0) + eff);
         const acc = this.inboundLat.get(targetId) ?? { num: 0, denom: 0 };
         acc.num += eff * targetAccLat;
