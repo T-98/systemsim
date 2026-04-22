@@ -367,28 +367,35 @@ User clicks "Download Report" in BottomPanel debrief tab
 
 **Failure signal:** target component's `errorRate` at end of tick. Above `failureThreshold` (default 0.5) = "failed tick."
 
-**HALF_OPEN probe requirement:** Success ticks only count when traffic *actually* flowed through the wire (`hadTrafficThisTick` set by `forwardOverWire`). A quiet phase cannot silently recover the breaker.
+**HALF_OPEN probe requirement:** Success ticks only count when traffic *actually* flowed through the wire (`hadTrafficThisTick` set by `emitOutbound`). A quiet phase cannot silently recover the breaker.
 
-**Code flow:**
+**Code flow (3-phase tick, post fan-in fix 2026-04-22):**
 
 ```
 tick() starts
     → reset non-crashed metrics (rps, errorRate, p50, p95, p99, cpuPercent, memoryPercent)
     → reset all wire.breaker.hadTrafficThisTick = false
-    → processComponent(entry) → ... → forwardOverWire(src, tgt, rps)
-        → if breaker.status === 'open': return (drop at wire)
-        → if breaker && rps > 0: breaker.hadTrafficThisTick = true
-        → getWireLatency + processComponent(tgt)
-    → end-of-tick: evaluateBreakers(newLogs)
-        → for each wire with a breaker:
-            - evaluateBreaker(state, config, target.metrics.errorRate, this.time)
-            - transition logged (bypasses throttle via calloutEntries)
+    → Phase A: topologicalOrder(edges, entries) → {order, backEdges}
+               merge pendingInbound from previous tick into inboundRps/inboundLat
+               seed entry points with rpsPerEntry
+    → Phase B: for each id in order: runComponent(id)
+                 processor sees ΣinboundRps and rps-weighted accLat
+                 processor emits outbound via emitOutbound(src, tgt, rpsNominal, ...)
+                   → if breaker OPEN: record zero-flow outcome and return
+                   → compute effective = rpsNominal × amplification × appliedBackpressure
+                   → if breaker && effective > 0: hadTrafficThisTick = true
+                   → if back-edge or target already processed: push to pendingInbound
+                     else: add to target's inboundRps + inboundLat accumulators
+    → Phase C: for each wire: wire.lastObservedErrorRate = target.metrics.errorRate
+                               (guarded by target.metrics.rps > 0)
+    → evaluateBreakers(newLogs) reads aggregate errorRate
+    → acceptanceRate update reads aggregate errorRate
     → tick++
 ```
 
 **LB integration:** `processLoadBalancer` filters out downstreams with incoming wire in OPEN state. "All backends down or breaker-open" → same critical log as "no healthy backends."
 
-**Known limitation (documented):** breakers share their failure signal with siblings at multi-inbound targets. One noisy upstream can trip a well-behaved sibling's breaker. Per-wire error accounting is deferred to the ForwardResult refactor coming with retry storms (3.2).
+**Fan-in correctness (fixed 2026-04-22):** Every inbound wire into the same target now sees the SAME aggregate `errorRate` after Phase C. The old last-invocation bias (breakers + retry amp + backpressure signals all biased to whichever wire recursed last) is gone. See [Decisions §52](Decisions.md) and KB §40.6 / §41.2 / §42.5.
 
 ### Retry storms (Phase 3.2)
 
@@ -400,20 +407,28 @@ tick() starts
 
 **Opt-in:** absent `retryPolicy` = no amplification, identical to pre-3.2 behavior.
 
-**Per-wire observability:** `WireState.lastObservedErrorRate` is set after every successful recurse in `forwardOverWire`. Reading per-wire rather than per-target sidesteps the multi-inbound aggregate problem for the retry signal (the breaker still uses target-aggregate — documented limitation).
+**Per-wire observability:** `WireState.lastObservedErrorRate` is written end-of-tick by Phase C to `target.metrics.errorRate` (the TRUE aggregate after fan-in fix). Every inbound wire to the same target sees the same value — that's the correct representation of downstream health. Guarded by `target.metrics.rps > 0` so quiet ticks don't falsely heal the signal. See KB §41.2.
 
-**Code flow:**
+**Code flow (post 2026-04-22 refactor):**
 
 ```
-forwardOverWire(src, tgt, rps)
-    → if breaker OPEN: return
+emitOutbound(src, tgt, rpsNominal, accLat, logs, backEdges)
+    → if breaker OPEN: record zero-flow outcome, return
     → read source's retryPolicy (may be undefined)
-    → if policy present AND wire.lastObservedErrorRate > 0:
+    → if policy present AND wire.lastObservedErrorRate > 0 AND !halfOpen:
         amplification = computeAmplification(lastObservedErrorRate, policy)
-        effectiveRps = rps × amplification
-    → getWireLatency + processComponent(tgt, effectiveRps, ...)
-    → wire.lastObservedErrorRate = target.metrics.errorRate   [for next tick]
+        eff = rpsNominal × amplification
+    → if target has backpressure config AND !halfOpen:
+        appliedBp = target.acceptanceRate
+        eff *= appliedBp
+    → stash WireTickOutcome(rpsNominal, rpsEffective=eff, amplification, appliedBp)
+    → push eff into target's inboundRps + inboundLat accumulators
+      (or pendingInbound if back-edge / target already processed)
     → if amplification ≥ 1.5: fireCallout("retry storm amplifying load 1.8×")
+
+Phase C (end of tick):
+    → for each wire: wire.lastObservedErrorRate = target.metrics.errorRate
+                     (guarded by rps > 0)
 ```
 
 **Callout:** one-shot per (source, target) pair, fires when amplification crosses 1.5×. Surfaces in the live log so users see retries inflating load.
@@ -467,26 +482,29 @@ User clicks a node → ConfigPanel shows retry + backpressure toggles (on eligib
 - `ComponentState.acceptanceRate: number` — initialized to 1.0, updated end-of-tick when `state.metrics.rps > 0` (no traffic = no new signal)
 - `acceptanceRate = clamp01(1 - errorRate)`
 
-**Code flow:**
+**Code flow (post 2026-04-22 refactor):**
 
 ```
-forwardOverWire(src, tgt, rps)
-    → check breaker OPEN: drop
-    → apply retry amplification (unless HALF_OPEN)
+emitOutbound(src, tgt, rpsNominal, accLat, logs, backEdges)
+    → check breaker OPEN: record zero-flow outcome, return
+    → apply retry amplification (unless HALF_OPEN) against wire.lastObservedErrorRate
     → check target's backpressure config
        → if enabled AND breaker not HALF_OPEN:
-           effectiveRps *= target.acceptanceRate  (previous tick's value)
-    → mark wire.breaker.hadTrafficThisTick if rps > 0
-    → processComponent(tgt, effectiveRps)
-    → observe target.metrics.errorRate for retry signal
+           effective *= target.acceptanceRate  (previous tick's value)
+    → mark wire.breaker.hadTrafficThisTick if effective > 0
+    → attribute effective to target's inboundRps + inboundLat accumulators
     → fire callout if appliedBackpressure ≤ 0.7 (one-shot)
 
-end of tick:
+Phase B of tick: runComponent(target) eventually consumes the aggregated
+inbound and produces target.metrics.errorRate.
+
+Phase C of tick:
     → for each non-crashed, backpressure-enabled component with rps > 0:
-       → acceptanceRate = 1 - errorRate
+       → acceptanceRate = 1 - errorRate   (computed on TRUE aggregate errorRate)
+    → for each wire: wire.lastObservedErrorRate = target.metrics.errorRate
 ```
 
-**Composition with retry storms:** retry amplifies first (optimistic caller), backpressure scales down (downstream's pushback). At steady state with shared `errorRate e`: `amplification × acceptance = (1 + e + e² + …) × (1 - e) ≈ 1` → self-stabilizing in the single-inbound case.
+**Composition with retry storms:** retry amplifies first (optimistic caller), backpressure scales down (downstream's pushback). At steady state with shared `errorRate e`: `amplification × acceptance = (1 + e + e² + …) × (1 - e) ≈ 1` → self-stabilizing. Post fan-in fix this stabilization holds in fan-in topologies too, because every inbound wire reads the same aggregate `e`.
 
 **HALF_OPEN exception:** same as retry — probes must flow at nominal rate. If backpressure were applied, a recovering downstream with `acceptanceRate=0` would never receive a probe, and the breaker would lock in HALF_OPEN forever.
 

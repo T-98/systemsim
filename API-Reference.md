@@ -722,7 +722,7 @@ Target-signaled backpressure. Opt-in via target's `config.backpressure = { enabl
 
 **Engine integration** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
 - `ComponentState.acceptanceRate: number` — init 1.0, updated end-of-tick when backpressure enabled AND `state.metrics.rps > 0`
-- `forwardOverWire`: after retry amplification, if target's backpressure is enabled AND breaker is not HALF_OPEN, multiply `effectiveRps × target.acceptanceRate`
+- `emitOutbound`: after retry amplification, if target's backpressure is enabled AND breaker is not HALF_OPEN, multiply `effectiveRps × target.acceptanceRate`
 - One-shot callout emits when `appliedBackpressure ≤ 0.7` (includes 0 — the worst case)
 
 **Config example:**
@@ -749,8 +749,8 @@ Retry storm modeling. Upstream components opt-in via `config.retryPolicy`.
 - `readRetryPolicy(config: Record<string, unknown>): RetryPolicy | undefined` — parses `config.retryPolicy`, returns undefined on missing/malformed/maxRetries<=0
 
 **Engine integration** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
-- `WireState.lastObservedErrorRate: number` — updated after every forwardOverWire call; consumed by next tick's retry amplification
-- `forwardOverWire` reads the source's retry policy, computes amplification from `wire.lastObservedErrorRate`, forwards `rps × amplification`, then records `target.metrics.errorRate` for the next tick
+- `WireState.lastObservedErrorRate: number` — written end-of-tick (Phase C) to `target.metrics.errorRate` (true aggregate after fan-in fix); guarded by `target.metrics.rps > 0` so quiet ticks don't falsely heal the signal; consumed by next tick's retry amplification
+- `emitOutbound` reads the source's retry policy, computes amplification from `wire.lastObservedErrorRate`, emits a `WireTickOutcome` with `rpsEffective = rps × amplification × appliedBackpressure`. Target's `state.metrics.errorRate` is then computed by Phase B's single processor call and captured into every inbound wire by Phase C.
 - One-shot callout emits to live log when amplification ≥ 1.5×
 
 **Config example** (on any component that forwards to a downstream):
@@ -785,7 +785,7 @@ Per-wire circuit breaker state machine. Opt-in via `WireConfig.circuitBreaker`.
 
 **Engine integration** (in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)):
 - `WireState` gets optional `breaker` + `breakerConfig` (present iff `WireConfig.circuitBreaker` was set)
-- `forwardOverWire(src, tgt, rps, accumulated, logs)` gates on breaker state — OPEN drops traffic; sets `hadTrafficThisTick = true` on the breaker when rps > 0
+- `emitOutbound(src, tgt, rpsNominal, accLat, logs, backEdges)` gates on breaker state — OPEN drops traffic; sets `hadTrafficThisTick = true` on the breaker when `rpsEffective > 0`. Back edges (cycle closers) and deliveries to already-processed targets are routed into `pendingInbound` so they land on the next tick's aggregated inbound rather than being silently dropped.
 - `evaluateBreakers(logs)` runs at end of every tick; logs transitions bypass the throttle via `calloutEntries`
 - `processLoadBalancer` excludes breaker-OPEN wires from its healthy-backend filter
 
