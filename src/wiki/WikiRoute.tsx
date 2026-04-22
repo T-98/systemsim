@@ -171,7 +171,7 @@ export default function WikiRoute() {
       style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
     >
       <header
-        className="flex items-center justify-between"
+        className="flex flex-col"
         style={{
           padding: '12px 24px',
           borderBottom: '1px solid var(--border-color)',
@@ -294,6 +294,55 @@ export default function WikiRoute() {
             </kbd>
           </button>
         </div>
+
+        <nav
+          className="flex items-center"
+          data-testid="docs-tabs"
+          role="tablist"
+          aria-label="Documentation sections"
+          style={{
+            borderTop: '1px solid var(--border-color)',
+            padding: '0 20px',
+            gap: '2px',
+          }}
+        >
+          {TABS.map((t) => {
+            const active = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                data-testid={`docs-tab-${t.id}`}
+                data-active={active ? 'true' : 'false'}
+                onClick={() => {
+                  setTab(t.id);
+                  // Clear the focused topic so the effect above picks the first
+                  // visible one for the new tab.
+                  setFocused(null);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 0,
+                  border: 'none',
+                  background: 'transparent',
+                  color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  fontSize: 13,
+                  fontWeight: active ? 600 : 500,
+                  letterSpacing: '-0.12px',
+                  cursor: 'pointer',
+                  borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                  transition: 'color 150ms ease-out, border-bottom-color 150ms ease-out',
+                  position: 'relative',
+                  bottom: '-1px',
+                }}
+              >
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
       </header>
 
       <div className="flex flex-1 overflow-hidden">

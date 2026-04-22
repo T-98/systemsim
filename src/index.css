@@ -205,6 +205,9 @@ input:focus, select:focus, textarea:focus {
 .docs-prose em { color: var(--text-primary); }
 .docs-prose a { color: var(--accent-link); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .docs-prose a:hover { text-decoration-thickness: 2px; }
+.docs-prose ul { list-style: disc; }
+.docs-prose ol { list-style: decimal; }
+.docs-prose ::marker { color: var(--text-tertiary); }
 .docs-prose code {
   font-family: 'SF Mono', Menlo, Consolas, 'Geist Mono', ui-monospace, monospace;
   font-size: 13px;
@@ -260,6 +263,7 @@ input:focus, select:focus, textarea:focus {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  border-top: 1px solid var(--border-color);
 }
 .docs-prose th,
 .docs-prose td {

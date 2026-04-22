@@ -50,6 +50,12 @@ export default function TopicNav({
             onMouseLeave={(e) => {
               if (!active) e.currentTarget.style.background = 'transparent';
             }}
+            onFocus={(e) => {
+              e.currentTarget.style.boxShadow = `inset 0 0 0 2px var(--accent-ring)`;
+            }}
+            onBlur={(e) => {
+              e.currentTarget.style.boxShadow = 'none';
+            }}
           >
             {t.title}
           </button>
