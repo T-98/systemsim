@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bfs, buildAdjacency, findEntryPoints, findDisconnected, isReachable } from '../graphTraversal';
+import { bfs, buildAdjacency, findEntryPoints, findDisconnected, isReachable, topologicalOrder } from '../graphTraversal';
 
 describe('bfs', () => {
   it('finds linear path A→B→C', () => {
@@ -140,5 +140,93 @@ describe('isReachable', () => {
   it('returns true for self', () => {
     const adj = buildAdjacency([]);
     expect(isReachable(adj, 'A', 'A')).toBe(true);
+  });
+});
+
+describe('topologicalOrder', () => {
+  it('orders a linear chain A→B→C→D', () => {
+    const { order, backEdges } = topologicalOrder(
+      [
+        { source: 'A', target: 'B' },
+        { source: 'B', target: 'C' },
+        { source: 'C', target: 'D' },
+      ],
+      ['A'],
+    );
+    expect(order).toEqual(['A', 'B', 'C', 'D']);
+    expect(backEdges.size).toBe(0);
+  });
+
+  it('puts both fork targets after the root in fan-out', () => {
+    const { order, backEdges } = topologicalOrder(
+      [
+        { source: 'A', target: 'B' },
+        { source: 'A', target: 'C' },
+      ],
+      ['A'],
+    );
+    expect(order[0]).toBe('A');
+    expect(order).toContain('B');
+    expect(order).toContain('C');
+    expect(backEdges.size).toBe(0);
+  });
+
+  it('puts the join target after both sources in fan-in (A→C, B→C)', () => {
+    const { order } = topologicalOrder(
+      [
+        { source: 'A', target: 'C' },
+        { source: 'B', target: 'C' },
+      ],
+      ['A', 'B'],
+    );
+    const iA = order.indexOf('A');
+    const iB = order.indexOf('B');
+    const iC = order.indexOf('C');
+    expect(iA).toBeGreaterThanOrEqual(0);
+    expect(iB).toBeGreaterThanOrEqual(0);
+    expect(iC).toBeGreaterThan(iA);
+    expect(iC).toBeGreaterThan(iB);
+  });
+
+  it('orders a diamond A→{B,C}→D', () => {
+    const { order, backEdges } = topologicalOrder(
+      [
+        { source: 'A', target: 'B' },
+        { source: 'A', target: 'C' },
+        { source: 'B', target: 'D' },
+        { source: 'C', target: 'D' },
+      ],
+      ['A'],
+    );
+    expect(order[0]).toBe('A');
+    expect(order[order.length - 1]).toBe('D');
+    expect(backEdges.size).toBe(0);
+  });
+
+  it('flags the back edge in a 3-node cycle A→B→C→A', () => {
+    const { order, backEdges } = topologicalOrder(
+      [
+        { source: 'A', target: 'B' },
+        { source: 'B', target: 'C' },
+        { source: 'C', target: 'A' },
+      ],
+      ['A'],
+    );
+    // All three reachable.
+    expect(new Set(order)).toEqual(new Set(['A', 'B', 'C']));
+    // Exactly one edge flagged as back — the cycle closer.
+    expect(backEdges.has('C|A')).toBe(true);
+    expect(backEdges.size).toBe(1);
+  });
+
+  it('skips unreachable nodes', () => {
+    const { order } = topologicalOrder(
+      [
+        { source: 'A', target: 'B' },
+        { source: 'X', target: 'Y' },
+      ],
+      ['A'],
+    );
+    expect(order).toEqual(['A', 'B']);
   });
 });

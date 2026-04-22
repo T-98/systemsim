@@ -367,28 +367,35 @@ User clicks "Download Report" in BottomPanel debrief tab
 
 **Failure signal:** target component's `errorRate` at end of tick. Above `failureThreshold` (default 0.5) = "failed tick."
 
-**HALF_OPEN probe requirement:** Success ticks only count when traffic *actually* flowed through the wire (`hadTrafficThisTick` set by `forwardOverWire`). A quiet phase cannot silently recover the breaker.
+**HALF_OPEN probe requirement:** Success ticks only count when traffic *actually* flowed through the wire (`hadTrafficThisTick` set by `emitOutbound`). A quiet phase cannot silently recover the breaker.
 
-**Code flow:**
+**Code flow (3-phase tick, post fan-in fix 2026-04-22):**
 
 ```
 tick() starts
     → reset non-crashed metrics (rps, errorRate, p50, p95, p99, cpuPercent, memoryPercent)
     → reset all wire.breaker.hadTrafficThisTick = false
-    → processComponent(entry) → ... → forwardOverWire(src, tgt, rps)
-        → if breaker.status === 'open': return (drop at wire)
-        → if breaker && rps > 0: breaker.hadTrafficThisTick = true
-        → getWireLatency + processComponent(tgt)
-    → end-of-tick: evaluateBreakers(newLogs)
-        → for each wire with a breaker:
-            - evaluateBreaker(state, config, target.metrics.errorRate, this.time)
-            - transition logged (bypasses throttle via calloutEntries)
+    → Phase A: topologicalOrder(edges, entries) → {order, backEdges}
+               merge pendingInbound from previous tick into inboundRps/inboundLat
+               seed entry points with rpsPerEntry
+    → Phase B: for each id in order: runComponent(id)
+                 processor sees ΣinboundRps and rps-weighted accLat
+                 processor emits outbound via emitOutbound(src, tgt, rpsNominal, ...)
+                   → if breaker OPEN: record zero-flow outcome and return
+                   → compute effective = rpsNominal × amplification × appliedBackpressure
+                   → if breaker && effective > 0: hadTrafficThisTick = true
+                   → if back-edge or target already processed: push to pendingInbound
+                     else: add to target's inboundRps + inboundLat accumulators
+    → Phase C: for each wire: wire.lastObservedErrorRate = target.metrics.errorRate
+                               (guarded by target.metrics.rps > 0)
+    → evaluateBreakers(newLogs) reads aggregate errorRate
+    → acceptanceRate update reads aggregate errorRate
     → tick++
 ```
 
 **LB integration:** `processLoadBalancer` filters out downstreams with incoming wire in OPEN state. "All backends down or breaker-open" → same critical log as "no healthy backends."
 
-**Known limitation (documented):** breakers share their failure signal with siblings at multi-inbound targets. One noisy upstream can trip a well-behaved sibling's breaker. Per-wire error accounting is deferred to the ForwardResult refactor coming with retry storms (3.2).
+**Fan-in correctness (fixed 2026-04-22):** Every inbound wire into the same target now sees the SAME aggregate `errorRate` after Phase C. The old last-invocation bias (breakers + retry amp + backpressure signals all biased to whichever wire recursed last) is gone. See [Decisions §52](Decisions.md) and KB §40.6 / §41.2 / §42.5.
 
 ### Retry storms (Phase 3.2)
 
@@ -400,20 +407,28 @@ tick() starts
 
 **Opt-in:** absent `retryPolicy` = no amplification, identical to pre-3.2 behavior.
 
-**Per-wire observability:** `WireState.lastObservedErrorRate` is set after every successful recurse in `forwardOverWire`. Reading per-wire rather than per-target sidesteps the multi-inbound aggregate problem for the retry signal (the breaker still uses target-aggregate — documented limitation).
+**Per-wire observability:** `WireState.lastObservedErrorRate` is written end-of-tick by Phase C to `target.metrics.errorRate` (the TRUE aggregate after fan-in fix). Every inbound wire to the same target sees the same value — that's the correct representation of downstream health. Guarded by `target.metrics.rps > 0` so quiet ticks don't falsely heal the signal. See KB §41.2.
 
-**Code flow:**
+**Code flow (post 2026-04-22 refactor):**
 
 ```
-forwardOverWire(src, tgt, rps)
-    → if breaker OPEN: return
+emitOutbound(src, tgt, rpsNominal, accLat, logs, backEdges)
+    → if breaker OPEN: record zero-flow outcome, return
     → read source's retryPolicy (may be undefined)
-    → if policy present AND wire.lastObservedErrorRate > 0:
+    → if policy present AND wire.lastObservedErrorRate > 0 AND !halfOpen:
         amplification = computeAmplification(lastObservedErrorRate, policy)
-        effectiveRps = rps × amplification
-    → getWireLatency + processComponent(tgt, effectiveRps, ...)
-    → wire.lastObservedErrorRate = target.metrics.errorRate   [for next tick]
+        eff = rpsNominal × amplification
+    → if target has backpressure config AND !halfOpen:
+        appliedBp = target.acceptanceRate
+        eff *= appliedBp
+    → stash WireTickOutcome(rpsNominal, rpsEffective=eff, amplification, appliedBp)
+    → push eff into target's inboundRps + inboundLat accumulators
+      (or pendingInbound if back-edge / target already processed)
     → if amplification ≥ 1.5: fireCallout("retry storm amplifying load 1.8×")
+
+Phase C (end of tick):
+    → for each wire: wire.lastObservedErrorRate = target.metrics.errorRate
+                     (guarded by rps > 0)
 ```
 
 **Callout:** one-shot per (source, target) pair, fires when amplification crosses 1.5×. Surfaces in the live log so users see retries inflating load.
@@ -467,32 +482,168 @@ User clicks a node → ConfigPanel shows retry + backpressure toggles (on eligib
 - `ComponentState.acceptanceRate: number` — initialized to 1.0, updated end-of-tick when `state.metrics.rps > 0` (no traffic = no new signal)
 - `acceptanceRate = clamp01(1 - errorRate)`
 
-**Code flow:**
+**Code flow (post 2026-04-22 refactor):**
 
 ```
-forwardOverWire(src, tgt, rps)
-    → check breaker OPEN: drop
-    → apply retry amplification (unless HALF_OPEN)
+emitOutbound(src, tgt, rpsNominal, accLat, logs, backEdges)
+    → check breaker OPEN: record zero-flow outcome, return
+    → apply retry amplification (unless HALF_OPEN) against wire.lastObservedErrorRate
     → check target's backpressure config
        → if enabled AND breaker not HALF_OPEN:
-           effectiveRps *= target.acceptanceRate  (previous tick's value)
-    → mark wire.breaker.hadTrafficThisTick if rps > 0
-    → processComponent(tgt, effectiveRps)
-    → observe target.metrics.errorRate for retry signal
+           effective *= target.acceptanceRate  (previous tick's value)
+    → mark wire.breaker.hadTrafficThisTick if effective > 0
+    → attribute effective to target's inboundRps + inboundLat accumulators
     → fire callout if appliedBackpressure ≤ 0.7 (one-shot)
 
-end of tick:
+Phase B of tick: runComponent(target) eventually consumes the aggregated
+inbound and produces target.metrics.errorRate.
+
+Phase C of tick:
     → for each non-crashed, backpressure-enabled component with rps > 0:
-       → acceptanceRate = 1 - errorRate
+       → acceptanceRate = 1 - errorRate   (computed on TRUE aggregate errorRate)
+    → for each wire: wire.lastObservedErrorRate = target.metrics.errorRate
 ```
 
-**Composition with retry storms:** retry amplifies first (optimistic caller), backpressure scales down (downstream's pushback). At steady state with shared `errorRate e`: `amplification × acceptance = (1 + e + e² + …) × (1 - e) ≈ 1` → self-stabilizing in the single-inbound case.
+**Composition with retry storms:** retry amplifies first (optimistic caller), backpressure scales down (downstream's pushback). At steady state with shared `errorRate e`: `amplification × acceptance = (1 + e + e² + …) × (1 - e) ≈ 1` → self-stabilizing. Post fan-in fix this stabilization holds in fan-in topologies too, because every inbound wire reads the same aggregate `e`.
 
 **HALF_OPEN exception:** same as retry — probes must flow at nominal rate. If backpressure were applied, a recovering downstream with `acceptanceRate=0` would never receive a probe, and the breaker would lock in HALF_OPEN forever.
 
 **No-traffic guard:** if the target got 0 RPS this tick (upstream wire breaker OPEN, quiet phase), its `errorRate` was reset to 0 at tick start — recomputing `acceptanceRate = 1` would falsely heal the signal. The update is skipped on no-traffic ticks; prior value persists.
 
-**Known limitation (shared with 3.2):** multi-inbound fan-in causes order-dependent `acceptanceRate` because processor metrics are not aggregated per tick. Proper fix requires refactoring processors to accumulate. Documented; deferred to a future architectural pass.
+**Known limitation (shared with 3.2) — fixed 2026-04-22:** multi-inbound fan-in used to cause order-dependent `acceptanceRate` because processor metrics were not aggregated per tick. Fixed in commit `bef3a01` — see the next subsection for the full mechanics.
+
+### Fan-in correctness and the 3-phase tick (2026-04-22)
+
+**Files:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `tick` / `emitOutbound` / `runComponent`, [src/engine/graphTraversal.ts](src/engine/graphTraversal.ts) `topologicalOrder`, [src/engine/__tests__/fanIn.test.ts](src/engine/__tests__/fanIn.test.ts).
+
+**The bug.** Before this refactor, `processComponent(target)` ran once per inbound call — in a fan-in topology `SRV-A → DB, SRV-B → DB`, DB's processor ran twice per tick, each run overwriting `state.metrics.*` last-write-wins. Breaker evaluation, retry amplification, and `acceptanceRate` all read the biased last-write value. Two different upstream wires observed two different mid-tick slices of the same target.
+
+**The fix in one sentence.** Split each tick into three phases: (A) compute a topological order of components and identify back edges, (B) run every component's processor exactly once with its true aggregated inbound, (C) observe per-wire signals against the target's true aggregate `errorRate`.
+
+#### Before / after — the diamond case
+
+![fan-in before/after](docs/images/fan-in-before-after.svg)
+
+ASCII version for terminals and code diffs:
+
+```
+BEFORE — recursive forwardOverWire, last-invocation wins
+────────────────────────────────────────────────────────
+
+         ┌─────────┐          ┌─────────┐
+         │  SRV-A  │─────20──►│         │
+         └─────────┘          │         │
+                              │   DB    │
+         ┌─────────┐          │         │
+         │  SRV-B  │─────20──►│         │
+         └─────────┘          └─────────┘
+
+  tick() — recursive
+  ────────────────────────────────────────────────
+  processComponent(LB)
+    forwardOverWire(LB, SRV-A, 20rps)
+      processComponent(SRV-A)
+        forwardOverWire(SRV-A, DB, 20rps)
+          processComponent(DB, 20rps)       ◄ run 1
+          DB.metrics.errorRate = e_A        ◄ write 1
+    forwardOverWire(LB, SRV-B, 20rps)
+      processComponent(SRV-B)
+        forwardOverWire(SRV-B, DB, 20rps)
+          processComponent(DB, 20rps)       ◄ run 2
+          DB.metrics.errorRate = e_B        ◄ OVERWRITES e_A
+  end-of-tick
+    evaluateBreakers reads DB.errorRate = e_B   ← biased
+
+
+AFTER — 3-phase tick, one call per component
+─────────────────────────────────────────────
+
+         ┌─────────┐      +20 rps ─┐
+         │  SRV-A  │──────────────►│
+         └─────────┘               │
+                              ┌─────────┐
+                              │   DB    │   Σ = 40 rps aggregate,
+                              │         │   one processor call,
+         ┌─────────┐          │         │   one errorRate write
+         │  SRV-B  │──────────►│         │
+         └─────────┘      +20 rps ─┘
+
+  tick() — 3-phase scheduler
+  ────────────────────────────────────────────────
+  Phase A  order = [LB, SRV-A, SRV-B, DB]   backEdges = ∅
+  Phase B
+    runComponent(LB)     emit → inboundRps[SRV-A] += 20
+                         emit → inboundRps[SRV-B] += 20
+    runComponent(SRV-A)  emit → inboundRps[DB] += 20
+    runComponent(SRV-B)  emit → inboundRps[DB] += 20
+    runComponent(DB, 40)                    ◄ single call
+    DB.metrics.errorRate = e_aggregate      ◄ single write
+  Phase C
+    wire(SRV-A→DB).lastObservedErrorRate = e_aggregate
+    wire(SRV-B→DB).lastObservedErrorRate = e_aggregate   (same value)
+```
+
+#### Impact table
+
+| Signal | Before | After |
+|---|---|---|
+| `DB.metrics.errorRate` | last caller's slice (`e_B`) | true aggregate (`e_agg`) |
+| `wire(SRV-A → DB).lastObservedErrorRate` | `e_A` | `e_agg` |
+| `wire(SRV-B → DB).lastObservedErrorRate` | `e_B` | `e_agg` (identical) |
+| Breaker evaluation | biased to `e_B` | reads aggregate |
+| Retry amplification | different per inbound wire | identical across wires |
+| `acceptanceRate` (backpressure) | derived from `e_B` | derived from `e_agg` |
+| Processor calls per tick | N per target (N = inbound count) | 1 per component |
+
+#### Cycle handling
+
+Pre-fix, cycles were detected by the path-based `callStack` guard and the cycle-closing request was silently dropped (with a warning log). Post-fix, `topologicalOrder` explicitly identifies back edges; `emitOutbound` routes back-edge traffic into `pendingInbound`, which is merged into the next tick's inbound accumulators at tick start. Traffic is preserved, not lost.
+
+![cycle deferred](docs/images/cycle-deferred-inbound.svg)
+
+ASCII:
+
+```
+BEFORE — cycle detected, back edge dropped
+──────────────────────────────────────────
+
+      ┌─────────┐          ┌─────────┐
+      │    A    │────────► │    B    │
+      │ (entry) │          │         │
+      └─────────┘ ◄ ─ ─ ─ ─└─────────┘
+                  back edge
+                  (DROPPED)
+
+  WARNING: Cycle detected — skipping to prevent infinite loop
+
+
+AFTER — back edge deferred to next tick
+───────────────────────────────────────
+
+      ┌─────────┐          ┌─────────┐
+      │    A    │────────► │    B    │
+      │ (entry) │          │         │
+      └─────────┘ ◄ ─ ─ ─ ─└─────────┘
+                  back edge
+                  → pendingInbound[A]
+
+  tick N      : emit(B → A) flagged by backEdges → pendingInbound[A] += eff
+  tick N+1    : pendingInbound merged into inboundRps at tick start,
+                plus one tickInterval (1000 ms) of scheduling delay added
+                to accumulatedLatencyMs. A processes normally.
+```
+
+#### Why not a simpler fix?
+
+Three alternatives considered and rejected:
+
+1. **Memoize `processComponent` within a tick.** Couldn't work — processors mutate state (queue depth, connection pool counters, `accumulatedErrors`). Running once "for real" and once "for bookkeeping" would either under-count or double-count mutations.
+2. **Two-sub-pass latency aggregation** (downstream-first latency, upstream-second execution) so LB/gateway p50 reflects same-tick downstream state. Rejected — the one-tick lag is invisible at 1 Hz tick rate and consistent with the lag retry + backpressure already use.
+3. **Per-wire `errorRate` tracking without aggregating the target.** Would narrow the breaker bias but still leaves `target.metrics.*` and `acceptanceRate` order-dependent.
+
+#### Review artifacts
+
+Decisions [§52](Decisions.md). Knowledge base [§40.6](system-design-knowledgebase.md#406-fan-in-behavior--aggregate-errorrate-fixed-2026-04-22), [§41.2](system-design-knowledgebase.md#412-signal-previous-tick-aggregate-error-rate-updated-2026-04-22), [§42.5](system-design-knowledgebase.md#425-fan-in-behavior--aggregate-acceptancerate-fixed-2026-04-22). Unit tests in [`src/engine/__tests__/fanIn.test.ts`](src/engine/__tests__/fanIn.test.ts) encode the aggregate invariants so future engine changes can't regress this.
 
 ### Simulation engine
 
@@ -502,18 +653,19 @@ end of tick:
 
 **Internal state per component:** `ComponentState { queueDepth, currentConnections, memoryUsed, cacheEntries, shardLoads, accumulatedErrors, totalRequests, crashed, instanceCount, lastComputedLatencyMs }`
 
-**Per-tick flow:**
+**Per-tick flow (3-phase scheduler, post 2026-04-22):**
 1. `getCurrentRps()` — reads the current traffic phase (or returns max if stressed)
-2. For each entry point (explicit `isEntry` flag, else zero-indegree nodes), call `processComponent(id, rps, 0)`
-3. `processComponent` dispatches to type-specific handler:
-    - `processLoadBalancer` — distributes RPS across healthy backends, p50/p99 reflects max(downstream latency + wire)
+2. **Phase A** — `topologicalOrder(edges, entryPoints)` yields `{order, backEdges}`. Merge any back-edge traffic deferred from the previous tick (`pendingInbound`) into `inboundRps` / `inboundLat`, adding one tickInterval of scheduling delay. Seed entry points with `rpsPerEntry`.
+3. **Phase B** — `runComponent(id)` for each `id` in `order`, exactly once. Each processor reads `Σ inboundRps[id]` and an rps-weighted `accumulatedLatencyMs`, then dispatches to the type-specific handler:
+    - `processLoadBalancer` — distributes RPS across healthy backends, p50/p99 reflects max(downstream latency + wire), now one-tick-lagged
     - `processApiGateway` — rate limit rejection + rate limit callout
     - `processServer` — `computeQueueing(...)` from [QueueingModel.ts](src/engine/QueueingModel.ts), saturation callout at ρ≥0.85
     - `processCache` — `computeCacheModel(...)` from [WorkingSetCache.ts](src/engine/WorkingSetCache.ts), Zipfian hit rate, cold-start warmup, stampede detection, miss-storm callout
     - `processQueue` — Little's-Law-ish depth model, 70% capacity callout, overflow log, DLQ handling
     - `processDatabase` — connection pool, throughput limits, hot-shard Pareto distribution, pool-pressure callout at 80%
     - `processWebSocketGateway`, `processFanout`, `processCdn`, `processExternal`, `processAutoscaler`
-4. `callStack` Set guards against cycles (path-based, not flat)
+    Processors emit outbound via `emitOutbound(src, tgt, rps, accLat, logs, backEdges)` / `emitToDownstreams(...)` — no recursion. Back-edge and late-to-target deliveries are deferred into `pendingInbound`.
+4. **Phase C** — for every wire with `target.metrics.rps > 0`, write `wire.lastObservedErrorRate = target.metrics.errorRate` (true aggregate). `evaluateBreakers` and the `acceptanceRate` update proceed against the aggregate.
 5. `updateComponentHealth` transitions healthy → warning (>70%) → critical (>95%) → crashed (>98% with 30% prob)
 6. `updateParticles` — visual packets for wire animation
 

@@ -12,8 +12,31 @@
  * under `src/scenarios/howto/`.
  */
 
-import { lookupTopic } from '../topics';
+import { lookupTopic, type TopicCategory } from '../topics';
 import MarkdownBody from './MarkdownBody';
+import PrevNextFooter from './PrevNextFooter';
+
+const CATEGORY_LABEL: Record<TopicCategory, string> = {
+  userGuide: 'Learn',
+  reference: 'System design',
+  component: 'Component',
+  concept: 'Concept',
+  config: 'Configuration',
+  severity: 'Log severity',
+  howto: 'How-to',
+};
+
+// Breadcrumbs only add information on the Reference tab, which mixes categories.
+// For Learn and How-to, `Tab > Category` is redundant. (codex feedback)
+const SHOW_BREADCRUMB: Record<TopicCategory, boolean> = {
+  userGuide: false,
+  reference: true,
+  component: true,
+  concept: true,
+  config: true,
+  severity: true,
+  howto: false,
+};
 
 export default function TopicBody({ topicKey }: { topicKey: string | null }) {
   if (!topicKey) {
@@ -29,6 +52,8 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
 
   const info = lookupTopic(topicKey);
   const isEmpty = !info.body || info.body.trim() === '';
+  const showBreadcrumb = SHOW_BREADCRUMB[info.category];
+  const breadcrumbLabel = CATEGORY_LABEL[info.category];
 
   return (
     <article
@@ -37,25 +62,23 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
       data-body-empty={isEmpty ? 'true' : 'false'}
       style={{ maxWidth: 720 }}
     >
-      <header style={{ marginBottom: 20 }}>
-        <div
-          style={{
-            fontSize: 10,
-            textTransform: 'uppercase',
-            letterSpacing: '0.6px',
-            color: 'var(--text-tertiary)',
-            marginBottom: 12,
-            display: 'inline-block',
-            border: '1px solid var(--border-color)',
-            padding: '2px 8px',
-            borderRadius: 4,
-          }}
-        >
-          {info.category}
-        </div>
+      <header style={{ marginBottom: 24 }}>
+        {showBreadcrumb && (
+          <div
+            data-testid="wiki-breadcrumb"
+            style={{
+              fontSize: 13,
+              letterSpacing: '-0.224px',
+              color: 'var(--text-tertiary)',
+              marginBottom: 8,
+            }}
+          >
+            Reference <span style={{ padding: '0 8px' }}>›</span> {breadcrumbLabel}
+          </div>
+        )}
         <h1
           style={{
-            fontSize: 28,
+            fontSize: 32,
             fontWeight: 600,
             letterSpacing: '-0.5px',
             color: 'var(--text-primary)',
@@ -65,6 +88,21 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
         >
           {info.title}
         </h1>
+        {info.shortDescription && (
+          <p
+            data-testid="wiki-lede"
+            style={{
+              fontSize: 16,
+              lineHeight: 1.5,
+              letterSpacing: '-0.24px',
+              color: 'var(--text-tertiary)',
+              margin: '12px 0 0',
+              maxWidth: 640,
+            }}
+          >
+            {info.shortDescription}
+          </p>
+        )}
       </header>
 
       {isEmpty ? (
@@ -85,6 +123,8 @@ export default function TopicBody({ topicKey }: { topicKey: string | null }) {
       ) : (
         <MarkdownBody markdown={info.body} />
       )}
+
+      {info.category === 'userGuide' && <PrevNextFooter topicKey={topicKey} />}
 
       {info.category === 'howto' && (
         <div style={{ marginTop: 28 }}>

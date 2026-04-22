@@ -28,24 +28,24 @@ export default function TopicNav({
             data-testid={`wiki-nav-item`}
             data-topic={key}
             data-active={active ? 'true' : 'false'}
+            aria-current={active ? 'page' : undefined}
             onClick={() => onSelect(key)}
             style={{
               display: 'block',
               width: '100%',
               textAlign: 'left',
-              padding: '8px 16px',
+              padding: '6px 24px',
               border: 'none',
-              background: active ? 'var(--bg-input)' : 'transparent',
-              color: active ? 'var(--text-primary)' : 'var(--text-primary)',
+              background: active ? 'var(--bg-hover)' : 'transparent',
+              color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
               fontSize: 13,
-              letterSpacing: '-0.12px',
+              fontWeight: active ? 600 : 400,
+              letterSpacing: '-0.224px',
               cursor: 'pointer',
-              borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
-              transition: 'background 140ms ease, color 140ms ease, border-left-color 140ms ease',
-              outline: 'none',
+              transition: 'background 140ms ease',
             }}
             onMouseEnter={(e) => {
-              if (!active) e.currentTarget.style.background = 'var(--bg-input)';
+              if (!active) e.currentTarget.style.background = 'var(--bg-hover)';
             }}
             onMouseLeave={(e) => {
               if (!active) e.currentTarget.style.background = 'transparent';

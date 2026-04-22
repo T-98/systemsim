@@ -115,3 +115,60 @@ export function isReachable(
 ): boolean {
   return bfs(adj, from, to) !== null;
 }
+
+/**
+ * Topological ordering of nodes reachable from `entries` with explicit
+ * back-edge marking. Used by the simulation engine so each component's
+ * processor runs exactly once per tick in dependency order (upstream before
+ * downstream), with cycle-closing wires flagged as back edges so their
+ * contributions can fall back to previous-tick metrics.
+ *
+ * Algorithm: iterative DFS from each entry. Colour = 0 (unseen), 1 (on
+ * stack — grey), 2 (finished — black). An edge `u → v` where `v` is grey
+ * is a back edge (cycle-closing). Post-order finish → reversed = topo
+ * order. When cycles exist, the DAG induced by non-back edges still has a
+ * valid topo order and we return that.
+ *
+ * `edgeId(source, target)` builds the key used for back-edge lookup; the
+ * engine uses the same `source|target` shape for its wire state maps.
+ */
+export function topologicalOrder(
+  edges: GraphEdge[],
+  entries: string[],
+): { order: string[]; backEdges: Set<string> } {
+  const adj = buildAdjacency(edges);
+  const colour = new Map<string, number>();
+  const finished: string[] = [];
+  const backEdges = new Set<string>();
+
+  type Frame = { id: string; iter: Iterator<string> };
+
+  for (const entry of entries) {
+    if (colour.get(entry)) continue;
+    const stack: Frame[] = [{ id: entry, iter: (adj.get(entry) ?? [])[Symbol.iterator]() }];
+    colour.set(entry, 1);
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1];
+      const step = top.iter.next();
+      if (step.done) {
+        colour.set(top.id, 2);
+        finished.push(top.id);
+        stack.pop();
+        continue;
+      }
+      const next = step.value;
+      const c = colour.get(next) ?? 0;
+      if (c === 1) {
+        // Grey on stack → back edge (cycle-closing).
+        backEdges.add(`${top.id}|${next}`);
+      } else if (c === 0) {
+        colour.set(next, 1);
+        stack.push({ id: next, iter: (adj.get(next) ?? [])[Symbol.iterator]() });
+      }
+      // c === 2: already finished, cross/forward edge — no back-edge semantics needed.
+    }
+  }
+
+  // DFS finish order reversed = topological order (for the DAG of non-back edges).
+  return { order: finished.reverse(), backEdges };
+}

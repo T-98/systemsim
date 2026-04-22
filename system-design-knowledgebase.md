@@ -3398,17 +3398,19 @@ When transitioning OPEN → HALF_OPEN, SIMFID zeroes `wire.lastObservedErrorRate
 
 This is Decisions §12e.
 
-### 40.6 Fan-in caveat — last-invocation bias
+### 40.6 Fan-in behavior — aggregate errorRate (fixed 2026-04-22)
 
-The breaker tracks per-wire state but reads `target.metrics.errorRate`, which is a single mutable field that each `processComponent` call **overwrites** rather than aggregating. In a fan-in topology where two upstreams A and B both forward to the same target T:
+**Previously documented as a last-invocation bias caveat; fixed in commit `bef3a01` with the 3-phase tick refactor.**
 
-1. A's `forwardOverWire(A, T, …)` runs → `processT` writes `T.metrics.errorRate = e_A`.
-2. B's `forwardOverWire(B, T, …)` runs → `processT` writes `T.metrics.errorRate = e_B`.
-3. `evaluateBreakers` reads the last written value — `e_B`.
+Before the fix, each `processComponent` call overwrote `target.metrics.errorRate` with the slice produced by that specific inbound wire, so in fan-in topologies the breaker read an order-dependent last-write value rather than the aggregate.
 
-Both wires' breakers see `e_B`, regardless of whether A's traffic was healthy. This is order-dependent. Traversal order is determined by the graph adjacency walk; it is deterministic for a fixed graph but not semantically meaningful.
+After the fix, the tick runs in three phases (`src/engine/SimulationEngine.ts` Phase A/B/C comments):
 
-For MVP scenarios (single inbound, or LB → N servers where the LB is the only upstream) this doesn't surface. It becomes a real limitation when users build diamond or fan-in topologies. Fixing requires a `ForwardResult` refactor (per-wire metrics threaded back through the recursion) — out of scope for Phase 3.
+1. **Phase A** — `topologicalOrder(edges, entries)` returns a dependency order of components plus a set of back edges for cycle-closing wires.
+2. **Phase B** — every component's processor runs **exactly once per tick** with its true aggregated inbound RPS (sum of every inbound wire's effective RPS) and an rps-weighted accumulated latency.
+3. **Phase C** — for every wire, `wire.lastObservedErrorRate = target.metrics.errorRate`, guarded by `target.metrics.rps > 0` (missing data is not health). All wires into the same target see the same aggregate value.
+
+`evaluateBreakers` then reads the aggregate, so fan-in topologies no longer bias breaker state to whichever upstream happened to recurse last.
 
 ### 40.7 Related
 
@@ -3449,11 +3451,11 @@ interface RetryPolicy {
 
 This is Decisions §12f.
 
-### 41.2 Signal: previous-tick error rate, per-wire
+### 41.2 Signal: previous-tick aggregate error rate (updated 2026-04-22)
 
-The error rate that drives amplification is `wire.lastObservedErrorRate`, updated **after** the recursive `processComponent` call returns (`SimulationEngine.ts:521–528`). Two design choices shape this:
+The error rate that drives amplification is `wire.lastObservedErrorRate`, written at the **end of every tick** by Phase C of the 3-phase tick model (`SimulationEngine.ts`, look for the Phase C comment block). Two design choices shape this:
 
-1. **Per-wire storage, but shared-snapshot read.** Each wire *stores* its own `lastObservedErrorRate`. What it reads after recursion is `target.metrics.errorRate` — the same mutable snapshot that fan-in processors overwrite (§40.6). So in fan-in, different wires can end up holding different per-wire values, but each one is a snapshot of the target right after *their* invocation, not an independent per-wire error measurement. This partially narrows the fan-in bias but doesn't fully fix it. For single-inbound paths, it behaves exactly like a clean per-wire signal.
+1. **Aggregate per target, identical across every inbound wire.** Every wire into the same target sees the same value — the target's true post-processing `metrics.errorRate`. The fan-in bias documented in earlier revisions of this section is fixed (see §40.6). A no-traffic guard holds the previous value when the target saw zero RPS this tick, so a quiet phase doesn't falsely heal the retry signal.
 
 2. **Previous-tick, not same-tick.** Upstream reads the downstream's error rate from the previous tick. Real retries happen over seconds — upstream can't know instantly that downstream is failing. The one-tick delay models that propagation. Same-tick retries would be a fictional instant feedback loop.
 
@@ -3555,9 +3557,11 @@ The **no-traffic guard** (Decisions §12h) is load-bearing. Metrics are reset at
 
 The guard preserves the previous tick's `acceptanceRate` through quiet periods. Recovery only happens when actual traffic hits and the component has a chance to demonstrate capacity.
 
-### 42.5 Fan-in caveat
+### 42.5 Fan-in behavior — aggregate acceptanceRate (fixed 2026-04-22)
 
-Backpressure shares the same mutable `state.metrics.errorRate` field as the breaker (§40.6) and retry amplification (§41.2). At end-of-tick update time, the computed `acceptanceRate` reflects only the last processor invocation's `errorRate` for the component. In fan-in topologies, upstreams A and B reading the same target's `acceptanceRate` are both reading a signal derived from the last-invoking wire's view of errors, not a per-wire backpressure snapshot. Same fan-in limitation as §40.6; same fix (ForwardResult refactor) would resolve it.
+**Previously documented as a caveat; fixed in the same 3-phase tick refactor that fixed the breaker and retry signals.**
+
+`acceptanceRate` now derives from the target's true aggregate `errorRate` (Phase B produces one processor call per component per tick with summed inbound; Phase C's updates read the aggregate). Upstreams A and B reading the same target's `acceptanceRate` both see the same value — the correct representation of downstream saturation. See §40.6.
 
 ### 42.6 One-tick propagation delay
 

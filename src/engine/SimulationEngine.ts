@@ -46,6 +46,7 @@ import {
 } from './CircuitBreaker';
 import { computeAmplification, readRetryPolicy } from './RetryPolicy';
 import { computeAcceptanceRate, readBackpressureConfig } from './Backpressure';
+import { topologicalOrder } from './graphTraversal';
 
 interface ComponentState {
   id: string;
@@ -93,12 +94,40 @@ interface WireState {
   /** Resolved breaker config (with defaults applied). Present iff breaker present. */
   breakerConfig?: CircuitBreakerConfig;
   /**
-   * Downstream errorRate observed after the most recent forward. Used by the
-   * NEXT tick's retry amplification (3.2) and — in the future — backpressure
-   * (3.3) so they can read the previous tick's outcome without peeking at
-   * the aggregate target.metrics.errorRate mid-tick.
+   * Downstream errorRate observed at end of most recent tick with traffic.
+   * Used by the NEXT tick's retry amplification and (indirectly, via
+   * acceptanceRate) backpressure. Post fan-in-correctness fix this is the
+   * target's true AGGREGATE errorRate, not the slice from a specific
+   * inbound wire. When target sees no traffic for a tick, the previous
+   * value is held (missing data is not health).
    */
   lastObservedErrorRate: number;
+}
+
+/**
+ * Per-wire outcome of one tick's forwarding attempt. Populated during Phase B
+ * (processor execution) and consumed at end of tick for breaker / retry /
+ * backpressure book-keeping. Exposed via `tickOutcomes()` for tests that
+ * want to assert the forwarding decisions directly.
+ */
+export interface WireTickOutcome {
+  wireId: string;
+  source: string;
+  target: string;
+  /** What the upstream processor asked us to send before resilience adjustments. */
+  rpsNominal: number;
+  /** What actually flowed after retry amplification × backpressure scaling (or 0 if breaker OPEN). */
+  rpsEffective: number;
+  /** Retry factor applied (1 when no retry policy or no prior error). */
+  amplification: number;
+  /** Target's acceptanceRate used to scale down (1 = pass-through, 0 = fully rejected). */
+  appliedBackpressure: number;
+}
+
+/** Per-component inbound latency aggregator: numerator = Σ rps·accLat, denominator = Σ rps. */
+interface InboundLatencyAccumulator {
+  num: number;
+  denom: number;
 }
 
 // Seeded PRNG (mulberry32) for reproducible simulations in tests
@@ -136,8 +165,14 @@ export class SimulationEngine {
   private schemaShardKeyCardinality: 'low' | 'medium' | 'high' = 'high';
   private lastLogTime: Map<string, number> = new Map(); // throttle logs per component
   private random: () => number; // seeded PRNG for reproducibility
-  private callStack: Set<string> = new Set(); // path-based cycle detection
   private firedCallouts: Set<string> = new Set(); // saturation warnings, once per component per run
+  // Per-tick state — cleared at tick start. See tick() for the 3-phase model.
+  private inboundRps: Map<string, number> = new Map();
+  private inboundLat: Map<string, InboundLatencyAccumulator> = new Map();
+  private wireOutcomes: Map<string, WireTickOutcome> = new Map();
+  private processedThisTick: Set<string> = new Set();
+  // Cycle/back-edge traffic that couldn't be delivered this tick is carried into next tick.
+  private pendingInbound: Map<string, { rps: number; latNum: number }> = new Map();
   private calloutEntries: WeakSet<LogEntry> = new WeakSet(); // entries that bypass the per-tick throttle
   private peakCacheHitRate: Map<string, number> = new Map(); // track peak hitRate per cache for miss-storm detection
   private stressedMode = false; // worst-case run: peak RPS held, cold cache, wire p99
@@ -269,6 +304,22 @@ export class SimulationEngine {
     return result;
   }
 
+  /**
+   * Per-wire outcomes captured during the most recent tick. Exposed for
+   * tests + future UI surfaces (wire-hover rich tooltip). Read-only snapshot —
+   * callers should not mutate.
+   */
+  tickOutcomes(): WireTickOutcome[] {
+    return Array.from(this.wireOutcomes.values());
+  }
+
+  /** Deferred back-edge traffic carried into the next tick's inbound. */
+  pendingCount(): number {
+    let n = 0;
+    this.pendingInbound.forEach((p) => { if (p.rps > 0) n += 1; });
+    return n;
+  }
+
   isComplete(): boolean {
     return this.time >= this.trafficProfile.durationSeconds;
   }
@@ -345,8 +396,8 @@ export class SimulationEngine {
     // of stale values. Crashed components retain their last-known metrics so
     // users see WHY they crashed.
     //
-    // Also reset per-wire "had traffic this tick" flag — set by forwardOverWire
-    // when traffic actually flows, consumed by evaluateBreakers at end of tick.
+    // Also reset per-wire "had traffic this tick" flag — set when effective
+    // RPS flows through emitOutbound, consumed by evaluateBreakers at end of tick.
     this.components.forEach((state) => {
       if (state.crashed) return;
       state.metrics.rps = 0;
@@ -361,12 +412,68 @@ export class SimulationEngine {
       if (wire.breaker) wire.breaker.hadTrafficThisTick = false;
     });
 
-    // Distribute traffic to entry points
-    const rpsPerEntry = rpsPerTick / Math.max(this.entryPoints.length, 1);
+    // ── Phase A: topological order + per-tick accumulators ─────────────────
+    //
+    // Compute the dependency order so each component's processor runs exactly
+    // once per tick (upstream before downstream). Back edges (cycle-closing
+    // wires) are flagged; their contributions are deferred to pendingInbound
+    // so we don't drop traffic around cycles.
+    this.inboundRps.clear();
+    this.inboundLat.clear();
+    this.wireOutcomes.clear();
+    this.processedThisTick.clear();
 
+    // Merge any back-edge traffic that was deferred from the previous tick.
+    // Each deferred hop incurs a full tick of scheduling delay (~tickInterval
+    // seconds) in addition to the wire latency captured at deferral time —
+    // add it to the latency numerator here so cycles don't under-report
+    // accumulatedLatencyMs. pendingInbound is emptied; fresh deferrals added
+    // during Phase B accumulate for the following tick.
+    const tickDelayMs = this.tickInterval * 1000;
+    this.pendingInbound.forEach((pending, id) => {
+      if (pending.rps <= 0) return;
+      this.inboundRps.set(id, (this.inboundRps.get(id) ?? 0) + pending.rps);
+      const acc = this.inboundLat.get(id) ?? { num: 0, denom: 0 };
+      acc.num += pending.latNum + pending.rps * tickDelayMs;
+      acc.denom += pending.rps;
+      this.inboundLat.set(id, acc);
+    });
+    this.pendingInbound.clear();
+
+    const edgesForTopo = Array.from(this.wires.values()).map((w) => ({
+      source: w.source,
+      target: w.target,
+    }));
+    const { order, backEdges } = topologicalOrder(edgesForTopo, this.entryPoints);
+
+    // Seed entry points with the tick's total RPS divided evenly. Entry
+    // components have no upstream latency — accLat starts at 0.
+    const rpsPerEntry = rpsPerTick / Math.max(this.entryPoints.length, 1);
     for (const entryId of this.entryPoints) {
-      this.processComponent(entryId, rpsPerEntry, newLogs, 0);
+      this.inboundRps.set(entryId, (this.inboundRps.get(entryId) ?? 0) + rpsPerEntry);
+      // Entry latency denominator is rpsPerEntry; numerator is 0 (0 upstream latency).
+      const acc = this.inboundLat.get(entryId) ?? { num: 0, denom: 0 };
+      acc.denom += rpsPerEntry;
+      this.inboundLat.set(entryId, acc);
     }
+
+    // ── Phase B: process every reachable component exactly once, in order ──
+    //
+    // Each processor sees its true aggregated inbound RPS (sum of every
+    // inbound wire's effective RPS) and rps-weighted accumulated latency.
+    // Processors emit outbound wire outcomes via emitOutbound, which updates
+    // the downstream component's inbound accumulators before its turn.
+    for (const id of order) {
+      this.runComponent(id, newLogs, backEdges);
+    }
+    // Catch anything unreachable from entries but still part of the graph
+    // (e.g., explicit entry flag on a node with no incoming path from others):
+    // make sure we don't silently skip it.
+    this.components.forEach((_, id) => {
+      if (!this.processedThisTick.has(id)) {
+        this.runComponent(id, newLogs, backEdges);
+      }
+    });
 
     // Update particles
     this.updateParticles(rpsPerTick);
@@ -381,19 +488,31 @@ export class SimulationEngine {
       healths[id] = state.health;
     });
 
-    // Advance per-wire circuit breakers based on this tick's downstream errorRate.
+    // ── Phase C: observe aggregate signals per wire ────────────────────────
+    //
+    // Every inbound wire to a given target now sees the SAME aggregate
+    // errorRate (the target's true post-processing metric), not a last-
+    // invocation-biased slice. Same no-traffic guard as acceptanceRate:
+    // tick-start reset makes errorRate=0 for silent components; holding
+    // the previous value beats falsely healing to 0. Missing data is not
+    // health.
+    this.wires.forEach((wire) => {
+      const target = this.components.get(wire.target);
+      if (!target) return;
+      if (target.metrics.rps <= 0) return;
+      wire.lastObservedErrorRate = target.metrics.errorRate;
+    });
+
+    // Advance per-wire circuit breakers based on this tick's aggregate
+    // downstream errorRate (no longer biased by fan-in ordering).
     this.evaluateBreakers(newLogs);
 
     // Update per-component acceptanceRate (3.3 backpressure signal). Read
-    // by next tick's forwardOverWire so upstream callers scale their
-    // forwarded RPS down when the downstream is saturated. One-tick
-    // propagation delay matches real systems.
+    // by next tick's emitOutbound so upstream callers scale their forwarded
+    // RPS down when the downstream is saturated. One-tick propagation delay
+    // matches real systems.
     //
-    // No-traffic guard: if the component got 0 RPS this tick (upstream
-    // wire breaker OPEN, or simply quiet phase), we have NO fresh signal.
-    // Holding the previous value beats falsely healing to 1.0, which would
-    // happen because tick-start resets errorRate to 0. Missing data is not
-    // health.
+    // No-traffic guard as above.
     this.components.forEach((state) => {
       if (state.crashed) return;
       if (!readBackpressureConfig(state.config)) return;
@@ -450,106 +569,124 @@ export class SimulationEngine {
   }
 
   /**
-   * Single choke point for any traffic flowing from one component to another
-   * over a wire. Phase 3 resilience logic hooks in here so processor code
-   * doesn't need to know about them.
+   * Emit the outcome of one wire's forwarding attempt: apply the circuit-
+   * breaker gate, retry amplification, and backpressure scaling; attribute
+   * the resulting effective RPS to the target's per-tick inbound accumulator
+   * (or to `pendingInbound` if the edge is a back edge or the target was
+   * already processed this tick).
+   *
+   * Replaces the recursive `forwardOverWire` — processors call this once per
+   * outbound wire and the tick driver handles downstream scheduling via the
+   * topological order. Fan-in is fixed because every inbound wire contributes
+   * to the target's summed inbound BEFORE the target's processor runs, so
+   * `target.metrics.*` reflect the aggregate, not any single slice.
    *
    * Circuit breaker gate:
-   * - OPEN: drop traffic entirely. No recurse, no latency, no cost.
-   * - HALF_OPEN: let traffic flow. If the tick ends with the target healthy,
-   *   breaker moves back toward CLOSED.
-   * - CLOSED: normal forwarding.
-   *
-   * Retry + backpressure will extend this in 3.2 / 3.3.
+   * - OPEN: drop traffic entirely. No latency attribution, no cost.
+   * - HALF_OPEN: let traffic flow. Skips retry amp + backpressure (we want a
+   *   clean probe, not a replayed storm or a throttled-to-zero probe).
+   * - CLOSED: normal forwarding with retry + BP applied.
    */
-  private forwardOverWire(sourceId: string, targetId: string, rps: number, accumulatedLatencyMs: number, logs: LogEntry[]) {
+  private emitOutbound(
+    sourceId: string,
+    targetId: string,
+    rpsNominal: number,
+    outboundAccLat: number,
+    logs: LogEntry[],
+    backEdges: Set<string>,
+  ): void {
     const wire = this.findWire(sourceId, targetId);
+    const wireId = wire?.id ?? `${sourceId}|${targetId}`;
+
+    const outcome: WireTickOutcome = {
+      wireId,
+      source: sourceId,
+      target: targetId,
+      rpsNominal,
+      rpsEffective: 0,
+      amplification: 1,
+      appliedBackpressure: 1,
+    };
+
     if (wire?.breaker?.status === 'open') {
-      return; // fail fast: circuit open, drop at the source
+      // OPEN breaker drops everything at the source. Record the outcome so
+      // tests can assert the zero-flow decision explicitly.
+      this.wireOutcomes.set(wireId, outcome);
+      return;
     }
 
-    // Retry amplification: if the source has a retry policy and the downstream
-    // was erroring last tick, amplify the effective RPS by the geometric sum
-    // of the retry waves (1 + e + e² + … + e^maxRetries). This is how
-    // real retry storms inflate load on an already-struggling downstream.
-    //
-    // Using previous-tick errorRate avoids needing multiple recursion passes
-    // per tick and matches the one-tick propagation delay backpressure (3.3)
-    // will also use.
-    //
-    // HALF_OPEN exception: the whole point of HALF_OPEN is to send a small
-    // probe, not a replayed storm. Amplifying on a recovering downstream
-    // would slam it with stale errors and guarantee re-open. Skip retries
-    // during HALF_OPEN.
-    let effectiveRps = rps;
-    let amplification = 1;
+    const halfOpen = wire?.breaker?.status === 'half_open';
+    let eff = rpsNominal;
+
+    // Retry amplification — geometric sum of retry waves, gated by previous-
+    // tick observed errorRate on this wire. Skipped during HALF_OPEN so probes
+    // don't replay stale failures and guarantee re-open.
     const sourceState = this.components.get(sourceId);
     const retryPolicy = sourceState ? readRetryPolicy(sourceState.config) : undefined;
-    const breakerHalfOpen = wire?.breaker?.status === 'half_open';
-    if (retryPolicy && wire && rps > 0 && wire.lastObservedErrorRate > 0 && !breakerHalfOpen) {
-      amplification = computeAmplification(wire.lastObservedErrorRate, retryPolicy);
-      effectiveRps = rps * amplification;
+    if (retryPolicy && wire && rpsNominal > 0 && wire.lastObservedErrorRate > 0 && !halfOpen) {
+      outcome.amplification = computeAmplification(wire.lastObservedErrorRate, retryPolicy);
+      eff = rpsNominal * outcome.amplification;
     }
 
-    // Backpressure: if the target is signaling it can't accept everything
-    // (its previous-tick acceptanceRate < 1), scale the forwarded RPS down.
-    // This happens AFTER retry amplification — upstream optimistically
-    // amplifies, downstream pushes back; net effect self-stabilizes.
-    //
-    // HALF_OPEN exception: same reasoning as retry suppression. A probe
-    // must flow at nominal rate so `hadTrafficThisTick` fires and the
-    // breaker can observe whether the downstream has recovered. Scaling
-    // a probe to 0 would lock the breaker in HALF_OPEN forever.
-    const targetStateForBp = this.components.get(targetId);
-    let appliedBackpressure = 1;
-    if (targetStateForBp && readBackpressureConfig(targetStateForBp.config) && !breakerHalfOpen) {
-      appliedBackpressure = targetStateForBp.acceptanceRate;
-      effectiveRps = effectiveRps * appliedBackpressure;
+    // Backpressure — target's previous-tick acceptanceRate scales us down.
+    // Skipped during HALF_OPEN so probes flow at nominal rate.
+    const targetState = this.components.get(targetId);
+    if (targetState && readBackpressureConfig(targetState.config) && !halfOpen) {
+      outcome.appliedBackpressure = targetState.acceptanceRate;
+      eff *= outcome.appliedBackpressure;
     }
 
-    // Record that this wire actually served traffic this tick. HALF_OPEN
-    // recovery requires at least one real probe to succeed, not just the
-    // absence of failure. Without this, a quiet tick would silently be
-    // counted as success and recover the breaker without validation.
-    if (wire?.breaker && effectiveRps > 0) {
-      wire.breaker.hadTrafficThisTick = true;
-    }
+    outcome.rpsEffective = eff;
 
     const wireLatency = this.getWireLatency(sourceId, targetId);
-    this.processComponent(targetId, effectiveRps, logs, accumulatedLatencyMs + wireLatency);
+    const targetAccLat = outboundAccLat + wireLatency;
 
-    // Observe post-recursion errorRate for the next tick's retry decision.
-    // Multi-inbound caveat: this is the target's AGGREGATE errorRate after
-    // everyone's traffic, not this wire's slice. Close enough for the retry
-    // signal; good enough that steady-state stabilizes within a couple ticks.
-    if (wire) {
-      const target = this.components.get(targetId);
-      wire.lastObservedErrorRate = target?.metrics.errorRate ?? 0;
+    const edgeKey = `${sourceId}|${targetId}`;
+    const deferred = backEdges.has(edgeKey) || this.processedThisTick.has(targetId);
+    if (eff > 0) {
+      if (deferred) {
+        // Cycle closers (or delivery to an already-processed node) can't be
+        // served this tick. Defer to next tick so traffic isn't silently
+        // dropped. Crucially: we do NOT set `hadTrafficThisTick` on the wire's
+        // breaker here — the request has not actually been delivered yet, so a
+        // HALF_OPEN probe cannot advance toward CLOSED on an undelivered probe.
+        // The NEXT tick's emitOutbound sees this as fresh inbound (merged in at
+        // tick start) and only then sets `hadTrafficThisTick` if delivery
+        // succeeds.
+        const p = this.pendingInbound.get(targetId) ?? { rps: 0, latNum: 0 };
+        p.rps += eff;
+        p.latNum += eff * targetAccLat;
+        this.pendingInbound.set(targetId, p);
+      } else {
+        // Real delivery this tick. Safe to mark the breaker as having seen
+        // traffic and to contribute to the target's aggregated inbound.
+        if (wire?.breaker) wire.breaker.hadTrafficThisTick = true;
+        this.inboundRps.set(targetId, (this.inboundRps.get(targetId) ?? 0) + eff);
+        const acc = this.inboundLat.get(targetId) ?? { num: 0, denom: 0 };
+        acc.num += eff * targetAccLat;
+        acc.denom += eff;
+        this.inboundLat.set(targetId, acc);
+      }
     }
 
-    // One-shot callout when amplification crosses a meaningful threshold,
-    // so the user sees the retry storm in the live log.
-    if (amplification >= 1.5 && wire) {
+    this.wireOutcomes.set(wireId, outcome);
+
+    // One-shot callouts (unchanged from previous implementation).
+    if (outcome.amplification >= 1.5 && wire) {
       this.fireCallout(
         logs,
         sourceId,
         `retry-storm:${targetId}`,
-        `${sourceId} → ${targetId}: retry storm amplifying load ${amplification.toFixed(1)}× at t=${Math.round(this.time)}s (downstream errorRate=${(wire.lastObservedErrorRate * 100).toFixed(0)}%)`,
+        `${sourceId} → ${targetId}: retry storm amplifying load ${outcome.amplification.toFixed(1)}× at t=${Math.round(this.time)}s (downstream errorRate=${(wire.lastObservedErrorRate * 100).toFixed(0)}%)`,
       );
     }
-
-    // One-shot callout when backpressure meaningfully reduces forwarded load
-    // (target rejecting ≥ 30% via acceptanceRate). Includes acceptanceRate=0
-    // (maximal rejection — the worst case we definitely want to surface).
-    // The guard on "<1" ensures we only log when backpressure actually fired;
-    // HALF_OPEN bypasses backpressure entirely so appliedBackpressure stays 1 there.
-    if (appliedBackpressure < 1 && appliedBackpressure <= 0.7) {
-      const scalePct = Math.round((1 - appliedBackpressure) * 100);
+    if (outcome.appliedBackpressure < 1 && outcome.appliedBackpressure <= 0.7) {
+      const scalePct = Math.round((1 - outcome.appliedBackpressure) * 100);
       this.fireCallout(
         logs,
         sourceId,
         `backpressure:${targetId}`,
-        `${targetId} signaling backpressure (acceptanceRate=${appliedBackpressure.toFixed(2)}) — ${sourceId} scaling forwarded load down ${scalePct}% at t=${Math.round(this.time)}s`,
+        `${targetId} signaling backpressure (acceptanceRate=${outcome.appliedBackpressure.toFixed(2)}) — ${sourceId} scaling forwarded load down ${scalePct}% at t=${Math.round(this.time)}s`,
       );
     }
   }
@@ -593,62 +730,76 @@ export class SimulationEngine {
     }
   }
 
-  private forwardToDownstreams(sourceId: string, rps: number, accumulatedLatencyMs: number, logs: LogEntry[]) {
+  /**
+   * Split outbound RPS evenly across a component's downstream wires. Each
+   * wire's outcome (effective RPS, amplification, backpressure) is computed
+   * by emitOutbound. LB/fanout use this; processors with topology-specific
+   * split logic (LB skipping crashed/OPEN downstreams) call emitOutbound
+   * directly for each filtered target.
+   */
+  private emitToDownstreams(
+    sourceId: string,
+    rps: number,
+    accumulatedLatencyMs: number,
+    logs: LogEntry[],
+    backEdges: Set<string>,
+  ) {
     const downstreams = this.adjacency.get(sourceId) ?? [];
     const rpsEach = rps / Math.max(downstreams.length, 1);
     for (const downstream of downstreams) {
-      this.forwardOverWire(sourceId, downstream, rpsEach, accumulatedLatencyMs, logs);
+      this.emitOutbound(sourceId, downstream, rpsEach, accumulatedLatencyMs, logs, backEdges);
     }
   }
 
-  private processComponent(id: string, incomingRps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
-    const state = this.components.get(id);
-    if (!state || state.crashed) {
-      return;
-    }
+  /**
+   * Phase-B driver: process a single component exactly once with its true
+   * aggregated inbound. Reads `inboundRps[id]` and the rps-weighted inbound
+   * accumulated latency, then dispatches to the type-specific processor.
+   * Processors emit outbound wire outcomes via emitOutbound / emitToDownstreams
+   * during their run — no recursion.
+   */
+  private runComponent(id: string, logs: LogEntry[], backEdges: Set<string>): void {
+    if (this.processedThisTick.has(id)) return;
+    this.processedThisTick.add(id);
 
-    // Path-based cycle detection: reject only if this node is on the current call path
-    // Diamond topologies (LB→A→DB, LB→B→DB) work because DB is not on B's call stack
-    if (this.callStack.has(id)) {
-      logs.push({
-        time: this.time,
-        message: `${id}: Cycle detected — skipping to prevent infinite loop`,
-        severity: 'warning',
-        componentId: id,
-      });
-      return;
-    }
-    this.callStack.add(id);
+    const state = this.components.get(id);
+    if (!state) return;
+    if (state.crashed) return;
+
+    const incomingRps = this.inboundRps.get(id) ?? 0;
+    const latAcc = this.inboundLat.get(id);
+    const accumulatedLatencyMs =
+      latAcc && latAcc.denom > 0 ? latAcc.num / latAcc.denom : 0;
 
     state.totalRequests += incomingRps;
 
     switch (state.type) {
       case 'load_balancer':
-        this.processLoadBalancer(state, incomingRps, logs, accumulatedLatencyMs);
+        this.processLoadBalancer(state, incomingRps, logs, accumulatedLatencyMs, backEdges);
         break;
       case 'api_gateway':
-        this.processApiGateway(state, incomingRps, logs, accumulatedLatencyMs);
+        this.processApiGateway(state, incomingRps, logs, accumulatedLatencyMs, backEdges);
         break;
       case 'server':
-        this.processServer(state, incomingRps, logs, accumulatedLatencyMs);
+        this.processServer(state, incomingRps, logs, accumulatedLatencyMs, backEdges);
         break;
       case 'cache':
-        this.processCache(state, incomingRps, logs, accumulatedLatencyMs);
+        this.processCache(state, incomingRps, logs, accumulatedLatencyMs, backEdges);
         break;
       case 'queue':
-        this.processQueue(state, incomingRps, logs, accumulatedLatencyMs);
+        this.processQueue(state, incomingRps, logs, accumulatedLatencyMs, backEdges);
         break;
       case 'database':
         this.processDatabase(state, incomingRps, logs, accumulatedLatencyMs);
         break;
       case 'websocket_gateway':
-        this.processWebSocketGateway(state, incomingRps, logs, accumulatedLatencyMs);
+        this.processWebSocketGateway(state, incomingRps, logs, accumulatedLatencyMs, backEdges);
         break;
       case 'fanout':
-        this.processFanout(state, incomingRps, logs, accumulatedLatencyMs);
+        this.processFanout(state, incomingRps, logs, accumulatedLatencyMs, backEdges);
         break;
       case 'cdn':
-        this.processCdn(state, incomingRps, logs, accumulatedLatencyMs);
+        this.processCdn(state, incomingRps, logs, accumulatedLatencyMs, backEdges);
         break;
       case 'external':
         this.processExternal(state, incomingRps, logs, accumulatedLatencyMs);
@@ -657,11 +808,9 @@ export class SimulationEngine {
         this.processAutoscaler(state, incomingRps, logs, accumulatedLatencyMs);
         break;
     }
-
-    this.callStack.delete(id);
   }
 
-  private processLoadBalancer(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
+  private processLoadBalancer(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number, backEdges: Set<string>) {
     const downstreams = this.adjacency.get(state.id) ?? [];
     if (downstreams.length === 0) return;
 
@@ -690,11 +839,16 @@ export class SimulationEngine {
     }
 
     const rpsEach = rps / healthyDownstreams.length;
+    const lbProcessingMs = 0.5;
+    const outboundAccLat = accumulatedLatencyMs + lbProcessingMs;
     for (const downstream of healthyDownstreams) {
-      this.forwardOverWire(state.id, downstream, rpsEach, accumulatedLatencyMs, logs);
+      this.emitOutbound(state.id, downstream, rpsEach, outboundAccLat, logs, backEdges);
     }
 
-    const lbProcessingMs = 0.5;
+    // LB latency derives from PREVIOUS-tick downstream lastComputedLatencyMs
+    // under the new ordering (downstream hasn't processed this tick yet when
+    // LB runs). Acceptable one-tick lag, matches the same lag policy used by
+    // retry + backpressure and by autoscaler's downstream observations.
     let maxDownstreamLatency = 0;
     for (const dsId of healthyDownstreams) {
       const ds = this.components.get(dsId);
@@ -709,7 +863,7 @@ export class SimulationEngine {
     state.lastComputedLatencyMs = state.metrics.p50;
   }
 
-  private processApiGateway(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
+  private processApiGateway(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number, backEdges: Set<string>) {
     const rateLimit = (state.config.rateLimitRps as number) ?? 10000;
     const rateLimitPerTick = rateLimit * this.tickInterval;
 
@@ -736,10 +890,10 @@ export class SimulationEngine {
       });
     }
 
-    this.forwardToDownstreams(state.id, passthrough, accumulatedLatencyMs + 2, logs);
+    this.emitToDownstreams(state.id, passthrough, accumulatedLatencyMs + 2, logs, backEdges);
   }
 
-  private processServer(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
+  private processServer(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number, backEdges: Set<string>) {
     const maxConcurrent = (state.config.maxConcurrent as number) ?? 1000;
     const processingTime = (state.config.processingTimeMs as number) ?? 50;
     const instances = state.instanceCount;
@@ -795,10 +949,10 @@ export class SimulationEngine {
       state.metrics.errorRate = 0;
     }
 
-    this.forwardToDownstreams(state.id, passthrough, accumulatedLatencyMs + q.p50Ms, logs);
+    this.emitToDownstreams(state.id, passthrough, accumulatedLatencyMs + q.p50Ms, logs, backEdges);
   }
 
-  private processCache(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
+  private processCache(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number, backEdges: Set<string>) {
     const maxMemoryMb = (state.config.maxMemoryMb as number) ?? 1024;
     const ttlSeconds = (state.config.ttlSeconds as number) ?? 300;
     const evictionPolicy = (state.config.evictionPolicy as 'lru' | 'lfu' | 'ttl-only') ?? 'lru';
@@ -861,10 +1015,10 @@ export class SimulationEngine {
     state.lastComputedLatencyMs = latency.p50;
 
     const missRps = rps * (1 - hitRate);
-    this.forwardToDownstreams(state.id, missRps, accumulatedLatencyMs + latency.p50, logs);
+    this.emitToDownstreams(state.id, missRps, accumulatedLatencyMs + latency.p50, logs, backEdges);
   }
 
-  private processQueue(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
+  private processQueue(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number, backEdges: Set<string>) {
     const maxDepth = (state.config.maxDepth as number) ?? 10000000;
     const consumersPerGroup = (state.config.consumersPerGroup as number) ?? 5;
     const consumerGroups = (state.config.consumerGroupCount as number) ?? 1;
@@ -927,7 +1081,7 @@ export class SimulationEngine {
     }
 
     state.lastComputedLatencyMs = state.metrics.p50;
-    this.forwardToDownstreams(state.id, consumed, accumulatedLatencyMs + state.metrics.p50, logs);
+    this.emitToDownstreams(state.id, consumed, accumulatedLatencyMs + state.metrics.p50, logs, backEdges);
   }
 
   private processDatabase(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
@@ -1040,7 +1194,7 @@ export class SimulationEngine {
     }
   }
 
-  private processWebSocketGateway(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
+  private processWebSocketGateway(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number, backEdges: Set<string>) {
     const maxConnections = (state.config.maxConnections as number) ?? 100000;
 
     state.currentConnections += rps * 0.1;
@@ -1062,10 +1216,10 @@ export class SimulationEngine {
       });
     }
 
-    this.forwardToDownstreams(state.id, rps, accumulatedLatencyMs + 2, logs);
+    this.emitToDownstreams(state.id, rps, accumulatedLatencyMs + 2, logs, backEdges);
   }
 
-  private processFanout(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
+  private processFanout(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number, backEdges: Set<string>) {
     const multiplier = (state.config.multiplier as number) ?? 500000;
     const deliveryMode = state.config.deliveryMode as string;
 
@@ -1086,10 +1240,10 @@ export class SimulationEngine {
       });
     }
 
-    this.forwardToDownstreams(state.id, outputRps, accumulatedLatencyMs + fanoutLatency, logs);
+    this.emitToDownstreams(state.id, outputRps, accumulatedLatencyMs + fanoutLatency, logs, backEdges);
   }
 
-  private processCdn(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
+  private processCdn(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number, backEdges: Set<string>) {
     // Stressed: force cold CDN too, so every request hits origin.
     const hitRate = this.stressedMode ? 0 : ((state.config.cacheHitRate as number) ?? 0.9);
     const originLatency = (state.config.originPullLatencyMs as number) ?? 200;
@@ -1102,7 +1256,7 @@ export class SimulationEngine {
     state.lastComputedLatencyMs = cdnLatency;
 
     const missRps = rps * (1 - hitRate);
-    this.forwardToDownstreams(state.id, missRps, accumulatedLatencyMs + cdnLatency, logs);
+    this.emitToDownstreams(state.id, missRps, accumulatedLatencyMs + cdnLatency, logs, backEdges);
   }
 
   private processExternal(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
