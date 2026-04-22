@@ -103,3 +103,31 @@ Start date: 2026-04-15. Progress:
 - **Phase 2** shipped 2026-04-15 (commit 66f6ec3) — Little's Law queueing, Zipfian cache, wire latency propagation
 - **Enhanced debrief + stressed mode + saturation callouts** shipped 2026-04-16 (overlaps with CEO Phase 8) — per-component peak table, numeric scores, Run Stressed button, saturation warnings at ρ≥0.85 / queue≥70% / cache stampede / DB pool≥80%
 - **Next: Phase 3** (resilience patterns — backpressure, retry storms, circuit breakers)
+
+---
+
+## [POST-WIKI] Next up after the wiki polish branch (logged 2026-04-22)
+
+Active branch `feat/simfid-phase3-resilience` added the docs product polish
+(floating landing nav, wiki shell, ⌘K, right-rail TOC, prev/next, prose).
+These are the next moves, in order, that build on top of what shipped.
+
+1. **Ship the current branch.** 7 design commits + the earlier 8 SIMFID-3 commits
+   are still local. `git push origin feat/simfid-phase3-resilience`, user opens
+   the PR (per `feedback_pr_creation.md`). Get eyes on it. Required before 2-3.
+2. **Inline Run in CanvasEmbed.** The unique moat. Requires the scoped sim-engine
+   refactor called out in Decisions §49 — the engine currently couples to the
+   global Zustand store + `liveMetrics` / `liveLog` globals. Fix is a
+   `SimulationEngine` instance that writes into a caller-provided sink, so an
+   embed can run an isolated sim without polluting main app state. Unlocks the
+   "see it for yourself" credibility promise across the whole How-to track and
+   every KB claim that has a runnable proof.
+3. **KB credibility pass.** Adds, on each of the 44 Reference sections:
+   - Primary-source footer (papers, engineering blogs, postmortems, DDIA refs).
+   - CanvasEmbed link wherever a claim is engine-demonstrable (depends on #2).
+   - Optional: one named technical reviewer's byline at page top.
+   Highest-leverage content-credibility move. Cheap once #2 is landed.
+
+Deferred (real but not on the critical path): section deep-link URLs in the
+docs hash grammar, proper tab-widget keyboard semantics, CommandPalette batch
+flake stabilization, GitHub URL placeholder in `src/components/ui/LandingPage.tsx:20`.
