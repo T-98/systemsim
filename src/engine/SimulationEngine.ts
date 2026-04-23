@@ -34,6 +34,7 @@ import type {
   WireConfig,
   EndpointRoute,
   SchemaMemoryBlock,
+  ApiContract,
 } from '../types';
 import type { Node, Edge } from '@xyflow/react';
 import { computeQueueing } from './QueueingModel';
@@ -143,14 +144,19 @@ interface InboundLatencyAccumulator {
  *   chains for read/write split and unindexed-scan attribution (Phase 4.3-4.4).
  * - `schemaMemory` — per-DB shard key + cardinality derivation (Phase 4.5)
  *   and table→DB resolution for scan-attribution.
- * - `requestMix` — endpoint-id-keyed weights. Keys matching a route seed that
- *   endpoint's first component; keys that do NOT match fall into a "default"
- *   bucket distributed evenly across `entryPoints`.
+ * - `requestMix` — weights keyed by either `EndpointRoute.endpointId` (uuid)
+ *   or the contract's `"METHOD PATH"` form (e.g. `"POST /checkout"`). The
+ *   second form is the shape authored scenarios use (see `src/scenarios/discord.ts`)
+ *   and requires `apiContracts` to resolve. Keys that match neither fall into
+ *   a "default" bucket distributed evenly across `entryPoints`.
+ * - `apiContracts` — joined to `endpointRoutes` by `contract.id === route.endpointId`
+ *   so the engine can match `"METHOD PATH"` keys in `requestMix`.
  */
 export interface RoutingContext {
   endpointRoutes?: EndpointRoute[];
   schemaMemory?: SchemaMemoryBlock | null;
   requestMix?: Record<string, number>;
+  apiContracts?: ApiContract[];
 }
 
 // Seeded PRNG (mulberry32) for reproducible simulations in tests
@@ -190,6 +196,7 @@ export class SimulationEngine {
   private endpointRoutes: EndpointRoute[] = [];
   private schemaMemory: SchemaMemoryBlock | null = null;
   private requestMix: Record<string, number> | null = null;
+  private apiContracts: ApiContract[] = [];
   private lastLogTime: Map<string, number> = new Map(); // throttle logs per component
   private random: () => number; // seeded PRNG for reproducibility
   private firedCallouts: Set<string> = new Set(); // saturation warnings, once per component per run
@@ -221,6 +228,7 @@ export class SimulationEngine {
     this.stressedMode = stressedMode;
     this.endpointRoutes = routingContext?.endpointRoutes ?? [];
     this.schemaMemory = routingContext?.schemaMemory ?? null;
+    this.apiContracts = routingContext?.apiContracts ?? [];
     // Prefer the explicit routing-context mix; fall back to the mix embedded in
     // the TrafficProfile so callers that haven't been updated still get
     // per-endpoint routing if the profile has matching keys.
@@ -422,13 +430,23 @@ export class SimulationEngine {
       return;
     }
 
-    // Pass 1 — partition requestMix into matched (endpoint-id-keyed) vs unmatched.
+    // Pass 1 — partition requestMix into matched vs unmatched. A key matches if
+    // it equals an endpointId (uuid shape) OR if it matches the "METHOD PATH"
+    // form of the route's ApiContract (path-string shape, what checked-in
+    // scenarios like `src/scenarios/discord.ts` author).
     const matched: Array<{ route: EndpointRoute; weight: number }> = [];
     let unmatchedWeight = 0;
     if (this.requestMix) {
+      const byMethodPath = new Map<string, EndpointRoute>();
+      for (const contract of this.apiContracts) {
+        const route = this.endpointRoutes.find((r) => r.endpointId === contract.id);
+        if (!route) continue;
+        byMethodPath.set(`${contract.method} ${contract.path}`, route);
+      }
       for (const [key, weight] of Object.entries(this.requestMix)) {
         if (!Number.isFinite(weight) || weight <= 0) continue;
-        const route = this.endpointRoutes.find((r) => r.endpointId === key);
+        const route =
+          this.endpointRoutes.find((r) => r.endpointId === key) ?? byMethodPath.get(key);
         if (route) matched.push({ route, weight });
         else unmatchedWeight += weight;
       }
@@ -480,14 +498,11 @@ export class SimulationEngine {
       }
     }
 
-    // If every matched endpoint was stale, degrade gracefully instead of
-    // leaking the full routed share — add it back to the default bucket.
+    // If every matched endpoint was stale, degrade gracefully to a pure even
+    // split over entry points so the full tick RPS still flows. The per-stale
+    // callouts already named which endpoints broke; no extra signal needed.
     if (valid.length === 0) {
-      const effectiveDefault = unmatchedWeight + invalidWeight;
-      if (effectiveDefault <= 0) {
-        fallbackEvenSplit();
-        return;
-      }
+      void invalidWeight; // weights already accounted for by the per-endpoint callouts
       fallbackEvenSplit();
       return;
     }

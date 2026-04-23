@@ -39,6 +39,7 @@ export function useSimulation() {
   const graphVersion = useStore((s) => s.graphVersion);
   const schemaMemory = useStore((s) => s.schemaMemory);
   const endpointRoutes = useStore((s) => s.endpointRoutes);
+  const apiContracts = useStore((s) => s.apiContracts);
   const setSimulationStatus = useStore((s) => s.setSimulationStatus);
   const setSimulationTime = useStore((s) => s.setSimulationTime);
   const simulationSpeed = useStore((s) => s.simulationSpeed);
@@ -201,6 +202,7 @@ export function useSimulation() {
         endpointRoutes,
         schemaMemory,
         requestMix: trafficProfile.requestMix,
+        apiContracts,
       },
     );
     engineRef.current = engine;
@@ -219,7 +221,7 @@ export function useSimulation() {
         stopSimulation(runId, trafficProfile);
       }
     }, tickRate);
-  }, [nodes, edges, schemaMemory, endpointRoutes, simulationSpeed, resetSimulationState, clearLiveLog, setSimulationStatus, setCurrentRunId, runTick, stopSimulation]);
+  }, [nodes, edges, schemaMemory, endpointRoutes, apiContracts, simulationSpeed, resetSimulationState, clearLiveLog, setSimulationStatus, setCurrentRunId, runTick, stopSimulation]);
 
   const pauseSimulation = useCallback(() => {
     if (timerRef.current) {

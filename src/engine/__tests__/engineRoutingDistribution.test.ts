@@ -17,7 +17,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { SimulationEngine, type RoutingContext } from '../SimulationEngine';
-import type { TrafficProfile, SimComponentData, WireConfig, EndpointRoute } from '../../types';
+import type { TrafficProfile, SimComponentData, WireConfig, EndpointRoute, ApiContract } from '../../types';
 import type { Node, Edge } from '@xyflow/react';
 
 const SEED = 42;
@@ -147,6 +147,35 @@ describe('Phase 4.2 — per-endpoint traffic distribution', () => {
     const { metrics } = engine.tick();
     expect(metrics.a.rps).toBeCloseTo(700, 0);
     expect(metrics.b.rps).toBeCloseTo(300, 0);
+  });
+
+  it('matches requestMix keys by "METHOD PATH" via ApiContract join (authored-scenario shape)', () => {
+    // Scenarios like src/scenarios/discord.ts author requestMix keys as
+    // "POST /event/everyone" — not as the uuid-shaped endpointIds that the UI
+    // generates. The engine joins contract.id → route.endpointId so those
+    // authored mixes actually land on the right chain head.
+    const nodes = [
+      node('fanoutSvc', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('inboxSvc', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+    ];
+    const edges: Edge<{ config: WireConfig }>[] = [];
+    const contracts: ApiContract[] = [
+      { id: 'uuid-fanout', method: 'POST', path: '/event/everyone', description: '', authMode: 'none', ownerServiceId: 'fanoutSvc' },
+      { id: 'uuid-inbox',  method: 'GET',  path: '/notifications/inbox', description: '', authMode: 'none', ownerServiceId: 'inboxSvc' },
+    ];
+    const routes: EndpointRoute[] = [
+      { endpointId: 'uuid-fanout', componentChain: ['fanoutSvc'], tablesAccessed: [], weight: 1, estimatedPayloadBytes: 0 },
+      { endpointId: 'uuid-inbox',  componentChain: ['inboxSvc'],  tablesAccessed: [], weight: 1, estimatedPayloadBytes: 0 },
+    ];
+    const mix = { 'POST /event/everyone': 0.8, 'GET /notifications/inbox': 0.2 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(1000, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, requestMix: mix, apiContracts: contracts },
+    );
+    const { metrics } = engine.tick();
+    expect(metrics.fanoutSvc.rps).toBeCloseTo(800, 0);
+    expect(metrics.inboxSvc.rps).toBeCloseTo(200, 0);
   });
 
   it('redistributes a stale chain head\'s share across remaining valid endpoints', () => {

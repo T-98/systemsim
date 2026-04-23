@@ -625,6 +625,7 @@ export interface RoutingContext {
   endpointRoutes?: EndpointRoute[];
   schemaMemory?: SchemaMemoryBlock | null;
   requestMix?: Record<string, number>;
+  apiContracts?: ApiContract[];
 }
 ```
 
@@ -633,7 +634,12 @@ entry-point seed routes each endpoint's weighted share to its
 `componentChain[0]`; unmatched `requestMix` keys fall into a default bucket
 distributed evenly across entry points. When absent or empty, the engine keeps
 the pre-Phase-4 even-split-over-`entryPoints` behavior. Fallback layering:
-matched `requestMix` → `EndpointRoute.weight` → legacy even-split. See
+matched `requestMix` → `EndpointRoute.weight` → legacy even-split.
+
+`requestMix` keys match in two shapes: `EndpointRoute.endpointId` directly
+(the uuid the UI generates) OR `"METHOD PATH"` via `apiContracts` (the shape
+authored scenarios like [`src/scenarios/discord.ts`](src/scenarios/discord.ts)
+use, e.g. `"POST /event/everyone"`). See
 [docs/plans/2026-04-22-simfid-phases-4-8-revised.md](docs/plans/2026-04-22-simfid-phases-4-8-revised.md)
 §4.2.
 
