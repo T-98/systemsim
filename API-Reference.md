@@ -618,8 +618,24 @@ new SimulationEngine(
   schemaShardKeyCardinality?: 'low' | 'medium' | 'high',
   seed?: number,                                        // for reproducible tests
   stressedMode = false,                                 // worst-case run
+  routingContext?: RoutingContext,                      // Phase 4: per-endpoint routing + schema
 )
+
+export interface RoutingContext {
+  endpointRoutes?: EndpointRoute[];
+  schemaMemory?: SchemaMemoryBlock | null;
+  requestMix?: Record<string, number>;
+}
 ```
+
+The `routingContext` bag is optional and additive. When present, the tick-start
+entry-point seed routes each endpoint's weighted share to its
+`componentChain[0]`; unmatched `requestMix` keys fall into a default bucket
+distributed evenly across entry points. When absent or empty, the engine keeps
+the pre-Phase-4 even-split-over-`entryPoints` behavior. Fallback layering:
+matched `requestMix` → `EndpointRoute.weight` → legacy even-split. See
+[docs/plans/2026-04-22-simfid-phases-4-8-revised.md](docs/plans/2026-04-22-simfid-phases-4-8-revised.md)
+§4.2.
 
 ### Public methods
 

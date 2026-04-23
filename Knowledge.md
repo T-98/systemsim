@@ -649,7 +649,9 @@ Decisions [§52](Decisions.md). Knowledge base [§40.6](system-design-knowledgeb
 
 **File:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)
 
-**Entry point:** `new SimulationEngine(nodes, edges, profile, schemaShardKey, cardinality, seed, stressedMode)` → `.tick()` loop.
+**Entry point:** `new SimulationEngine(nodes, edges, profile, schemaShardKey, cardinality, seed, stressedMode, routingContext?)` → `.tick()` loop.
+
+**Routing context (Phase 4, 2026-04-22):** the optional trailing `routingContext: RoutingContext` bag — `{ endpointRoutes?, schemaMemory?, requestMix? }` — lets the tick-start seed send `requestMix`-weighted traffic to each endpoint's `componentChain[0]`. Unmatched keys fall into a default bucket that's distributed evenly across `entryPoints` (legacy behavior). Fallback layering: matched `requestMix` → `EndpointRoute.weight` → even-split. Stale chain heads fire a one-shot `routing-stale:<endpointId>` callout and redistribute their share across remaining valid endpoints. See [`src/engine/SimulationEngine.ts`](src/engine/SimulationEngine.ts) `seedInboundTraffic`, Decisions [§53](Decisions.md), plan [docs/plans/2026-04-22-simfid-phases-4-8-revised.md](docs/plans/2026-04-22-simfid-phases-4-8-revised.md) §4.2.
 
 **Internal state per component:** `ComponentState { queueDepth, currentConnections, memoryUsed, cacheEntries, shardLoads, accumulatedErrors, totalRequests, crashed, instanceCount, lastComputedLatencyMs }`
 

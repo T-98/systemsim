@@ -32,6 +32,8 @@ import type {
   Particle,
   SimComponentData,
   WireConfig,
+  EndpointRoute,
+  SchemaMemoryBlock,
 } from '../types';
 import type { Node, Edge } from '@xyflow/react';
 import { computeQueueing } from './QueueingModel';
@@ -130,6 +132,27 @@ interface InboundLatencyAccumulator {
   denom: number;
 }
 
+/**
+ * Schema + routing information the engine consumes to shape traffic beyond
+ * the raw graph topology. Every field is optional; absent fields fall back
+ * to the pre-Phase-4 even-split-over-entry-points behavior so existing call
+ * sites stay source-compatible.
+ *
+ * - `endpointRoutes` — first node of each `componentChain` becomes the
+ *   per-endpoint traffic sink (Phase 4.2). The DB processor also reads these
+ *   chains for read/write split and unindexed-scan attribution (Phase 4.3-4.4).
+ * - `schemaMemory` — per-DB shard key + cardinality derivation (Phase 4.5)
+ *   and table→DB resolution for scan-attribution.
+ * - `requestMix` — endpoint-id-keyed weights. Keys matching a route seed that
+ *   endpoint's first component; keys that do NOT match fall into a "default"
+ *   bucket distributed evenly across `entryPoints`.
+ */
+export interface RoutingContext {
+  endpointRoutes?: EndpointRoute[];
+  schemaMemory?: SchemaMemoryBlock | null;
+  requestMix?: Record<string, number>;
+}
+
 // Seeded PRNG (mulberry32) for reproducible simulations in tests
 function mulberry32(seed: number): () => number {
   let s = seed | 0;
@@ -163,6 +186,10 @@ export class SimulationEngine {
   private entryPoints: string[] = [];
   private schemaShardKey: string | null = null;
   private schemaShardKeyCardinality: 'low' | 'medium' | 'high' = 'high';
+  // Phase 4 routing context — additive; null/empty preserves pre-Phase-4 behavior.
+  private endpointRoutes: EndpointRoute[] = [];
+  private schemaMemory: SchemaMemoryBlock | null = null;
+  private requestMix: Record<string, number> | null = null;
   private lastLogTime: Map<string, number> = new Map(); // throttle logs per component
   private random: () => number; // seeded PRNG for reproducibility
   private firedCallouts: Set<string> = new Set(); // saturation warnings, once per component per run
@@ -185,12 +212,19 @@ export class SimulationEngine {
     schemaShardKeyCardinality?: 'low' | 'medium' | 'high',
     seed?: number,
     stressedMode = false,
+    routingContext?: RoutingContext,
   ) {
     this.random = seed != null ? mulberry32(seed) : Math.random;
     this.trafficProfile = trafficProfile;
     this.schemaShardKey = schemaShardKey ?? null;
     this.schemaShardKeyCardinality = schemaShardKeyCardinality ?? 'high';
     this.stressedMode = stressedMode;
+    this.endpointRoutes = routingContext?.endpointRoutes ?? [];
+    this.schemaMemory = routingContext?.schemaMemory ?? null;
+    // Prefer the explicit routing-context mix; fall back to the mix embedded in
+    // the TrafficProfile so callers that haven't been updated still get
+    // per-endpoint routing if the profile has matching keys.
+    this.requestMix = routingContext?.requestMix ?? trafficProfile.requestMix ?? null;
 
     // Initialize component states
     for (const node of nodes) {
@@ -359,6 +393,123 @@ export class SimulationEngine {
     return Math.max(0, value + jitter);
   }
 
+  /** Inbound-accumulator write with 0 upstream latency — used by entry seeding. */
+  private seedAt(id: string, rps: number) {
+    if (rps <= 0) return;
+    this.inboundRps.set(id, (this.inboundRps.get(id) ?? 0) + rps);
+    const acc = this.inboundLat.get(id) ?? { num: 0, denom: 0 };
+    acc.denom += rps;
+    this.inboundLat.set(id, acc);
+  }
+
+  /**
+   * Seed each component's per-tick inbound accumulators with the tick's total
+   * traffic. Per-endpoint routing when `endpointRoutes` + weights are available,
+   * legacy even-split over `entryPoints` otherwise. See Phase 4.2 of
+   * `docs/plans/2026-04-22-simfid-phases-4-8-revised.md` for the fallback
+   * layering this implements.
+   */
+  private seedInboundTraffic(rpsPerTick: number, logs: LogEntry[]) {
+    if (rpsPerTick <= 0) return;
+
+    const fallbackEvenSplit = () => {
+      const per = rpsPerTick / Math.max(this.entryPoints.length, 1);
+      for (const id of this.entryPoints) this.seedAt(id, per);
+    };
+
+    if (this.endpointRoutes.length === 0) {
+      fallbackEvenSplit();
+      return;
+    }
+
+    // Pass 1 — partition requestMix into matched (endpoint-id-keyed) vs unmatched.
+    const matched: Array<{ route: EndpointRoute; weight: number }> = [];
+    let unmatchedWeight = 0;
+    if (this.requestMix) {
+      for (const [key, weight] of Object.entries(this.requestMix)) {
+        if (!Number.isFinite(weight) || weight <= 0) continue;
+        const route = this.endpointRoutes.find((r) => r.endpointId === key);
+        if (route) matched.push({ route, weight });
+        else unmatchedWeight += weight;
+      }
+    }
+
+    // Fallback layer 2: no endpoint-keyed weights in requestMix, but routes
+    // carry a non-zero `weight` field — use those instead.
+    if (matched.length === 0) {
+      const routeWeightSum = this.endpointRoutes.reduce(
+        (s, r) => s + (Number.isFinite(r.weight) && r.weight > 0 ? r.weight : 0),
+        0,
+      );
+      if (routeWeightSum > 0) {
+        for (const r of this.endpointRoutes) {
+          if (Number.isFinite(r.weight) && r.weight > 0) matched.push({ route: r, weight: r.weight });
+        }
+        unmatchedWeight = 0;
+      }
+    }
+
+    // Fallback layer 3: neither a matching mix key nor a non-zero route weight.
+    if (matched.length === 0) {
+      fallbackEvenSplit();
+      return;
+    }
+
+    // Pass 2 — split matched into valid (chain head is a known node) and
+    // invalid (stale chain → redistribute its share across valid matched).
+    const totalMatchedWeight = matched.reduce((s, m) => s + m.weight, 0);
+    const totalMixSum = totalMatchedWeight + unmatchedWeight;
+    if (totalMixSum <= 0) {
+      fallbackEvenSplit();
+      return;
+    }
+
+    const valid: Array<{ route: EndpointRoute; weight: number }> = [];
+    let invalidWeight = 0;
+    for (const m of matched) {
+      const head = m.route.componentChain[0];
+      if (head && this.components.has(head)) valid.push(m);
+      else {
+        invalidWeight += m.weight;
+        this.fireCallout(
+          logs,
+          head ?? m.route.endpointId,
+          `routing-stale:${m.route.endpointId}`,
+          `Endpoint ${m.route.endpointId} references node "${head ?? '<empty>'}" that isn't on the graph — redistributing its share across valid endpoints at t=${Math.round(this.time)}s`,
+        );
+      }
+    }
+
+    // If every matched endpoint was stale, degrade gracefully instead of
+    // leaking the full routed share — add it back to the default bucket.
+    if (valid.length === 0) {
+      const effectiveDefault = unmatchedWeight + invalidWeight;
+      if (effectiveDefault <= 0) {
+        fallbackEvenSplit();
+        return;
+      }
+      fallbackEvenSplit();
+      return;
+    }
+
+    // Routed portion = full matched share (valid + invalid). Invalid share is
+    // redistributed proportionally across valid endpoints via validWeightSum.
+    const routedShareRps = (totalMatchedWeight / totalMixSum) * rpsPerTick;
+    const validWeightSum = valid.reduce((s, v) => s + v.weight, 0);
+    for (const v of valid) {
+      const share = routedShareRps * (v.weight / validWeightSum);
+      this.seedAt(v.route.componentChain[0], share);
+    }
+
+    // Default bucket → even-split across entry points (matches legacy behavior
+    // for the "/*" portion of traffic).
+    const defaultRps = rpsPerTick - routedShareRps;
+    if (defaultRps > 0 && this.entryPoints.length > 0) {
+      const per = defaultRps / this.entryPoints.length;
+      for (const id of this.entryPoints) this.seedAt(id, per);
+    }
+  }
+
   /**
    * Advance the simulation by one tick (1 sim-second). Runs one full graph
    * traversal from every entry point, updates every component's metrics and
@@ -446,16 +597,10 @@ export class SimulationEngine {
     }));
     const { order, backEdges } = topologicalOrder(edgesForTopo, this.entryPoints);
 
-    // Seed entry points with the tick's total RPS divided evenly. Entry
-    // components have no upstream latency — accLat starts at 0.
-    const rpsPerEntry = rpsPerTick / Math.max(this.entryPoints.length, 1);
-    for (const entryId of this.entryPoints) {
-      this.inboundRps.set(entryId, (this.inboundRps.get(entryId) ?? 0) + rpsPerEntry);
-      // Entry latency denominator is rpsPerEntry; numerator is 0 (0 upstream latency).
-      const acc = this.inboundLat.get(entryId) ?? { num: 0, denom: 0 };
-      acc.denom += rpsPerEntry;
-      this.inboundLat.set(entryId, acc);
-    }
+    // Seed inbound traffic for this tick. Per-endpoint routing via
+    // `endpointRoutes` + `requestMix` when available; legacy even-split over
+    // `entryPoints` otherwise. Entry components have 0 upstream latency.
+    this.seedInboundTraffic(rpsPerTick, newLogs);
 
     // ── Phase B: process every reachable component exactly once, in order ──
     //

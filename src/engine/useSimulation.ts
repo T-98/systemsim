@@ -38,6 +38,7 @@ export function useSimulation() {
   const edges = useStore((s) => s.edges);
   const graphVersion = useStore((s) => s.graphVersion);
   const schemaMemory = useStore((s) => s.schemaMemory);
+  const endpointRoutes = useStore((s) => s.endpointRoutes);
   const setSimulationStatus = useStore((s) => s.setSimulationStatus);
   const setSimulationTime = useStore((s) => s.setSimulationTime);
   const simulationSpeed = useStore((s) => s.simulationSpeed);
@@ -188,7 +189,20 @@ export function useSimulation() {
       }
     }
 
-    const engine = new SimulationEngine(nodes, edges, trafficProfile, shardKey, shardKeyCardinality, undefined, stressedMode);
+    const engine = new SimulationEngine(
+      nodes,
+      edges,
+      trafficProfile,
+      shardKey,
+      shardKeyCardinality,
+      undefined,
+      stressedMode,
+      {
+        endpointRoutes,
+        schemaMemory,
+        requestMix: trafficProfile.requestMix,
+      },
+    );
     engineRef.current = engine;
 
     const runId = uuid();
@@ -205,7 +219,7 @@ export function useSimulation() {
         stopSimulation(runId, trafficProfile);
       }
     }, tickRate);
-  }, [nodes, edges, schemaMemory, simulationSpeed, resetSimulationState, clearLiveLog, setSimulationStatus, setCurrentRunId, runTick, stopSimulation]);
+  }, [nodes, edges, schemaMemory, endpointRoutes, simulationSpeed, resetSimulationState, clearLiveLog, setSimulationStatus, setCurrentRunId, runTick, stopSimulation]);
 
   const pauseSimulation = useCallback(() => {
     if (timerRef.current) {
