@@ -1289,6 +1289,23 @@ export class SimulationEngine {
   private static readonly DB_FALLBACK_READ_SHARE = 0.7;
 
   /**
+   * Phase 4.4 — latency multiplier for unindexed access. Must match
+   * [`src/engine/preflight.ts:140`](preflight.ts) user-facing copy ("Queries
+   * without indexes are 10x slower"). Changing this in one place and not the
+   * other is a correctness regression; they MUST agree.
+   */
+  private static readonly SCAN_FACTOR = 10;
+
+  /**
+   * Phase 4.4 — threshold (fraction of this DB's routed inbound) above which
+   * the one-shot unindexed-scan callout fires per `(dbId, tableId)` key. 5%
+   * picks up meaningful scans while staying quiet for scenarios that model
+   * tiny admin endpoints (1% of traffic hitting an un-indexed internal
+   * table is not a finding worth surfacing).
+   */
+  private static readonly UNINDEXED_CALLOUT_THRESHOLD = 0.05;
+
+  /**
    * Compute read vs write inbound RPS breakdown for a database from the
    * per-tick endpoint share map (populated by `seedInboundTraffic`) + the
    * `schemaMemory` table→DB join.
@@ -1458,11 +1475,118 @@ export class SimulationEngine {
     const baseLatency = 5;
     const loadFactor = 1 + Math.pow(utilizationPct / 100, 4) * 50;
     const connectionPenalty = connectionUtilization > 0.8 ? (connectionUtilization - 0.8) * 500 : 0;
-    const dbLatency = baseLatency * loadFactor + connectionPenalty;
+    const dbLatencyBase = baseLatency * loadFactor + connectionPenalty;
+
+    // Phase 4.4 — unindexed-scan latency multiplier. Walks the same routed-
+    // endpoint attribution used by the read/write split (above) and sums
+    // the share (fraction of routed DB inbound) whose `TableAccess.indexed`
+    // is false for tables resident on this DB. Resulting multiplier is
+    // `1 + (SCAN_FACTOR - 1) × unindexedShare`; SCAN_FACTOR is locked to
+    // preflight.ts's "10× slower" copy (Decisions §55).
+    //
+    // Denominator is routed-DB-visiting share, not total inbound: we don't
+    // attribute unindexed-ness to fan-out amplification or to the default
+    // bucket, where the TableAccess shape is unknown. This is the same
+    // "attributed" gate the read-saturation callout uses — keeps the
+    // multiplier honest under partial attribution.
+    let unindexedShare = 0;
+    const unindexedTablesThisTick: Array<{ tableId: string; endpointId: string; share: number }> = [];
+    if (this.endpointRoutes.length > 0) {
+      const tablesOnThisDb = new Set<string>();
+      const tableNamesOnThisDb = new Map<string, string>();
+      if (this.schemaMemory) {
+        for (const ent of this.schemaMemory.entities) {
+          if (ent.assignedDbId === state.id) {
+            tablesOnThisDb.add(ent.id);
+            tableNamesOnThisDb.set(ent.id, ent.name);
+          }
+        }
+      }
+      let routedDbShareSum = 0;
+      let unindexedSum = 0;
+      for (const route of this.endpointRoutes) {
+        if (!route.componentChain.includes(state.id)) continue;
+        const share = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+        if (share <= 0) continue;
+        // Only count shares tied to tables we can confirm live on this DB
+        // (schema join) — or, when the schema is sparse, accept any table
+        // in the endpoint's list (same fallback policy as read/write).
+        let endpointCountedOnDb = false;
+        for (const ta of route.tablesAccessed) {
+          if (tablesOnThisDb.size > 0 && !tablesOnThisDb.has(ta.tableId)) continue;
+          if (!endpointCountedOnDb) {
+            routedDbShareSum += share;
+            endpointCountedOnDb = true;
+          }
+          if (ta.indexed === false) {
+            unindexedSum += share;
+            unindexedTablesThisTick.push({
+              tableId: ta.tableId,
+              endpointId: route.endpointId,
+              share,
+            });
+            // Each endpoint can touch several un-indexed tables; we credit
+            // the full share to each for callout purposes but the aggregate
+            // unindexedSum may then exceed routedDbShareSum — clamp below
+            // before using in the multiplier so a 3-un-indexed-table
+            // endpoint doesn't triple-weight the latency bump.
+          }
+        }
+      }
+      if (routedDbShareSum > 0) {
+        unindexedShare = Math.min(1, unindexedSum / routedDbShareSum);
+      }
+    }
+    const scanMultiplier = 1 + (SimulationEngine.SCAN_FACTOR - 1) * unindexedShare;
+    const dbLatency = dbLatencyBase * scanMultiplier;
+
     state.metrics.p50 = dbLatency + accumulatedLatencyMs;
     state.metrics.p95 = dbLatency * 2 + accumulatedLatencyMs;
     state.metrics.p99 = dbLatency * 4 + replicationLag + accumulatedLatencyMs;
     state.lastComputedLatencyMs = dbLatency;
+
+    // One-shot callouts per (dbId, tableId). Wording is deliberately hedged
+    // ("may include unindexed access") because `TableAccess.indexed=false`
+    // is coarse — a single false flag on a table covers every operation on
+    // that table for that endpoint, even reads that the real engine might
+    // push through an existing index. Caller gets the clue, not a verdict.
+    if (unindexedShare > 0 && unindexedTablesThisTick.length > 0) {
+      // Aggregate per-table across all endpoints visiting this DB with
+      // unindexed access to that table, so the threshold check reflects
+      // the TABLE's unindexed traffic on this DB, not any single
+      // endpoint's.
+      const perTable = new Map<string, { shareSum: number; endpoints: Set<string>; name: string }>();
+      const routedDbShareSumLocal = this.endpointRoutes.reduce((acc, r) => {
+        if (!r.componentChain.includes(state.id)) return acc;
+        const share = this.endpointShareRpsThisTick.get(r.endpointId) ?? 0;
+        return acc + share;
+      }, 0);
+      if (routedDbShareSumLocal > 0) {
+        for (const hit of unindexedTablesThisTick) {
+          const entry = perTable.get(hit.tableId) ?? { shareSum: 0, endpoints: new Set<string>(), name: hit.tableId };
+          entry.shareSum += hit.share;
+          entry.endpoints.add(hit.endpointId);
+          // Prefer the human-readable entity name when we have it.
+          if (this.schemaMemory) {
+            const ent = this.schemaMemory.entities.find((e) => e.id === hit.tableId);
+            if (ent) entry.name = ent.name;
+          }
+          perTable.set(hit.tableId, entry);
+        }
+        for (const [tableId, entry] of perTable) {
+          const tableShare = Math.min(1, entry.shareSum / routedDbShareSumLocal);
+          if (tableShare < SimulationEngine.UNINDEXED_CALLOUT_THRESHOLD) continue;
+          const firstEp = entry.endpoints.values().next().value;
+          const moreEps = entry.endpoints.size > 1 ? ` (+${entry.endpoints.size - 1} more)` : '';
+          this.fireCallout(
+            logs,
+            state.id,
+            `unindexed-scan:${tableId}`,
+            `${state.id}: may include unindexed access on "${entry.name}" via ${firstEp}${moreEps} — ${Math.round(tableShare * 100)}% of routed traffic at t=${Math.round(this.time)}s — add an index`,
+          );
+        }
+      }
+    }
 
     // Phase 4.3 — read/write saturation. Diagnostic split attributed via
     // endpointRoutes + schemaMemory when available; 70/30 fallback otherwise.

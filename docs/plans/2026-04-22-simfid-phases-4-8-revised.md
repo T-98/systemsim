@@ -178,7 +178,13 @@ Five commits, each reviewable:
   - Per-side callouts (`read-saturation`, `write-saturation`) fire only when attribution available (modeling-assumption floor rule).
   - 6 new tests in [engineReadWriteSplit.test.ts](src/engine/__tests__/engineReadWriteSplit.test.ts). Full suite 384/384.
   - Decisions [§54](Decisions.md), [Knowledge.md](Knowledge.md), [API-Reference.md](API-Reference.md) updated. Codex unavailable in this sandbox → adversarial review deferred to end-of-phase (Agent subagent, per CLAUDE.md fallback).
-- [ ] **Commit 3 — `feat(engine): index coverage → latency multiplier (10x, matches preflight)`**
+- [x] **Commit 3 — `feat(engine): index coverage → latency multiplier (10x, matches preflight)`** (2026-04-24)
+  - `processDatabase` multiplies `dbLatency` by `1 + 9 × unindexedShare`. `SCAN_FACTOR = 10` class constant locked to [`src/engine/preflight.ts:140`](src/engine/preflight.ts) "10x slower" copy.
+  - Denominator is routed-DB-visiting share (`endpointShareRpsThisTick`), not total inbound — doesn't attribute unindexed-ness to fan-out amplification or to the default bucket.
+  - One-shot `unindexed-scan:<tableId>` callout fires per `(dbId, tableId)` above 5% share, hedged "may include unindexed access" wording.
+  - Multiplier clamp: `unindexedShare = min(1, unindexedSum / routedDbShareSum)` — a single endpoint touching three un-indexed tables doesn't triple-weight.
+  - 5 new tests in [engineTableScan.test.ts](src/engine/__tests__/engineTableScan.test.ts). Full suite 389/389.
+  - Decisions [§55](Decisions.md), [Knowledge.md](Knowledge.md) updated. Codex unavailable → adversarial review deferred.
 - [ ] **Commit 4 — `feat(engine): per-DB shard cardinality from schemaMemory`**
 - [ ] **Commit 5 — `feat(engine): Kingman G/G/1 + fan-out tail viz + dispatch-timestamp plumbing`**
 
