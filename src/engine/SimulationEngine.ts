@@ -1436,7 +1436,18 @@ export class SimulationEngine {
       if (!this.routeReachesDbInLiveGraph(route, dbId)) continue;
       entryShareToDb += this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
     }
-    return entryShareToDb > 0 ? totalInboundRps / entryShareToDb : 0;
+    if (entryShareToDb <= 0) return 0;
+    // Cap at 1 — the factor can scale routes' DB share DOWN (upstream filters
+    // like cache hits) but NEVER UP beyond what was seeded. The "up" case
+    // would misattribute default-bucket or unmatched-mix traffic onto
+    // whatever read/write/indexed metadata the matched routes happen to
+    // carry — a DB with 10% routed writes + 90% default traffic would be
+    // simulated as 100% writes. The caller's 70/30 remainder path handles
+    // whatever totalInboundRps exceeds the routed entry share. Codex round 4
+    // [P1]. Loses fan-out amplification modeling for routes whose chain
+    // crosses a fanout node — acceptable; Phase 4.7 fan-out viz is a UI
+    // signal, not an engine-attribution primitive.
+    return Math.min(1, totalInboundRps / entryShareToDb);
   }
 
   /**

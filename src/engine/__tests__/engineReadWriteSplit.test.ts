@@ -251,6 +251,43 @@ describe('Phase 4.3 — DB read/write split with diagnostic errorRate fields', (
     expect(db.errorRate).toBeCloseTo(db.readErrorRate!, 4);
   });
 
+  it('dbArrivalFactor caps at 1 so default-bucket traffic is not absorbed into routed attribution (codex round 4 [P1])', () => {
+    // 10% routed write + 90% default-bucket traffic at the same DB. Without
+    // the cap, dbArrivalFactor would be totalInboundRps / routedEntryShare
+    // = 100 / 10 = 10×, making the routed write share appear to be 100% of
+    // DB inbound — the DB would be simulated as entirely-writes and saturate.
+    // With the cap at 1, the routed 10 rps stays at 10 rps; the remaining 90
+    // rps falls into the 70/30 remainder (63 read + 27 write). writeRps then
+    // totals 37 rps / 50 cap = 74% util → writeErrorRate = 0 (no saturation).
+    const { nodes, edges } = rwGraph({
+      readThroughputRps: 1000,
+      writeThroughputRps: 50,
+      readReplicas: 0,
+      connectionPoolSize: 10_000,
+    });
+    const routes: EndpointRoute[] = [
+      {
+        endpointId: 'ep-write',
+        componentChain: ['svc', 'db'],
+        tablesAccessed: [{ tableId: 'events', mode: 'write', indexed: true }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+    ];
+    // Mix: 10% to the ONE routed endpoint, 90% to unmatched "default" bucket.
+    const mix = { 'ep-write': 0.1, default: 0.9 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(100, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, schemaMemory: schema([entity('events', 'db')]), requestMix: mix },
+    );
+    const { metrics } = engine.tick();
+    // Without the cap: errorRate would be ~0.5 (fully saturated phantom
+    // writes). With the cap: 0 (util = 37/50 = 74% < 100%).
+    expect(metrics.db.writeErrorRate!).toBeCloseTo(0, 3);
+    expect(metrics.db.errorRate).toBeLessThan(0.1);
+  });
+
   it('a stale route chain (svc→db edge removed) does NOT project attribution onto the live DB (codex round 3 [P2])', () => {
     // Two routes attempt to reach `db`. `ep-legit` flows through `svc2 → db`
     // which is a real edge. `ep-stale` has chain ['svc1', 'db'] but the

@@ -176,19 +176,15 @@ export function useSimulation() {
     metricsHistoryRef.current = {};
     stressedRef.current = stressedMode;
 
-    // Determine schema shard key info
-    let shardKey: string | undefined;
-    let shardKeyCardinality: 'low' | 'medium' | 'high' | undefined;
-    if (schemaMemory) {
-      for (const entity of schemaMemory.entities) {
-        if (entity.partitionKey) {
-          shardKey = entity.partitionKey;
-          const field = entity.fields.find((f) => f.name === entity.partitionKey);
-          shardKeyCardinality = field?.cardinality;
-          break;
-        }
-      }
-    }
+    // Legacy constructor-global `schemaShardKey`/`schemaShardKeyCardinality`
+    // are ONLY consulted by `resolveShardKeyForDb` when no per-DB source
+    // resolves. When `schemaMemory` is present we must NOT pre-derive a
+    // global from the first entity — the engine does the per-DB lookup
+    // itself via `resolveShardKeyForDb(dbId)`. Pre-deriving would make
+    // a DB with no assigned entity inherit another DB's partition key
+    // (the cross-DB bleed §56 was meant to eliminate). Codex round 4 [P2].
+    const shardKey: string | undefined = undefined;
+    const shardKeyCardinality: 'low' | 'medium' | 'high' | undefined = undefined;
 
     const engine = new SimulationEngine(
       nodes,

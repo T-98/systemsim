@@ -196,6 +196,46 @@ describe('Phase 4.5 — per-DB shard cardinality from schemaMemory', () => {
     expect(Math.max(...dist) / total).toBeGreaterThan(0.7);
   });
 
+  it('useSimulation-style globals alongside schemaMemory leak across DBs — fixed by passing undefined (codex round 4 [P2])', () => {
+    // Pre-fix useSimulation.ts derived `schemaShardKey` / `cardinality`
+    // from the FIRST entity with a partitionKey and passed them as
+    // constructor globals alongside the schemaMemory in `routingContext`.
+    // `resolveShardKeyForDb(dbId)` falls back to those globals when a DB
+    // has no assigned entity — so an unrelated DB inherited a foreign
+    // partition key. This test documents the bug + the fix: construct
+    // both ways and assert the behavioural difference.
+    const nodes = [
+      node('dbA', 'database', { isEntry: true, shardingEnabled: true, shardCount: 4, readThroughputRps: 100_000, writeThroughputRps: 100_000 }),
+      node('dbB', 'database', { isEntry: true, shardingEnabled: true, shardCount: 4, readThroughputRps: 100_000, writeThroughputRps: 100_000 }),
+    ];
+    const edges: Edge<{ config: WireConfig }>[] = [];
+    // Only dbA has an assigned entity with a low-cardinality partition key.
+    const ctx: RoutingContext = {
+      schemaMemory: schema([entity('entA', 'dbA', 'region', [field('region', 'low')])]),
+    };
+
+    // Pre-fix call pattern — globals derived from first entity.
+    const preFixEngine = new SimulationEngine(
+      nodes, edges, profile(1000),
+      'region', 'low', SEED, false, ctx,
+    );
+    const preFixB = preFixEngine.tick().metrics.dbB.shardDistribution!;
+    const preFixBMax = Math.max(...preFixB) / preFixB.reduce((s, v) => s + v, 0);
+    // Bug: dbB's distribution is skewed because the global leaked.
+    expect(preFixBMax).toBeGreaterThan(0.5);
+
+    // Post-fix call pattern — globals are undefined; per-DB resolver
+    // correctly returns (null, 'high') for dbB.
+    const postFixEngine = new SimulationEngine(
+      nodes, edges, profile(1000),
+      undefined, undefined, SEED, false, ctx,
+    );
+    const postFixB = postFixEngine.tick().metrics.dbB.shardDistribution!;
+    const postFixBMax = Math.max(...postFixB) / postFixB.reduce((s, v) => s + v, 0);
+    // Fix: dbB's distribution is even — no inherited partition key.
+    expect(postFixBMax).toBeLessThan(0.4);
+  });
+
   it('dangling assignedDbId does not crash or bleed hot-shard behavior onto unrelated DBs', () => {
     // Entity assigned to a DB id that doesn't exist in the graph. DB-live
     // is high-cardinality — it must remain evenly distributed; the ghost
