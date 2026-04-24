@@ -1400,11 +1400,38 @@ export class SimulationEngine {
    * mode). Callers get back rps-per-tick in both fields (matching
    * `inboundRps` units).
    */
+  /**
+   * DB-arrival scaling factor. The seeded `endpointShareRpsThisTick` is the
+   * RPS set at `componentChain[0]`, NOT what reaches the DB after upstream
+   * caches/CDNs filter or fan-outs amplify. Without this factor, a route
+   * like `svc → cache(90% hit) → db` would still attribute the full entry
+   * share to the DB, making breakers/retry/backpressure react to phantom
+   * saturation. Codex [P1b] / [P2a].
+   *
+   * Factor = totalInboundRps / Σ(entry share of routes visiting this DB).
+   * Filter case (factor < 1): routes scale down. Amplification case
+   * (factor > 1): routes scale up. Mixed default-bucket-contribution case
+   * over-attributes routes by the default bucket's DB share — documented
+   * approximation, acceptable vs the alternative (false-negative saturation).
+   *
+   * Returns 0 when no routes visit (caller falls back to pure 70/30) or
+   * when totalInboundRps is 0.
+   */
+  private computeDbArrivalFactor(dbId: string, totalInboundRps: number): number {
+    if (totalInboundRps <= 0 || this.endpointRoutes.length === 0) return 0;
+    let entryShareToDb = 0;
+    for (const route of this.endpointRoutes) {
+      if (!route.componentChain.includes(dbId)) continue;
+      entryShareToDb += this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+    }
+    return entryShareToDb > 0 ? totalInboundRps / entryShareToDb : 0;
+  }
+
   private computeDbReadWriteBreakdown(
     dbId: string,
     totalInboundRps: number,
-  ): { readRps: number; writeRps: number; attributed: boolean } {
-    if (totalInboundRps <= 0) return { readRps: 0, writeRps: 0, attributed: false };
+  ): { readRps: number; writeRps: number; attributed: boolean; attributionRatio: number } {
+    if (totalInboundRps <= 0) return { readRps: 0, writeRps: 0, attributed: false, attributionRatio: 0 };
 
     // Early-out: no routing context at all → full 70/30 fallback.
     if (this.endpointRoutes.length === 0) {
@@ -1412,6 +1439,7 @@ export class SimulationEngine {
         readRps: totalInboundRps * SimulationEngine.DB_FALLBACK_READ_SHARE,
         writeRps: totalInboundRps * (1 - SimulationEngine.DB_FALLBACK_READ_SHARE),
         attributed: false,
+        attributionRatio: 0,
       };
     }
 
@@ -1426,12 +1454,21 @@ export class SimulationEngine {
       }
     }
 
+    const dbArrivalFactor = this.computeDbArrivalFactor(dbId, totalInboundRps);
+
     let routedReadRps = 0;
     let routedWriteRps = 0;
+    // Unique route share at the DB — counts each endpoint ONCE regardless
+    // of how many table ops it did. Critical: `read_write` mode contributes
+    // to BOTH read and write buckets, so summing `routedReadRps +
+    // routedWriteRps` would double-count the share for remainder math.
+    // Codex [P1a].
+    let attributedRpsAtDb = 0;
     for (const route of this.endpointRoutes) {
       if (!route.componentChain.includes(dbId)) continue;
-      const share = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
-      if (share <= 0) continue;
+      const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+      if (entryShare <= 0) continue;
+      const dbShare = entryShare * dbArrivalFactor;
       let touchedRead = false;
       let touchedWrite = false;
       for (const ta of route.tablesAccessed) {
@@ -1443,8 +1480,9 @@ export class SimulationEngine {
         else if (ta.mode === 'write') touchedWrite = true;
         else if (ta.mode === 'read_write') { touchedRead = true; touchedWrite = true; }
       }
-      if (touchedRead) routedReadRps += share;
-      if (touchedWrite) routedWriteRps += share;
+      if (touchedRead) routedReadRps += dbShare;
+      if (touchedWrite) routedWriteRps += dbShare;
+      if (touchedRead || touchedWrite) attributedRpsAtDb += dbShare;
     }
 
     // Nothing attributable (schema missing, tables unknown, or chains don't
@@ -1454,24 +1492,31 @@ export class SimulationEngine {
         readRps: totalInboundRps * SimulationEngine.DB_FALLBACK_READ_SHARE,
         writeRps: totalInboundRps * (1 - SimulationEngine.DB_FALLBACK_READ_SHARE),
         attributed: false,
+        attributionRatio: 0,
       };
     }
 
-    // Partial attribution: some inbound (default-bucket, empty-tablesAccessed
-    // routes, unassigned entities) wasn't classifiable. If we simply returned
-    // the routed sides, the remainder silently vanishes from the saturation
-    // signal — a sparse-schema DB can look healthy while actually overloaded,
-    // and breakers / backpressure (which read the aggregate `errorRate`) miss
-    // the real saturation. Distribute the remainder via the same 70/30 default
-    // the no-attribution branch uses. See Decisions §60 / codex [P1].
-    const attributedRps = routedReadRps + routedWriteRps;
-    const remainderRps = Math.max(0, totalInboundRps - attributedRps);
+    // Partial attribution: fold the unclassified remainder via the same 70/30
+    // default the no-attribution branch uses (see Decisions §60 / codex [P1]).
+    // `attributedRpsAtDb` is the UNIQUE-endpoint sum, so `read_write` routes
+    // don't get subtracted twice.
+    const remainderRps = Math.max(0, totalInboundRps - attributedRpsAtDb);
     if (remainderRps > 0) {
       routedReadRps += remainderRps * SimulationEngine.DB_FALLBACK_READ_SHARE;
       routedWriteRps += remainderRps * (1 - SimulationEngine.DB_FALLBACK_READ_SHARE);
     }
 
-    return { readRps: routedReadRps, writeRps: routedWriteRps, attributed: true };
+    // `attributed: true` gates user-visible saturation callouts. Only fire
+    // when classified routes actually dominate the DB's load — when the
+    // 70/30 filler is the majority, the callouts would be about synthetic
+    // traffic, which sends users chasing phantom hot spots. Codex [P2b].
+    const attributionRatio = Math.min(1, attributedRpsAtDb / totalInboundRps);
+    return {
+      readRps: routedReadRps,
+      writeRps: routedWriteRps,
+      attributed: attributionRatio >= 0.5,
+      attributionRatio,
+    };
   }
 
   /**
@@ -1649,6 +1694,10 @@ export class SimulationEngine {
     let routedDbShareSum = 0;
     const unindexedTablesThisTick: Array<{ tableId: string; endpointId: string; share: number }> = [];
     if (this.endpointRoutes.length > 0) {
+      // Same DB-arrival scaling as the read/write split (§60 / codex [P2a]):
+      // map each route's seeded entry-point share onto the DB's actual
+      // inbound so filters/amplification don't inflate the scan signal.
+      const scanArrivalFactor = this.computeDbArrivalFactor(state.id, rps);
       const tablesOnThisDb = new Set<string>();
       const tableNamesOnThisDb = new Map<string, string>();
       if (this.schemaMemory) {
@@ -1669,20 +1718,21 @@ export class SimulationEngine {
       let unindexedSum = 0;
       for (const route of this.endpointRoutes) {
         if (!route.componentChain.includes(state.id)) continue;
-        const share = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
-        if (share <= 0) continue;
-        routedDbShareSum += share;
+        const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+        if (entryShare <= 0) continue;
+        const dbShare = entryShare * scanArrivalFactor;
+        routedDbShareSum += dbShare;
         for (const ta of route.tablesAccessed) {
           // Only count shares tied to tables we can confirm live on this DB
           // (schema join) — or, when the schema is sparse, accept any table
           // in the endpoint's list (same fallback policy as read/write).
           if (tablesOnThisDb.size > 0 && !tablesOnThisDb.has(ta.tableId)) continue;
           if (ta.indexed === false) {
-            unindexedSum += share;
+            unindexedSum += dbShare;
             unindexedTablesThisTick.push({
               tableId: ta.tableId,
               endpointId: route.endpointId,
-              share,
+              share: dbShare,
             });
             // Each endpoint can touch several un-indexed tables; we credit
             // the full share to each for callout purposes. unindexedSum may

@@ -251,6 +251,137 @@ describe('Phase 4.3 — DB read/write split with diagnostic errorRate fields', (
     expect(db.errorRate).toBeCloseTo(db.readErrorRate!, 4);
   });
 
+  it('read_write share is counted ONCE in the remainder calculation, not twice (codex round 2 [P1a])', () => {
+    // Before the round-2 fix, `attributedRps = routedReadRps + routedWriteRps`
+    // double-counted `read_write` shares (they land in BOTH buckets), shrinking
+    // the 70/30 remainder. Test: one read_write route + one unclassified
+    // route at a write-starved DB. If the double-count bug returned, the
+    // remainder would be too small and writeErrorRate would falsely read 0.
+    const { nodes, edges } = rwGraph({
+      readThroughputRps: 1_000_000,
+      writeThroughputRps: 50,
+      readReplicas: 0,
+      connectionPoolSize: 10_000,
+    });
+    const routes: EndpointRoute[] = [
+      // read_write on the shared table — share counts to both buckets,
+      // must count ONCE in attributedRpsAtDb.
+      {
+        endpointId: 'ep-rw',
+        componentChain: ['svc', 'db'],
+        tablesAccessed: [{ tableId: 'events', mode: 'read_write', indexed: true }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+      // Unclassified — empty tablesAccessed, 60% of traffic.
+      {
+        endpointId: 'ep-unclassified',
+        componentChain: ['svc', 'db'],
+        tablesAccessed: [],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+    ];
+    const mix = { 'ep-rw': 0.4, 'ep-unclassified': 0.6 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(100, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, schemaMemory: schema([entity('events', 'db')]), requestMix: mix },
+    );
+    const { metrics } = engine.tick();
+    // attributedRpsAtDb = 40 (ep-rw counted once, even though it lands in both
+    // buckets). remainder = 60, 70/30 → 18 rps write. Total write = 40 + 18 = 58.
+    // 58 / 50 cap → 116% util → writeErrorRate = (1.16 - 1) * 0.5 = 0.08.
+    // If the bug returned, attributedRps would be 80 (40+40), remainder=20 → 6
+    // write, total = 46, util = 92% → writeErrorRate clamps to 0 (false negative).
+    expect(metrics.db.writeErrorRate!).toBeGreaterThan(0.05);
+    expect(metrics.db.writeErrorRate!).toBeLessThan(0.15);
+  });
+
+  it('scales attributed DB load by the ACTUAL inbound, not the entry-point seed (codex round 2 [P1b])', () => {
+    // Route writes through an api_gateway with rateLimitRps=100 in front of
+    // the DB. Entry-point share at `svc` = 1000 rps, but the gateway caps
+    // forwarded traffic to 100 rps. The DB's real inbound is ~100 rps.
+    //
+    // Before the fix, routedWriteRps would be computed from the seeded 1000
+    // rps share → writeUtil = 1000 / 300 ≈ 333% → writeErrorRate ≈ 0.9 on a
+    // DB that's actually ~33% utilized. Breakers would trip on phantom load.
+    // After the fix, dbArrivalFactor = 100 / 1000 = 0.1 → routedWriteRps = 100
+    // → writeUtil = 33% → writeErrorRate = 0.
+    const nodes = [
+      node('svc', 'api_gateway', { isEntry: true, rateLimitRps: 100 }),
+      node('db', 'database', {
+        readThroughputRps: 1_000_000,
+        writeThroughputRps: 300,
+        readReplicas: 0,
+        connectionPoolSize: 10_000,
+      }),
+    ];
+    const edges = [edge('svc-db', 'svc', 'db')];
+    const routes: EndpointRoute[] = [
+      {
+        endpointId: 'ep-write',
+        componentChain: ['svc', 'db'],
+        tablesAccessed: [{ tableId: 'events', mode: 'write', indexed: true }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+    ];
+    const mix = { 'ep-write': 1 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(1000, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, schemaMemory: schema([entity('events', 'db')]), requestMix: mix },
+    );
+    const { metrics } = engine.tick();
+    // DB sees rate-limited arrival — should stay healthy.
+    expect(metrics.db.rps).toBeLessThan(200);
+    expect(metrics.db.writeErrorRate!).toBeCloseTo(0, 3);
+  });
+
+  it('suppresses write-saturation callout when attribution is <50% of DB inbound (codex round 2 [P2b])', () => {
+    // Sparse-schema case: a small attributed read route + a large unclassified
+    // route. Writes saturate via the 70/30 filler on the remainder, but since
+    // classified routes only explain 10% of the DB's traffic, the user-visible
+    // "write side saturated" callout would point at phantom load — suppress it.
+    const { nodes, edges } = rwGraph({
+      readThroughputRps: 1_000_000,
+      writeThroughputRps: 30,
+      readReplicas: 0,
+      connectionPoolSize: 10_000,
+    });
+    const routes: EndpointRoute[] = [
+      {
+        endpointId: 'ep-read',
+        componentChain: ['svc', 'db'],
+        tablesAccessed: [{ tableId: 'events', mode: 'read', indexed: true }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+      {
+        endpointId: 'ep-unclassified',
+        componentChain: ['svc', 'db'],
+        tablesAccessed: [],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+    ];
+    const mix = { 'ep-read': 0.1, 'ep-unclassified': 0.9 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(500, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, schemaMemory: schema([entity('events', 'db')]), requestMix: mix },
+    );
+    const { metrics, newLogs } = engine.tick();
+    // The write side DOES saturate numerically — 450 rps × 30% = 135 > 30 cap.
+    expect(metrics.db.writeErrorRate!).toBeGreaterThan(0);
+    // But the user-facing callout must NOT fire — classified routes were
+    // only 10% of the DB's inbound; the saturation is driven by synthetic
+    // 70/30 filler on unclassified traffic.
+    expect(newLogs.some((l) => l.message.includes('write side saturated'))).toBe(false);
+    expect(newLogs.some((l) => l.message.includes('read side saturated'))).toBe(false);
+  });
+
   it('partial attribution distributes the unclassified remainder via the 70/30 default (codex [P1])', () => {
     // Mixed routing: one endpoint declares a `read` TableAccess, another
     // visits the DB but carries empty `tablesAccessed` (sparse-schema case
