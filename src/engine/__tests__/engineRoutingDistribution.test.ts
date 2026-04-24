@@ -217,6 +217,41 @@ describe('Phase 4.2 — per-endpoint traffic distribution', () => {
     expect(newLogs.some((l) => l.message.includes('ambiguous') && l.message.includes('POST /checkout'))).toBe(true);
   });
 
+    it('a single-node chain whose head now has upstream predecessors is stale (codex round 6 [P1])', () => {
+    // Route saved as `['svc']` when svc was an entry. User later adds
+    // `lb → svc` — svc is no longer an entry, and seeding at svc would
+    // bypass lb's rate-limit / latency. The seed detects this because
+    // svc has predecessors AND is not in entryPoints, marks the route
+    // stale, and redistributes.
+    const nodes = [
+      node('lb', 'load_balancer', { isEntry: true }),
+      // Intentionally NOT setting isEntry=true on svc — the added lb is the
+      // real entry now.
+      node('svc', 'api_gateway', { rateLimitRps: 1_000_000 }),
+      node('otherEntry', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+    ];
+    // Graph: lb → svc. svc now has predecessors.
+    const edges = [edge('e_lb_svc', 'lb', 'svc')];
+    const routes: EndpointRoute[] = [
+      route('ep_stale', ['svc'], 1),        // single-node chain, head now has predecessors.
+      route('ep_live',  ['otherEntry'], 1),
+    ];
+    const engine = new SimulationEngine(
+      nodes, edges, profile(1000, { ep_stale: 0.5, ep_live: 0.5 }),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, requestMix: { ep_stale: 0.5, ep_live: 0.5 } },
+    );
+    const { metrics, newLogs } = engine.tick();
+    // Stale route's 500 rps redistributes to ep_live; otherEntry sees all 1000.
+    expect(metrics.otherEntry.rps).toBeCloseTo(1000, 0);
+    // Stale seed did NOT land at svc.
+    expect(metrics.svc.rps).toBeCloseTo(0, 0);
+    // lb receives 0 too — no routed traffic flows through this ingress
+    // because the route that would have used it is stale.
+    expect(metrics.lb.rps).toBeCloseTo(0, 0);
+    expect(newLogs.some((l) => l.message.includes('ep_stale'))).toBe(true);
+  });
+
   it('a broken mid-chain edge is treated as stale — seed traffic does NOT bypass missing upstream components (codex round 5 [P1])', () => {
     // Graph: gateway → svc, svc → anotherDownstream (but NOT gateway → svc
     // through the edge the route's chain implies). Chain says `[gateway, svc]`

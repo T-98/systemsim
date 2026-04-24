@@ -196,6 +196,39 @@ describe('Phase 4.5 — per-DB shard cardinality from schemaMemory', () => {
     expect(Math.max(...dist) / total).toBeGreaterThan(0.7);
   });
 
+  it('schemaMemory with partitionKey but NO assigned entities still produces hot-shard behavior when globals are passed (codex round 6 [P2])', () => {
+    // This exercises the migration path: older saves had entities with a
+    // declared `partitionKey` but `assignedDbId === null` (the designer's
+    // DB-assignment step hadn't run yet). Round-4's §63 fix made
+    // useSimulation stop passing legacy globals; round-6's §65 refinement
+    // says: only skip globals when the schema HAS assigned entities. For
+    // unassigned-schema saves, the first-entity-derived global is still
+    // the only way to get hot-shard modeling — keep it.
+    //
+    // This test constructs the engine WITH the legacy globals (as
+    // useSimulation post-§65 would for an unassigned-schema save) and
+    // confirms the single DB shows hot-shard Pareto distribution.
+    const nodes = [
+      node('db', 'database', { isEntry: true, shardingEnabled: true, shardCount: 4, readThroughputRps: 100_000, writeThroughputRps: 100_000 }),
+    ];
+    const edges: Edge<{ config: WireConfig }>[] = [];
+    // Entity with partitionKey but no assignedDbId — simulates pre-assignment save.
+    const ctx: RoutingContext = {
+      schemaMemory: schema([entity('users', null, 'user_id', [field('user_id', 'low')])]),
+    };
+    // useSimulation post-§65: derives globals BECAUSE schema has no assigned entities.
+    const engine = new SimulationEngine(
+      nodes, edges, profile(1000),
+      'user_id', 'low', SEED, false, ctx,
+    );
+    const { metrics } = engine.tick();
+    const dist = metrics.db.shardDistribution!;
+    const total = dist.reduce((s, v) => s + v, 0);
+    const maxShare = Math.max(...dist) / total;
+    // Hot-shard Pareto from the legacy global fallback.
+    expect(maxShare).toBeGreaterThan(0.5);
+  });
+
   it('useSimulation-style globals alongside schemaMemory leak across DBs — fixed by passing undefined (codex round 4 [P2])', () => {
     // Pre-fix useSimulation.ts derived `schemaShardKey` / `cardinality`
     // from the FIRST entity with a partitionKey and passed them as

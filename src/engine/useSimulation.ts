@@ -178,13 +178,33 @@ export function useSimulation() {
 
     // Legacy constructor-global `schemaShardKey`/`schemaShardKeyCardinality`
     // are ONLY consulted by `resolveShardKeyForDb` when no per-DB source
-    // resolves. When `schemaMemory` is present we must NOT pre-derive a
-    // global from the first entity — the engine does the per-DB lookup
-    // itself via `resolveShardKeyForDb(dbId)`. Pre-deriving would make
-    // a DB with no assigned entity inherit another DB's partition key
-    // (the cross-DB bleed §56 was meant to eliminate). Codex round 4 [P2].
-    const shardKey: string | undefined = undefined;
-    const shardKeyCardinality: 'low' | 'medium' | 'high' | undefined = undefined;
+    // resolves. Two cases:
+    //   - schemaMemory has entities with `assignedDbId` set → per-DB
+    //     lookup is authoritative; pre-deriving globals would leak one
+    //     DB's partition key onto DBs with no assignment (§63 cross-DB
+    //     bleed). Pass undefined.
+    //   - schemaMemory has no assigned entities (older saves pre-dating
+    //     the designer's DB-assignment step) → per-DB lookup returns
+    //     nothing for every DB, and without globals the engine falls
+    //     through to `{null, 'high'}` — regresses single-DB hot-shard
+    //     modeling. Keep the legacy first-entity derivation in that
+    //     case so pre-assignment saves still shard correctly. Codex
+    //     round 6 [P2].
+    let shardKey: string | undefined;
+    let shardKeyCardinality: 'low' | 'medium' | 'high' | undefined;
+    if (schemaMemory) {
+      const hasAssigned = schemaMemory.entities.some((e) => e.assignedDbId !== null);
+      if (!hasAssigned) {
+        for (const entity of schemaMemory.entities) {
+          if (entity.partitionKey) {
+            shardKey = entity.partitionKey;
+            const field = entity.fields.find((f) => f.name === entity.partitionKey);
+            shardKeyCardinality = field?.cardinality;
+            break;
+          }
+        }
+      }
+    }
 
     const engine = new SimulationEngine(
       nodes,

@@ -147,6 +147,32 @@ describe('fan-in aggregation', () => {
     expect(metrics.db.rps).toBeCloseTo(2000, 0);
   });
 
+  it('dispatchedAtTickMs on deferred back-edge paths preserves the original dispatch time (codex round 6 [P2])', () => {
+    // Cycle A ↔ B. tick 0: A → B direct, B → A is a back edge → deferred
+    // into pendingInbound. tick 1: the deferred traffic merges into A's
+    // inbound; A runs and emits A → B. That tick-1 outcome should report
+    // `dispatchedAtTickMs = 0` (the tick-0 dispatch that caused the
+    // deferred flow), not 1000 (tick-1 time). Without the §65 fix,
+    // pendingInbound drops dispatchedAtTickMs and the next tick's emit
+    // stamps fresh — consumers of tickOutcomes() see the request as
+    // younger than it is, breaking the "CO-correct within 1-tick"
+    // semantic Decisions §59 / §65.
+    const nodes = [
+      node('a', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('b', 'api_gateway', { rateLimitRps: 1_000_000 }),
+    ];
+    const edges = [edge('e_a_b', 'a', 'b'), edge('e_b_a', 'b', 'a')];
+    const engine = new SimulationEngine(nodes, edges, steadyProfile(100), undefined, undefined, SEED);
+    engine.tick();
+    engine.tick();
+    const outcomes = engine.tickOutcomes();
+    const abOutcome = outcomes.find((o) => o.source === 'a' && o.target === 'b');
+    expect(abOutcome).toBeDefined();
+    // tick 0 time = 0; tick 1 time = 1000. A's inbound at tick 1 included
+    // deferred-from-tick-0 traffic, so emits from A carry dispatch time 0.
+    expect(abOutcome!.dispatchedAtTickMs).toBe(0);
+  });
+
   it('totalRequests sums aggregate inbound exactly once per tick (no double-count)', () => {
     // Pre-refactor, fan-in made totalRequests += rps fire twice, once per
     // recursive call. Post-refactor, it fires once per tick per component

@@ -244,7 +244,16 @@ export class SimulationEngine {
    */
   private endpointShareRpsThisTick: Map<string, number> = new Map();
   // Cycle/back-edge traffic that couldn't be delivered this tick is carried into next tick.
-  private pendingInbound: Map<string, { rps: number; latNum: number }> = new Map();
+  private pendingInbound: Map<string, { rps: number; latNum: number; earliestDispatchMs: number }> = new Map();
+  // Per-component earliest dispatch timestamp among this tick's INBOUND
+  // (fresh + deferred-from-prior-tick). When a component emits outbound,
+  // `WireTickOutcome.dispatchedAtTickMs` must reflect the original request's
+  // dispatch time, not the emit time — otherwise deferred paths report
+  // downstream requests as "younger" than they are, breaking the CO-correct-
+  // within-1-tick semantic Decisions §59 promised. Populated at tick-start
+  // when pendingInbound is drained; consulted in emitOutbound.
+  // Codex round 6 [P2].
+  private componentEarliestInboundMs: Map<string, number> = new Map();
   private calloutEntries: WeakSet<LogEntry> = new WeakSet(); // entries that bypass the per-tick throttle
   private peakCacheHitRate: Map<string, number> = new Map(); // track peak hitRate per cache for miss-storm detection
   private stressedMode = false; // worst-case run: peak RPS held, cold cache, wire p99
@@ -609,6 +618,16 @@ export class SimulationEngine {
           if (!succ.includes(chain[i + 1])) { chainValid = false; break; }
         }
       }
+      // Ingress-bypass check: if the head now has predecessors in the live
+      // graph AND isn't flagged as an entry point, the user added an
+      // upstream component (gateway/LB/rate-limiter) that the route doesn't
+      // know about. Seeding at the head would silently skip that upstream's
+      // rate-limit / latency / resilience logic. Codex round 6 [P1].
+      if (chainValid && head) {
+        const hasPredecessors = (this.reverseAdj.get(head) ?? []).length > 0;
+        const isExplicitEntry = this.entryPoints.includes(head);
+        if (hasPredecessors && !isExplicitEntry) chainValid = false;
+      }
       if (chainValid) {
         valid.push(m);
       } else {
@@ -726,6 +745,7 @@ export class SimulationEngine {
     // accumulatedLatencyMs. pendingInbound is emptied; fresh deferrals added
     // during Phase B accumulate for the following tick.
     const tickDelayMs = this.tickInterval * 1000;
+    this.componentEarliestInboundMs.clear();
     this.pendingInbound.forEach((pending, id) => {
       if (pending.rps <= 0) return;
       this.inboundRps.set(id, (this.inboundRps.get(id) ?? 0) + pending.rps);
@@ -733,6 +753,10 @@ export class SimulationEngine {
       acc.num += pending.latNum + pending.rps * tickDelayMs;
       acc.denom += pending.rps;
       this.inboundLat.set(id, acc);
+      // Record earliest dispatch for emits this tick — lets outbound wire
+      // outcomes from `id` correctly report the ORIGINAL dispatch time
+      // instead of this tick's time. Codex round 6 [P2].
+      this.componentEarliestInboundMs.set(id, pending.earliestDispatchMs);
     });
     this.pendingInbound.clear();
 
@@ -900,6 +924,17 @@ export class SimulationEngine {
     const wire = this.findWire(sourceId, targetId);
     const wireId = wire?.id ?? `${sourceId}|${targetId}`;
 
+    // CO-aware dispatch timestamp — reflects the ORIGINAL request's
+    // dispatch time, not the emit time. When the source component's
+    // inbound this tick included deferred traffic (from the prior tick's
+    // pendingInbound), propagate the earliest dispatch forward so
+    // downstream consumers of `WireTickOutcome.dispatchedAtTickMs`
+    // report the request as the age it actually is. Codex round 6 [P2].
+    const srcEarliestMs = this.componentEarliestInboundMs.get(sourceId);
+    const dispatchedAtTickMs = srcEarliestMs !== undefined
+      ? Math.min(this.time * 1000, srcEarliestMs)
+      : this.time * 1000;
+
     const outcome: WireTickOutcome = {
       wireId,
       source: sourceId,
@@ -908,11 +943,7 @@ export class SimulationEngine {
       rpsEffective: 0,
       amplification: 1,
       appliedBackpressure: 1,
-      // CO-aware dispatch timestamp — tick start in sim-ms. Requests
-      // deferred to `pendingInbound` keep this stamp through the
-      // cross-tick scheduling, so their reported end-to-end latency
-      // includes the extra tick delay (see §59).
-      dispatchedAtTickMs: this.time * 1000,
+      dispatchedAtTickMs,
     };
 
     if (wire?.breaker?.status === 'open') {
@@ -960,9 +991,14 @@ export class SimulationEngine {
         // The NEXT tick's emitOutbound sees this as fresh inbound (merged in at
         // tick start) and only then sets `hadTrafficThisTick` if delivery
         // succeeds.
-        const p = this.pendingInbound.get(targetId) ?? { rps: 0, latNum: 0 };
+        const p = this.pendingInbound.get(targetId)
+          ?? { rps: 0, latNum: 0, earliestDispatchMs: Number.POSITIVE_INFINITY };
         p.rps += eff;
         p.latNum += eff * targetAccLat;
+        // Multiple wires can defer to the same target this tick — keep the
+        // earliest so the downstream emit next tick reports the original
+        // dispatch, not the youngest contributor. Codex round 6 [P2].
+        p.earliestDispatchMs = Math.min(p.earliestDispatchMs, dispatchedAtTickMs);
         this.pendingInbound.set(targetId, p);
       } else {
         // Real delivery this tick. Safe to mark the breaker as having seen
