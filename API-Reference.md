@@ -614,8 +614,8 @@ new SimulationEngine(
   nodes: Node<SimComponentData>[],
   edges: Edge<{ config: WireConfig }>[],
   trafficProfile: TrafficProfile,
-  schemaShardKey?: string,                              // for hot-shard detection
-  schemaShardKeyCardinality?: 'low' | 'medium' | 'high',
+  schemaShardKey?: string,                              // LEGACY fallback (Phase 4.5 §56); prefer routingContext.schemaMemory
+  schemaShardKeyCardinality?: 'low' | 'medium' | 'high', // LEGACY fallback (Phase 4.5 §56)
   seed?: number,                                        // for reproducible tests
   stressedMode = false,                                 // worst-case run
   routingContext?: RoutingContext,                      // Phase 4: per-endpoint routing + schema
@@ -642,6 +642,15 @@ authored scenarios like [`src/scenarios/discord.ts`](src/scenarios/discord.ts)
 use, e.g. `"POST /event/everyone"`). See
 [docs/plans/2026-04-22-simfid-phases-4-8-revised.md](docs/plans/2026-04-22-simfid-phases-4-8-revised.md)
 §4.2.
+
+Per-DB shard key + cardinality derivation (Phase 4.5 §56) uses
+`routingContext.schemaMemory.entities[].assignedDbId` via the private
+`resolveShardKeyForDb(dbId)` helper: (1) first assigned entity with a
+`partitionKey`, cardinality from `partitionKeyCardinalityWarning === true`
+(→ 'low') or the field's own cardinality; (2) `state.config.shardKey` on the
+DB node; (3) legacy constructor globals; (4) `{ null, 'high' }` default. The
+constructor args above are legacy fallbacks — existing callers that only
+pass them continue to work unchanged.
 
 ### Public methods
 

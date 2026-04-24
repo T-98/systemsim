@@ -1390,6 +1390,74 @@ export class SimulationEngine {
     return { readRps: routedReadRps, writeRps: routedWriteRps, attributed: true };
   }
 
+  /**
+   * Phase 4.5 — resolve the effective shard key + cardinality for a given
+   * DB id, walking four fallback layers in order:
+   *
+   *   1. `schemaMemory.entities` — first entity whose `assignedDbId === dbId`
+   *      that declares a `partitionKey`. Cardinality derives from
+   *      `entity.partitionKeyCardinalityWarning === true` (→ 'low') or from
+   *      the partition field's own `cardinality` (`low | medium | high`).
+   *      If the named partition field isn't in `entity.fields`, we degrade
+   *      gracefully: use the key name but treat cardinality as 'high' (no
+   *      hot-shard model) — defensive against dangling partitionKey refs
+   *      codex flagged in the handoff's Commit 4 review questions.
+   *   2. `state.config.shardKey` on the DB node itself (the per-DB UI
+   *      inspector can still override — useful in scenario tests).
+   *   3. `this.schemaShardKey` + `schemaShardKeyCardinality` constructor
+   *      globals (legacy, pre-Phase-4.5 call sites).
+   *   4. `{ null, 'high' }` — no hot-shard behavior.
+   *
+   * Returning `{ shardKey: null, cardinality: 'high' }` is the safe default
+   * — the Pareto hot-shard branch below only fires when cardinality is
+   * low/medium OR the key literally contains "user".
+   */
+  private resolveShardKeyForDb(dbId: string): { shardKey: string | null; cardinality: 'low' | 'medium' | 'high' } {
+    // 1. schemaMemory — first entity assigned to this DB with a partitionKey.
+    if (this.schemaMemory) {
+      for (const ent of this.schemaMemory.entities) {
+        if (ent.assignedDbId !== dbId) continue;
+        if (!ent.partitionKey) continue;
+        // `partitionKeyCardinalityWarning` is the describe-intent pipeline's
+        // explicit "this will hot-shard" flag (set when the author of the
+        // schema already called out the problem). Treat it as authoritative.
+        if (ent.partitionKeyCardinalityWarning === true) {
+          return { shardKey: ent.partitionKey, cardinality: 'low' };
+        }
+        const field = ent.fields.find((f) => f.name === ent.partitionKey);
+        if (field) {
+          return { shardKey: ent.partitionKey, cardinality: field.cardinality };
+        }
+        // partitionKey references a field that isn't in the entity's fields
+        // array (dangling ref, authoring mistake). Use the name but assume
+        // 'high' cardinality — better to under-model hot-shard than to
+        // gratuitously flag everything low.
+        return { shardKey: ent.partitionKey, cardinality: 'high' };
+      }
+    }
+
+    // 2. DB node's own config.shardKey (UI inspector override).
+    const db = this.components.get(dbId);
+    const configKey = db?.config.shardKey as string | undefined;
+    if (configKey) {
+      // No cardinality available here — defer to the legacy global if set,
+      // otherwise 'high'. The `user` substring heuristic on the key still
+      // fires the hot-shard branch below, independent of this cardinality.
+      return {
+        shardKey: configKey,
+        cardinality: this.schemaShardKey === configKey ? this.schemaShardKeyCardinality : 'high',
+      };
+    }
+
+    // 3. Legacy constructor globals.
+    if (this.schemaShardKey) {
+      return { shardKey: this.schemaShardKey, cardinality: this.schemaShardKeyCardinality };
+    }
+
+    // 4. No info at all.
+    return { shardKey: null, cardinality: 'high' };
+  }
+
   private processDatabase(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const shardingEnabled = state.config.shardingEnabled as boolean;
     const shardCount = (state.config.shardCount as number) ?? 1;
@@ -1422,9 +1490,13 @@ export class SimulationEngine {
 
     // Shard distribution
     if (shardingEnabled && shardCount > 1) {
-      // Determine skew based on shard key cardinality
-      const isLowCardinality = this.schemaShardKeyCardinality === 'low' || this.schemaShardKeyCardinality === 'medium';
-      const shardKey = (state.config.shardKey as string) ?? '';
+      // Phase 4.5 — derive shard key + cardinality per-DB from schemaMemory
+      // first, falling back to the DB's own `config.shardKey` heuristic,
+      // then to the legacy constructor-level globals. See Decisions §56.
+      const shardResolution = this.resolveShardKeyForDb(state.id);
+      const shardKey = shardResolution.shardKey ?? '';
+      const resolvedCardinality = shardResolution.cardinality;
+      const isLowCardinality = resolvedCardinality === 'low' || resolvedCardinality === 'medium';
       const isUserIdShard = shardKey.toLowerCase().includes('user');
 
       if (isLowCardinality || isUserIdShard) {

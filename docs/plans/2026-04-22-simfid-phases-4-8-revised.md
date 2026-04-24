@@ -185,7 +185,13 @@ Five commits, each reviewable:
   - Multiplier clamp: `unindexedShare = min(1, unindexedSum / routedDbShareSum)` — a single endpoint touching three un-indexed tables doesn't triple-weight.
   - 5 new tests in [engineTableScan.test.ts](src/engine/__tests__/engineTableScan.test.ts). Full suite 389/389.
   - Decisions [§55](Decisions.md), [Knowledge.md](Knowledge.md) updated. Codex unavailable → adversarial review deferred.
-- [ ] **Commit 4 — `feat(engine): per-DB shard cardinality from schemaMemory`**
+- [x] **Commit 4 — `feat(engine): per-DB shard cardinality from schemaMemory`** (2026-04-24)
+  - New `resolveShardKeyForDb(dbId)` private helper on `SimulationEngine` — 4-layer fallback: `schemaMemory.entities[].assignedDbId` → `state.config.shardKey` → legacy constructor globals → `{null, 'high'}`.
+  - `processDatabase` hot-shard branch consults the resolver instead of the constructor-level global. Existing single-DB tests keep working via layer 3.
+  - Defensive: dangling `partitionKey` (field not in `entity.fields`) degrades to 'high' — no crash. Dangling `assignedDbId` (entity → deleted DB) is inert.
+  - `partitionKeyCardinalityWarning === true` overrides the field's own cardinality.
+  - 5 new tests in [engineShardCardinality.test.ts](src/engine/__tests__/engineShardCardinality.test.ts). Full suite 394/394.
+  - [API-Reference.md](API-Reference.md) marks `schemaShardKey`/`schemaShardKeyCardinality` as legacy fallbacks; Decisions [§56](Decisions.md), [Knowledge.md](Knowledge.md) updated. Codex unavailable → adversarial review deferred.
 - [ ] **Commit 5 — `feat(engine): Kingman G/G/1 + fan-out tail viz + dispatch-timestamp plumbing`**
 
 **Handoff doc for agents continuing Commits 2–5:** [`docs/plans/2026-04-23-simfid-phase4-handoff.md`](docs/plans/2026-04-23-simfid-phase4-handoff.md).
