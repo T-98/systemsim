@@ -230,6 +230,68 @@ describe('Phase 4.4 — unindexed-scan latency multiplier (10×) + one-shot call
     expect(newLogs.some((l) => l.message.includes('unindexed'))).toBe(false);
   });
 
+  it('unindexed share + callout share use the SAME denominator (codex [P2])', () => {
+    // Pre-fix, the multiplier used `routedDbShareSum` (only endpoints with
+    // tablesAccessed resolving to this DB) while the callout threshold
+    // used `routedDbShareSumLocal` (every route visiting the DB). When
+    // those denominators differed the latency multiplier could spike while
+    // the user-visible warning silently dropped below 5%. The fix unifies
+    // both around the same `routedDbShareSum`.
+    //
+    // Construction: 5% unindexed route + 95% unattributed (empty
+    // tablesAccessed) route, 1000 rps total, same DB. With the unified
+    // denominator (1000), unindexedShare = 50/1000 = 5% — exactly at the
+    // callout threshold — and the multiplier = 1 + 9×0.05 = 1.45×. Both
+    // signals reach the user.
+    const { nodes, edges } = dbGraph();
+    const routes: EndpointRoute[] = [
+      {
+        endpointId: 'ep-scan',
+        componentChain: ['db'],
+        tablesAccessed: [{ tableId: 'events', mode: 'read', indexed: false }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+      // Unattributed visitor — visits the DB via chain, no tablesAccessed.
+      // Pre-fix, this dilated the callout denominator but not the
+      // multiplier denominator, causing the split.
+      {
+        endpointId: 'ep-other',
+        componentChain: ['db'],
+        tablesAccessed: [],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+    ];
+    const mix = { 'ep-scan': 0.05, 'ep-other': 0.95 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(1000, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, schemaMemory: schema([entity('events', 'events', 'db')]), requestMix: mix },
+    );
+    // Baseline run — no unindexed anywhere — gives the denominator for the ratio.
+    const baselineRoutes: EndpointRoute[] = [
+      { endpointId: 'ep-scan',  componentChain: ['db'], tablesAccessed: [{ tableId: 'events', mode: 'read', indexed: true }], weight: 1, estimatedPayloadBytes: 0 },
+      { endpointId: 'ep-other', componentChain: ['db'], tablesAccessed: [],                                                    weight: 1, estimatedPayloadBytes: 0 },
+    ];
+    const { nodes: bn, edges: be } = dbGraph();
+    const baselineEngine = new SimulationEngine(
+      bn, be, profile(1000, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: baselineRoutes, schemaMemory: schema([entity('events', 'events', 'db')]), requestMix: mix },
+    );
+    const baselineP50 = baselineEngine.tick().metrics.db.p50;
+    const { metrics, newLogs } = engine.tick();
+    // Multiplier math: unindexedShare = 0.05 → 1.45× dbLatency.
+    // p50 ratio vs baseline should be ~1.45 (with upstream latency 0 in dbGraph).
+    const ratio = metrics.db.p50 / baselineP50;
+    expect(ratio).toBeGreaterThan(1.35);
+    expect(ratio).toBeLessThan(1.55);
+    // And the callout fires — the denominator fix means 5% no longer gets
+    // diluted below threshold by the unattributed visitor.
+    expect(newLogs.some((l) => l.message.includes('unindexed') && l.message.includes('"events"'))).toBe(true);
+  });
+
   it('multiple un-indexed tables each produce a distinct one-shot callout', () => {
     // One endpoint touches both table-A (indexed=false) and table-B
     // (indexed=false); two distinct callout keys `unindexed-scan:A` and

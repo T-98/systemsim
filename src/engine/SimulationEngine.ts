@@ -1457,6 +1457,20 @@ export class SimulationEngine {
       };
     }
 
+    // Partial attribution: some inbound (default-bucket, empty-tablesAccessed
+    // routes, unassigned entities) wasn't classifiable. If we simply returned
+    // the routed sides, the remainder silently vanishes from the saturation
+    // signal — a sparse-schema DB can look healthy while actually overloaded,
+    // and breakers / backpressure (which read the aggregate `errorRate`) miss
+    // the real saturation. Distribute the remainder via the same 70/30 default
+    // the no-attribution branch uses. See Decisions §60 / codex [P1].
+    const attributedRps = routedReadRps + routedWriteRps;
+    const remainderRps = Math.max(0, totalInboundRps - attributedRps);
+    if (remainderRps > 0) {
+      routedReadRps += remainderRps * SimulationEngine.DB_FALLBACK_READ_SHARE;
+      routedWriteRps += remainderRps * (1 - SimulationEngine.DB_FALLBACK_READ_SHARE);
+    }
+
     return { readRps: routedReadRps, writeRps: routedWriteRps, attributed: true };
   }
 
@@ -1632,6 +1646,7 @@ export class SimulationEngine {
     // "attributed" gate the read-saturation callout uses — keeps the
     // multiplier honest under partial attribution.
     let unindexedShare = 0;
+    let routedDbShareSum = 0;
     const unindexedTablesThisTick: Array<{ tableId: string; endpointId: string; share: number }> = [];
     if (this.endpointRoutes.length > 0) {
       const tablesOnThisDb = new Set<string>();
@@ -1644,22 +1659,24 @@ export class SimulationEngine {
           }
         }
       }
-      let routedDbShareSum = 0;
+      // Canonical denominator — every endpoint share that visits this DB,
+      // including ones with empty / unresolved `tablesAccessed`. Using this
+      // in BOTH the multiplier and the callout threshold keeps the two
+      // signals consistent (codex [P2]): a DB whose latency spike is driven
+      // by a single endpoint doesn't fire the scan multiplier sharply while
+      // diluting the callout below the 5% threshold — or vice versa. See
+      // Decisions §60.
       let unindexedSum = 0;
       for (const route of this.endpointRoutes) {
         if (!route.componentChain.includes(state.id)) continue;
         const share = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
         if (share <= 0) continue;
-        // Only count shares tied to tables we can confirm live on this DB
-        // (schema join) — or, when the schema is sparse, accept any table
-        // in the endpoint's list (same fallback policy as read/write).
-        let endpointCountedOnDb = false;
+        routedDbShareSum += share;
         for (const ta of route.tablesAccessed) {
+          // Only count shares tied to tables we can confirm live on this DB
+          // (schema join) — or, when the schema is sparse, accept any table
+          // in the endpoint's list (same fallback policy as read/write).
           if (tablesOnThisDb.size > 0 && !tablesOnThisDb.has(ta.tableId)) continue;
-          if (!endpointCountedOnDb) {
-            routedDbShareSum += share;
-            endpointCountedOnDb = true;
-          }
           if (ta.indexed === false) {
             unindexedSum += share;
             unindexedTablesThisTick.push({
@@ -1668,10 +1685,10 @@ export class SimulationEngine {
               share,
             });
             // Each endpoint can touch several un-indexed tables; we credit
-            // the full share to each for callout purposes but the aggregate
-            // unindexedSum may then exceed routedDbShareSum — clamp below
-            // before using in the multiplier so a 3-un-indexed-table
-            // endpoint doesn't triple-weight the latency bump.
+            // the full share to each for callout purposes. unindexedSum may
+            // then exceed routedDbShareSum — clamped below before it drives
+            // the multiplier so a 3-un-indexed-table endpoint doesn't
+            // triple-weight the latency bump.
           }
         }
       }
@@ -1692,18 +1709,14 @@ export class SimulationEngine {
     // is coarse — a single false flag on a table covers every operation on
     // that table for that endpoint, even reads that the real engine might
     // push through an existing index. Caller gets the clue, not a verdict.
-    if (unindexedShare > 0 && unindexedTablesThisTick.length > 0) {
+    if (unindexedShare > 0 && unindexedTablesThisTick.length > 0 && routedDbShareSum > 0) {
       // Aggregate per-table across all endpoints visiting this DB with
       // unindexed access to that table, so the threshold check reflects
       // the TABLE's unindexed traffic on this DB, not any single
-      // endpoint's.
+      // endpoint's. Denominator is the SAME `routedDbShareSum` the
+      // multiplier used — per-commit codex [P2] fix.
       const perTable = new Map<string, { shareSum: number; endpoints: Set<string>; name: string }>();
-      const routedDbShareSumLocal = this.endpointRoutes.reduce((acc, r) => {
-        if (!r.componentChain.includes(state.id)) return acc;
-        const share = this.endpointShareRpsThisTick.get(r.endpointId) ?? 0;
-        return acc + share;
-      }, 0);
-      if (routedDbShareSumLocal > 0) {
+      {
         for (const hit of unindexedTablesThisTick) {
           const entry = perTable.get(hit.tableId) ?? { shareSum: 0, endpoints: new Set<string>(), name: hit.tableId };
           entry.shareSum += hit.share;
@@ -1716,7 +1729,7 @@ export class SimulationEngine {
           perTable.set(hit.tableId, entry);
         }
         for (const [tableId, entry] of perTable) {
-          const tableShare = Math.min(1, entry.shareSum / routedDbShareSumLocal);
+          const tableShare = Math.min(1, entry.shareSum / routedDbShareSum);
           if (tableShare < SimulationEngine.UNINDEXED_CALLOUT_THRESHOLD) continue;
           const firstEp = entry.endpoints.values().next().value;
           const moreEps = entry.endpoints.size > 1 ? ` (+${entry.endpoints.size - 1} more)` : '';

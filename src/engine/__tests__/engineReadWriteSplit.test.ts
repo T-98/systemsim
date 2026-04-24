@@ -251,6 +251,59 @@ describe('Phase 4.3 — DB read/write split with diagnostic errorRate fields', (
     expect(db.errorRate).toBeCloseTo(db.readErrorRate!, 4);
   });
 
+  it('partial attribution distributes the unclassified remainder via the 70/30 default (codex [P1])', () => {
+    // Mixed routing: one endpoint declares a `read` TableAccess, another
+    // visits the DB but carries empty `tablesAccessed` (sparse-schema case
+    // the describe-intent pipeline can produce). Pre-fix, the second
+    // endpoint's RPS silently vanished from both readErrorRate and
+    // writeErrorRate, letting the DB look healthy while saturating. Post-
+    // fix, the remainder splits 70/30 like the no-routing fallback.
+    const { nodes, edges } = rwGraph({
+      readThroughputRps: 1_000_000,  // read side intentionally oversized — isolates the write-side test.
+      writeThroughputRps: 30,
+      readReplicas: 1,
+      connectionPoolSize: 10_000,
+    });
+    const routes: EndpointRoute[] = [
+      // Attributed read — 100 rps at weight 0.4 out of total 250 rps.
+      {
+        endpointId: 'ep-read',
+        componentChain: ['svc', 'db'],
+        tablesAccessed: [{ tableId: 'profiles', mode: 'read', indexed: true }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+      // Unattributed — 150 rps at weight 0.6. Empty tablesAccessed is the
+      // real-world pattern for endpoints whose table access the schema pass
+      // hasn't inferred yet.
+      {
+        endpointId: 'ep-unclassified',
+        componentChain: ['svc', 'db'],
+        tablesAccessed: [],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+    ];
+    const mix = { 'ep-read': 0.4, 'ep-unclassified': 0.6 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(250, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, schemaMemory: schema([entity('profiles', 'db')]), requestMix: mix },
+    );
+    const { metrics } = engine.tick();
+    const db = metrics.db;
+    // Unattributed 150 rps → 30% write share → 45 rps write against 30 cap
+    // → writeUtil = 1.5 → writeErrorRate = (1.5 - 1) × 0.5 = 0.25.
+    expect(db.writeErrorRate!).toBeGreaterThan(0.2);
+    expect(db.writeErrorRate!).toBeLessThan(0.35);
+    // Read side stays healthy: 100 rps attributed + ~105 rps 70/30 remainder
+    // = ~205 rps against the 2M-rps read capacity = 0 errors.
+    expect(db.readErrorRate!).toBeCloseTo(0, 2);
+    // Aggregate reflects the worst side — write saturation — per §52 so
+    // breakers / retry / BP still observe the real failure mode.
+    expect(db.errorRate).toBeCloseTo(db.writeErrorRate!, 4);
+  });
+
   it('zero writeThroughputRps saturates the write side immediately when writes are routed', () => {
     // Divide-by-zero guard: writeCap=0 AND inboundWriteRps>0 → writeUtilization
     // clamps to Infinity, errorRate clamps to 0.9 ceiling (not NaN, not

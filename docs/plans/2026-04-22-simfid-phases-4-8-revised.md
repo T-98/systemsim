@@ -200,8 +200,12 @@ Five commits, each reviewable:
   - Playwright `simfid-phase4-schema-driven.spec.ts` created (2 tests: unindexed-scan callout fires; indexed regression guard). Not run in this sandbox — Playwright deferred to user's real machine.
   - Decisions [§57](Decisions.md), [§58](Decisions.md), [§59](Decisions.md); [Knowledge.md](Knowledge.md) queueing + CO + fan-out sections; [API-Reference.md](API-Reference.md) constructor annotations.
   - Codex unavailable → adversarial review deferred to end-of-phase subagent.
+- [x] **Codex branch-vs-main review (2026-04-24)** — `codex review --base main` ran at the end of Phase 4. Verdict: **GATE: FAIL (1 × P1, 1 × P2).**
+  - **[P1]** `attributeDbInbound` silently dropped unattributed DB inbound from the read/write split — a sparse-schema DB could look healthy while breakers / retry / backpressure missed real saturation. Fixed: partial-attribution remainder now distributes via the existing 70/30 default (`DB_FALLBACK_READ_SHARE`). §52 / §54 invariants preserved.
+  - **[P2]** Unindexed-scan multiplier and callout used inconsistent denominators — the latency multiplier could spike hard while the user-visible warning silently dropped below 5%. Fixed: one `routedDbShareSum`, hoisted and reused in both the multiplier and the threshold check.
+  - Two new regression tests ([engineReadWriteSplit.test.ts](src/engine/__tests__/engineReadWriteSplit.test.ts) `partial attribution distributes the unclassified remainder via the 70/30 default`, [engineTableScan.test.ts](src/engine/__tests__/engineTableScan.test.ts) `unindexed share + callout share use the SAME denominator`) encode the fixes against regression. Full suite 407/407 + Playwright 2/2 green. New commit will be the final Phase 4 shipment. Decisions [§60](Decisions.md). Codex session: `019dbe91-106f-7e60-8802-7da147992aa9`.
 
-**Handoff doc for agents continuing Commits 2–5:** [`docs/plans/2026-04-23-simfid-phase4-handoff.md`](docs/plans/2026-04-23-simfid-phase4-handoff.md).
+**Handoff doc for agents continuing Commits 2–5:** [`docs/plans/2026-04-23-simfid-phase4-handoff.md`](docs/plans/2026-04-23-simfid-phase4-handoff.md) (now historical — Phase 4 fully shipped).
 
 ---
 
