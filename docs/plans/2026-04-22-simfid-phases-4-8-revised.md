@@ -171,7 +171,13 @@ Five commits, each reviewable:
   - Fix: null-sentinel pattern. Duplicate METHOD+PATH keys poison the map entry; at match time `null` fires `routing-ambiguous:<key>` and the weight falls into the default bucket.
   - +1 test covering the ambiguous case. Full suite 378/378.
   - Codex final re-review on `9538f23` returned NIT only (un-routed duplicate contracts don't trigger ambiguity — policy call, accepted: an un-routed duplicate has no destination, so there's only one valid target for the mix key regardless).
-- [ ] **Commit 2 — `feat(engine): read/write split with split error fields`** (next)
+- [x] **Commit 2 — `feat(engine): read/write split with split error fields`** (2026-04-24)
+  - `ComponentMetrics` gains optional DB-only `readErrorRate` / `writeErrorRate` (additive; [src/types/index.ts](src/types/index.ts)).
+  - `computeDbReadWriteBreakdown` attributes per-endpoint share via `endpointRoutes[].tablesAccessed` + `schemaMemory.entities[].assignedDbId`; `read_write` mode adds full share to BOTH sides (per-operation semantics). 70/30 fallback (`DB_FALLBACK_READ_SHARE`) when attribution unavailable.
+  - Aggregate `errorRate = max(readErrorRate, writeErrorRate, connectionPoolDropRate)` — fan-in correctness (§52) preserved; breakers/retry/BP unchanged.
+  - Per-side callouts (`read-saturation`, `write-saturation`) fire only when attribution available (modeling-assumption floor rule).
+  - 6 new tests in [engineReadWriteSplit.test.ts](src/engine/__tests__/engineReadWriteSplit.test.ts). Full suite 384/384.
+  - Decisions [§54](Decisions.md), [Knowledge.md](Knowledge.md), [API-Reference.md](API-Reference.md) updated. Codex unavailable in this sandbox → adversarial review deferred to end-of-phase (Agent subagent, per CLAUDE.md fallback).
 - [ ] **Commit 3 — `feat(engine): index coverage → latency multiplier (10x, matches preflight)`**
 - [ ] **Commit 4 — `feat(engine): per-DB shard cardinality from schemaMemory`**
 - [ ] **Commit 5 — `feat(engine): Kingman G/G/1 + fan-out tail viz + dispatch-timestamp plumbing`**

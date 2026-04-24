@@ -295,7 +295,7 @@ Replace the constructor-level global `schemaShardKey + schemaShardKeyCardinality
 
 ### Progress log for Commits 2-5 (update as you go)
 
-- [ ] Commit 2 — `feat(engine): read/write split with split error fields`
+- [x] Commit 2 — `feat(engine): read/write split with split error fields` (2026-04-24; 384/384 vitest; see Decisions §54; codex unavailable in this sandbox → adversarial review deferred to end-of-phase Agent subagent)
 - [ ] Commit 3 — `feat(engine): index coverage → latency multiplier (10x, matches preflight)`
 - [ ] Commit 4 — `feat(engine): per-DB shard cardinality from schemaMemory`
 - [ ] Commit 5 — `feat(engine): Kingman G/G/1 + fan-out tail viz + dispatch-timestamp plumbing`

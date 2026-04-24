@@ -205,6 +205,19 @@ export class SimulationEngine {
   private inboundLat: Map<string, InboundLatencyAccumulator> = new Map();
   private wireOutcomes: Map<string, WireTickOutcome> = new Map();
   private processedThisTick: Set<string> = new Set();
+  /**
+   * Per-endpoint entry-RPS map populated by `seedInboundTraffic` and consumed
+   * by downstream processors (DB read/write split, unindexed-scan multiplier —
+   * Phase 4.3 / 4.4). Keyed by `EndpointRoute.endpointId`; value is the RPS
+   * (per-tick units, same as `inboundRps`) actually routed to that endpoint's
+   * `componentChain[0]` THIS tick — i.e., includes the redistribution of
+   * stale-chain and unmatched weight. Stale endpoints are absent. Cleared at
+   * tick start before seeding. Readers must treat this as an at-the-entry
+   * signal; RPS may amplify (fan-out) or shrink (cache hit) along the chain,
+   * so this is an attribution proxy, not the DB's exact inbound. See
+   * Decisions §54 for the diagnostic-not-control-signal compromise.
+   */
+  private endpointShareRpsThisTick: Map<string, number> = new Map();
   // Cycle/back-edge traffic that couldn't be delivered this tick is carried into next tick.
   private pendingInbound: Map<string, { rps: number; latNum: number }> = new Map();
   private calloutEntries: WeakSet<LogEntry> = new WeakSet(); // entries that bypass the per-tick throttle
@@ -529,6 +542,11 @@ export class SimulationEngine {
     for (const v of valid) {
       const share = routedShareRps * (v.weight / validWeightSum);
       this.seedAt(v.route.componentChain[0], share);
+      // Record the at-entry share so DB processor can attribute read/write
+      // traffic to this endpoint. Accumulate in case the same endpointId
+      // appears in multiple matched buckets.
+      const prev = this.endpointShareRpsThisTick.get(v.route.endpointId) ?? 0;
+      this.endpointShareRpsThisTick.set(v.route.endpointId, prev + share);
     }
 
     // Default bucket → even-split across entry points (matches legacy behavior
@@ -603,6 +621,7 @@ export class SimulationEngine {
     this.inboundLat.clear();
     this.wireOutcomes.clear();
     this.processedThisTick.clear();
+    this.endpointShareRpsThisTick.clear();
 
     // Merge any back-edge traffic that was deferred from the previous tick.
     // Each deferred hop incurs a full tick of scheduling delay (~tickInterval
@@ -1259,6 +1278,101 @@ export class SimulationEngine {
     this.emitToDownstreams(state.id, consumed, accumulatedLatencyMs + state.metrics.p50, logs, backEdges);
   }
 
+  /**
+   * Phase 4.3 — read/write attribution fallback. Applies when the DB has no
+   * usable per-endpoint attribution (no `endpointRoutes`, or no chain visits
+   * this DB). Matches typical load-generator defaults; see Decisions §54 for
+   * why 70/30 and not 80/20. Don't change in isolation — the unindexed-scan
+   * multiplier (Phase 4.4) and the Kingman arrival-variance math (Phase 4.6)
+   * assume this split shape for their fallback branches too.
+   */
+  private static readonly DB_FALLBACK_READ_SHARE = 0.7;
+
+  /**
+   * Compute read vs write inbound RPS breakdown for a database from the
+   * per-tick endpoint share map (populated by `seedInboundTraffic`) + the
+   * `schemaMemory` table→DB join.
+   *
+   * Algorithm — walks every EndpointRoute whose `componentChain` visits this
+   * DB id; for each such route, only `TableAccess` entries whose `tableId`
+   * resolves (via `schemaMemory.entities[].assignedDbId`) to THIS DB are
+   * counted. Mode semantics are per-operation, not per-request: `read_write`
+   * adds the full endpoint share to both buckets (one request does both a
+   * read AND a write), matching the plan's §4.3 algorithm.
+   *
+   * Fallback — when no endpoint contributes to either bucket, the full
+   * inbound RPS splits `DB_FALLBACK_READ_SHARE / 1-DB_FALLBACK_READ_SHARE`
+   * between read and write. A `null` return would force every call site to
+   * handle the degenerate case; instead we always return a sensible shape.
+   *
+   * Edge cases: routes with `tablesAccessed` pointing to tables not on this
+   * DB contribute zero; the endpoint visit itself is "ambient" and folded
+   * into the untracked-remainder 70/30. Endpoints whose `tablesAccessed`
+   * arrays are empty but whose chain visits this DB are treated as having
+   * no read/write operations here (same rationale — we can't infer the
+   * mode). Callers get back rps-per-tick in both fields (matching
+   * `inboundRps` units).
+   */
+  private computeDbReadWriteBreakdown(
+    dbId: string,
+    totalInboundRps: number,
+  ): { readRps: number; writeRps: number; attributed: boolean } {
+    if (totalInboundRps <= 0) return { readRps: 0, writeRps: 0, attributed: false };
+
+    // Early-out: no routing context at all → full 70/30 fallback.
+    if (this.endpointRoutes.length === 0) {
+      return {
+        readRps: totalInboundRps * SimulationEngine.DB_FALLBACK_READ_SHARE,
+        writeRps: totalInboundRps * (1 - SimulationEngine.DB_FALLBACK_READ_SHARE),
+        attributed: false,
+      };
+    }
+
+    // Table→DB join. Tables "live on" this DB iff their owning entity is
+    // assigned to the DB via `assignedDbId`. For the common case where no
+    // entities are mapped yet we keep the map empty — every TableAccess
+    // lookup will miss, and the fallback branch below handles it.
+    const tablesOnThisDb = new Set<string>();
+    if (this.schemaMemory) {
+      for (const entity of this.schemaMemory.entities) {
+        if (entity.assignedDbId === dbId) tablesOnThisDb.add(entity.id);
+      }
+    }
+
+    let routedReadRps = 0;
+    let routedWriteRps = 0;
+    for (const route of this.endpointRoutes) {
+      if (!route.componentChain.includes(dbId)) continue;
+      const share = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+      if (share <= 0) continue;
+      let touchedRead = false;
+      let touchedWrite = false;
+      for (const ta of route.tablesAccessed) {
+        // If we know the schema join, filter to tables on this DB. If we
+        // don't (empty schemaMemory or entity unassigned), accept any table
+        // in the endpoint's list — better over-attribute than silently zero.
+        if (tablesOnThisDb.size > 0 && !tablesOnThisDb.has(ta.tableId)) continue;
+        if (ta.mode === 'read') touchedRead = true;
+        else if (ta.mode === 'write') touchedWrite = true;
+        else if (ta.mode === 'read_write') { touchedRead = true; touchedWrite = true; }
+      }
+      if (touchedRead) routedReadRps += share;
+      if (touchedWrite) routedWriteRps += share;
+    }
+
+    // Nothing attributable (schema missing, tables unknown, or chains don't
+    // visit) → 70/30 fallback on the full inbound, matching no-routing case.
+    if (routedReadRps === 0 && routedWriteRps === 0) {
+      return {
+        readRps: totalInboundRps * SimulationEngine.DB_FALLBACK_READ_SHARE,
+        writeRps: totalInboundRps * (1 - SimulationEngine.DB_FALLBACK_READ_SHARE),
+        attributed: false,
+      };
+    }
+
+    return { readRps: routedReadRps, writeRps: routedWriteRps, attributed: true };
+  }
+
   private processDatabase(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const shardingEnabled = state.config.shardingEnabled as boolean;
     const shardCount = (state.config.shardCount as number) ?? 1;
@@ -1350,22 +1464,78 @@ export class SimulationEngine {
     state.metrics.p99 = dbLatency * 4 + replicationLag + accumulatedLatencyMs;
     state.lastComputedLatencyMs = dbLatency;
 
-    // Connection pool exhaustion
-    if (connectionUtilization > 1) {
-      const dropRate = Math.min(0.9, (connectionUtilization - 1) * 0.5);
-      state.metrics.errorRate = dropRate;
-      state.accumulatedErrors += rps * dropRate;
+    // Phase 4.3 — read/write saturation. Diagnostic split attributed via
+    // endpointRoutes + schemaMemory when available; 70/30 fallback otherwise.
+    // The same saturation curve used by connection-pool exhaustion below
+    // is applied per-side: errorRate = clamp(0, 0.9, (util - 1) * 0.5). This
+    // is intentionally additive to — not a replacement for — connection-pool
+    // errorRate; the aggregate takes max across all three so breakers/retry/
+    // backpressure (which still read the aggregate `errorRate` per §52)
+    // continue to trip on whichever failure mode hits first.
+    const { readRps: inboundReadRps, writeRps: inboundWriteRps, attributed: rwAttributed } =
+      this.computeDbReadWriteBreakdown(state.id, rps);
+    const readCapacityPerTick = readThroughput * (1 + readReplicas) * this.tickInterval;
+    const writeCapacityPerTick = writeThroughput * this.tickInterval;
+    // Divide-by-zero guard: if a side has no capacity AND inbound > 0, that
+    // side is fully saturated. If both are zero (inbound and capacity), we
+    // report 0 errorRate on that side — there's nothing to fail.
+    const readUtilization = readCapacityPerTick > 0
+      ? inboundReadRps / readCapacityPerTick
+      : inboundReadRps > 0 ? Infinity : 0;
+    const writeUtilization = writeCapacityPerTick > 0
+      ? inboundWriteRps / writeCapacityPerTick
+      : inboundWriteRps > 0 ? Infinity : 0;
+    const saturationErr = (u: number) => u > 1 ? Math.min(0.9, (u - 1) * 0.5) : 0;
+    const readErrorRate = saturationErr(readUtilization);
+    const writeErrorRate = saturationErr(writeUtilization);
+    state.metrics.readErrorRate = readErrorRate;
+    state.metrics.writeErrorRate = writeErrorRate;
 
-      if (dropRate > 0.1) {
+    // Connection pool exhaustion — orthogonal failure mode (exhaust the pool
+    // before you exhaust throughput = bad pool sizing). Still sets errorRate
+    // aggregate so downstream breakers/retry/BP see it; preserved behavior.
+    let poolDropRate = 0;
+    if (connectionUtilization > 1) {
+      poolDropRate = Math.min(0.9, (connectionUtilization - 1) * 0.5);
+      state.accumulatedErrors += rps * poolDropRate;
+
+      if (poolDropRate > 0.1) {
         logs.push({
           time: this.time,
-          message: `${state.id}: Connection pool exhaustion. ${Math.round(dropRate * 100)}% of queries failing.`,
+          message: `${state.id}: Connection pool exhaustion. ${Math.round(poolDropRate * 100)}% of queries failing.`,
           severity: 'critical',
           componentId: state.id,
         });
       }
-    } else {
-      state.metrics.errorRate = 0;
+    }
+
+    // Aggregate errorRate = max of all three failure modes. Control-signal
+    // consumers (breakers, retry, backpressure) continue reading this
+    // aggregate only; the split fields are strictly diagnostic (§54).
+    state.metrics.errorRate = Math.max(readErrorRate, writeErrorRate, poolDropRate);
+
+    // One-shot callouts per (dbId, side) when the attributed side saturates.
+    // Only fires when attribution was actually available — with the 70/30
+    // fallback the split is a modeling assumption, not a user-facing signal,
+    // so warning about "write saturation" when we can't see their schema is
+    // misleading.
+    if (rwAttributed) {
+      if (readErrorRate > 0.05) {
+        this.fireCallout(
+          logs,
+          state.id,
+          'read-saturation',
+          `${state.id} read side saturated (${Math.round(readUtilization * 100)}% util, errorRate=${readErrorRate.toFixed(2)}) at t=${Math.round(this.time)}s — add read replicas or a cache`,
+        );
+      }
+      if (writeErrorRate > 0.05) {
+        this.fireCallout(
+          logs,
+          state.id,
+          'write-saturation',
+          `${state.id} write side saturated (${Math.round(writeUtilization * 100)}% util, errorRate=${writeErrorRate.toFixed(2)}) at t=${Math.round(this.time)}s — scale writes (sharding, batching, or a write-optimized store)`,
+        );
+      }
     }
   }
 

@@ -894,7 +894,7 @@ Key types that cross module boundaries. Add new types here, not in component fil
 - `ComponentType` — discriminated union: `'load_balancer' | 'api_gateway' | 'server' | 'cache' | 'queue' | 'database' | 'websocket_gateway' | 'fanout' | 'cdn' | 'external' | 'autoscaler'`
 - `HealthState` — `'healthy' | 'warning' | 'critical' | 'crashed'`
 - `SimComponentData` — `{ type, label, config, health, metrics }`
-- `ComponentMetrics` — `{ rps, p50, p95, p99, errorRate, cpuPercent, memoryPercent, queueDepth?, cacheHitRate?, activeConnections?, shardDistribution? }`
+- `ComponentMetrics` — `{ rps, p50, p95, p99, errorRate, cpuPercent, memoryPercent, queueDepth?, cacheHitRate?, activeConnections?, shardDistribution?, readErrorRate?, writeErrorRate? }`. `readErrorRate` / `writeErrorRate` are **DB-only diagnostic** fields populated by `processDatabase` (Phase 4.3) — read/write sides saturate independently against `readThroughputRps × (1 + readReplicas)` and `writeThroughputRps` respectively, then `errorRate = max(readErrorRate, writeErrorRate, connectionPoolDropRate)`. Breakers, retry, and backpressure continue to read the aggregate `errorRate` (see Decisions §52); the split fields are strictly diagnostic and must not be consumed as a control signal. See Decisions §54 for the compromise.
 - `WireConfig` — `{ throughputRps, latencyMs, jitterMs }`
 - `CanonicalNode`, `CanonicalEdge`, `CanonicalGraph` — template / save format
 
