@@ -8,10 +8,23 @@
  * things collapse.
  *
  * Core modeling:
- * - M/M/1-per-instance queueing via Little's Law (see QueueingModel.ts)
- * - Zipfian working-set cache model (see WorkingSetCache.ts)
- * - Wire latency propagation (latency compounds per hop)
- * - Hot shard Pareto distribution when shard key is low-cardinality or user_id
+ * - Kingman G/G/1-per-instance queueing via Whitt 1993 two-moment (see
+ *   QueueingModel.ts). Defaults (`serviceVariance = 1.0`, steady arrivals
+ *   → `Cₐ² = 1.0`) reduce to M/M/1 exactly.
+ * - Zipfian working-set cache model (see WorkingSetCache.ts).
+ * - Wire latency propagation (latency compounds per hop).
+ * - Hot shard Pareto distribution, per-DB via `resolveShardKeyForDb` (§56).
+ * - Read/write split with diagnostic split errorRate fields (§54).
+ * - Unindexed-access latency multiplier (§55, `SCAN_FACTOR=10` locked to
+ *   preflight's user copy).
+ *
+ * Coordinated-omission: the engine is **CO-correct within 1-tick
+ * granularity** — `WireTickOutcome.dispatchedAtTickMs` is stamped at the
+ * upstream processor's emit time and carried through any `pendingInbound`
+ * cross-tick deferral, so saturated components' reported latency accounts
+ * for the scheduling delay, not just the wire hop. The 1-tick residual
+ * imprecision (tick interval = 1 sim-second) is the engine's bucket size,
+ * not an omission. See Decisions §59.
  *
  * Runs entirely in the browser. No backend simulation. The only server-side
  * code (api/*) is for LLM calls.
@@ -125,6 +138,18 @@ export interface WireTickOutcome {
   amplification: number;
   /** Target's acceptanceRate used to scale down (1 = pass-through, 0 = fully rejected). */
   appliedBackpressure: number;
+  /**
+   * Phase 4.8 — coordinated-omission-aware dispatch timestamp. Stamped
+   * with `this.time * 1000` (sim-seconds → ms) at the instant the
+   * upstream processor emits this wire outcome. Latency attribution
+   * downstream is computed against this value, NOT against whenever
+   * the request actually gets served — so a request deferred via
+   * `pendingInbound` one tick later reads (t_response − dispatchedAtTickMs)
+   * = wire latency + wait, not wire latency alone. See Decisions §59.
+   * "CO-correct within 1-tick granularity" — the tick-interval
+   * bucketing is the residual imprecision.
+   */
+  dispatchedAtTickMs: number;
 }
 
 /** Per-component inbound latency aggregator: numerator = Σ rps·accLat, denominator = Σ rps. */
@@ -377,6 +402,37 @@ export class SimulationEngine {
 
   isComplete(): boolean {
     return this.time >= this.trafficProfile.durationSeconds;
+  }
+
+  /**
+   * Phase 4.6 — Kingman arrival-variance prior. Maps the current traffic
+   * phase's `shape` to a squared coefficient of variation of interarrival
+   * times (Cₐ²):
+   *
+   *   - `steady`                         → 1.0 (Poisson-style, M/M/1 default)
+   *   - `ramp_up` / `ramp_down` / `spike` → 2.0 (mild burstiness)
+   *   - `instant_spike`                  → 4.0 (hard burstiness)
+   *
+   * This is a MODELED prior, not a measurement — the tick interval doesn't
+   * give us per-request arrival-gap samples. See Decisions §57 and the
+   * QueueingModel.ts file docstring for the rationale. Returns 1.0 when
+   * no phase covers `this.time` (no-traffic gap) — no burstiness applies
+   * to zero arrivals.
+   */
+  private getCurrentArrivalVariance(): number {
+    for (const phase of this.trafficProfile.phases) {
+      if (this.time >= phase.startS && this.time < phase.endS) {
+        switch (phase.shape) {
+          case 'steady': return 1.0;
+          case 'ramp_up':
+          case 'ramp_down':
+          case 'spike': return 2.0;
+          case 'instant_spike': return 4.0;
+          default: return 1.0;
+        }
+      }
+    }
+    return 1.0;
   }
 
   private getCurrentRps(): number {
@@ -800,6 +856,11 @@ export class SimulationEngine {
       rpsEffective: 0,
       amplification: 1,
       appliedBackpressure: 1,
+      // CO-aware dispatch timestamp — tick start in sim-ms. Requests
+      // deferred to `pendingInbound` keep this stamp through the
+      // cross-tick scheduling, so their reported end-to-end latency
+      // includes the extra tick delay (see §59).
+      dispatchedAtTickMs: this.time * 1000,
     };
 
     if (wire?.breaker?.status === 'open') {
@@ -1094,11 +1155,20 @@ export class SimulationEngine {
 
     const arrivalRateRps = rps / this.tickInterval;
 
+    // Phase 4.6 — Kingman G/G/1. `serviceVariance` is an optional config
+    // field; default 1.0 collapses the two-moment formula back to M/M/1
+    // exactly, preserving pre-Phase-4.6 behavior for every existing test.
+    // `arrivalVariance` comes from the tick's current traffic phase shape.
+    const serviceVariance = typeof state.config.serviceVariance === 'number'
+      ? (state.config.serviceVariance as number)
+      : 1.0;
     const q = computeQueueing({
       arrivalRateRps,
       processingTimeMs: processingTime,
       instanceCount: instances,
       maxConcurrentPerInstance: maxConcurrent,
+      arrivalVariance: this.getCurrentArrivalVariance(),
+      serviceVariance,
     });
 
     state.metrics.cpuPercent = q.utilization * 100;

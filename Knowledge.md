@@ -680,11 +680,21 @@ Decisions [§52](Decisions.md). Knowledge base [§40.6](system-design-knowledgeb
 - `mulberry32(seed)` — seeded PRNG for reproducible tests
 
 **Queueing math (src/engine/QueueingModel.ts):**
+
+Post Phase 4.6 (§57), Kingman G/G/1 two-moment (Whitt 1993) replaces M/M/1:
+
 - `ρ = arrivalRate / (instanceCount × serviceRate)`
-- `waitTime = procTime × ρ / (1 - ρ)` clamped at `procTime × 19`, total wait capped at 5000ms
+- `waitTime ≈ (ρ / (1-ρ)) × (Cₐ² + C_s²)/2 × procTime` clamped via effective ρ ≤ 0.95, total wait ≤ 5000ms
+  - `Cₐ²` (arrivalVariance) — modeled prior from the current `TrafficPhase.shape`: steady=1.0, ramp_up/ramp_down/spike=2.0, instant_spike=4.0
+  - `C_s²` (serviceVariance) — from component `config.serviceVariance`, default 1.0
+  - `Cₐ² = C_s² = 1.0` collapses to M/M/1 exactly (back-compat invariant)
 - p50 = 0.7 × totalLatency, p95 = 2×, p99 = 4×
 - Drop rate = `1 - 1/ρ` when ρ > 1
 - Concurrency cap: if `arrivalRate × totalLatency/1000 > maxConcurrent × instances`, additional drops
+
+**Coordinated-omission (§59):** the engine is CO-correct within 1-tick granularity. `WireTickOutcome.dispatchedAtTickMs` is stamped at `emitOutbound` and carried through `pendingInbound` cross-tick deferrals so a delivered-next-tick request reports `wireLatency + tickDelay`, not `wireLatency` alone.
+
+**Fan-out tail risk (§58):** pure UI. `FanoutTailSection` in `ConfigPanel.tsx` shows `P(at_least_one_slow) = 1 - (1 - p)^N` Dean-Barroso curve for scatter-gather components (LB, fanout, api_gateway). Synthetic threshold `p_single_slow = 0.01` is a UI prior — the engine doesn't measure per-request p99 at tick granularity.
 
 **Cache model (src/engine/WorkingSetCache.ts):**
 - Working set = `min(keyCardinality, rps × ttlSeconds)`

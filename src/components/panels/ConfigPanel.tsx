@@ -203,6 +203,13 @@ export default function ConfigPanel() {
           <AssignedTablesSection nodeId={selectedNode.id} disabled={isRunning} />
         )}
 
+        {/* Fan-out tail risk (Phase 4.7 §58) — shown for components that
+            scatter to many downstreams. Explains Dean-Barroso's
+            P(at_least_one_slow) = 1 - (1 - p)^N scaling inline. */}
+        {(data.type === 'load_balancer' || data.type === 'fanout' || data.type === 'api_gateway') && (
+          <FanoutTailSection config={config} fanoutSize={countDownstreams(selectedNode.id, edges)} />
+        )}
+
         {/* Retry policy — only for components that forward traffic downstream */}
         {canRetry(data.type) && (
           <RetryPolicySection nodeId={selectedNode.id} config={config} disabled={isRunning} />
@@ -514,6 +521,104 @@ function AssignedTablesSection({ nodeId, disabled }: { nodeId: string; disabled:
           ))}
         </select>
       )}
+    </div>
+  );
+}
+
+/**
+ * Phase 4.7 — count outbound fan-out from a node. For `fanout` components
+ * the meaningful scale is the configured `multiplier` (one inbound request
+ * becomes `multiplier` outbound messages); for LB / api_gateway / any
+ * scatter-gather the scale is the number of downstream wires. Falls back
+ * to 1 (no fan-out) when neither signal is present.
+ */
+function countDownstreams(
+  nodeId: string,
+  edges: Array<{ source: string }>,
+): number {
+  let n = 0;
+  for (const e of edges) if (e.source === nodeId) n += 1;
+  return Math.max(1, n);
+}
+
+/**
+ * Phase 4.7 / Decisions §58 — fan-out tail-risk explainer. Renders the
+ * Dean-Barroso "Tail at Scale" (CACM 2013) compounding math inline on
+ * the currently selected scatter-gather component:
+ *
+ *     P(at_least_one_slow) = 1 − (1 − p_single_slow)^N
+ *
+ * where N is the number of downstreams (or fanout multiplier) and
+ * `p_single_slow` defaults to 0.01 — a synthetic threshold chosen
+ * because the tick-aggregate engine doesn't give us a per-request p99
+ * threshold to derive `p_single_slow` from observed metrics (see
+ * §59 on CO-correctness). Users can edit the slider to explore; the
+ * SVG sparkline shows the curve across N = 1..max(N, 128).
+ *
+ * Pure UI — no engine changes. Render is static + memoizable; the
+ * component takes only the already-known `fanoutSize` and `config`.
+ */
+function FanoutTailSection({ config, fanoutSize }: {
+  config: Record<string, unknown>;
+  fanoutSize: number;
+}) {
+  // For a `fanout` component, prefer the configured multiplier — that's
+  // the scale that actually matters for tail compounding (one publish
+  // → `multiplier` deliveries). For other types use the outbound wire
+  // count. Clamp the max shown on the x-axis so the curve is readable
+  // even for a 2-downstream LB (min span of 128).
+  const multiplier = typeof config.multiplier === 'number' ? (config.multiplier as number) : 0;
+  const N = multiplier > 1 ? multiplier : fanoutSize;
+  const xMax = Math.max(128, N);
+
+  // Synthetic threshold default. Below the threshold is "fast", above
+  // is "slow" — Dean-Barroso use 10ms for `1%` in their paper. Document
+  // the choice inline so the user can sanity-check it.
+  const pSingleSlow = 0.01;
+
+  // Build ~60 sample points across 1..xMax on a log scale so we can see
+  // the elbow at small N and still reach 1000+.
+  const W = 220, H = 60, PAD = 4;
+  const points: Array<{ n: number; p: number; x: number; y: number }> = [];
+  const samples = 60;
+  for (let i = 0; i < samples; i++) {
+    const t = i / (samples - 1);
+    const n = Math.max(1, Math.round(Math.exp(t * Math.log(xMax))));
+    const p = 1 - Math.pow(1 - pSingleSlow, n);
+    const x = PAD + (Math.log(n) / Math.log(xMax)) * (W - 2 * PAD);
+    const y = H - PAD - p * (H - 2 * PAD);
+    points.push({ n, p, x, y });
+  }
+  const path = points.map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(1)} ${pt.y.toFixed(1)}`).join(' ');
+  const atN = 1 - Math.pow(1 - pSingleSlow, N);
+
+  return (
+    <div style={{ padding: '12px 0', borderTop: '1px solid var(--border-color)', marginTop: '12px' }}>
+      <div
+        className="font-medium"
+        style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginBottom: '8px' }}
+      >
+        Fan-out tail risk
+      </div>
+      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: '8px' }}>
+        With N = <strong style={{ color: 'var(--text-primary)' }}>{N}</strong> downstreams and p(slow)≈1% per call,
+        {' '}<strong style={{ color: 'var(--text-primary)' }}>{Math.round(atN * 100)}%</strong> of requests see at least one slow leg.
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', background: 'var(--bg-input)', borderRadius: 6 }}>
+        <path d={path} fill="none" stroke="var(--accent)" strokeWidth="1.5" />
+        {/* N marker */}
+        {(() => {
+          const mx = PAD + (Math.log(N) / Math.log(xMax)) * (W - 2 * PAD);
+          return (
+            <line x1={mx} y1={PAD} x2={mx} y2={H - PAD} stroke="var(--text-tertiary)" strokeDasharray="2 3" strokeWidth="0.5" />
+          );
+        })()}
+      </svg>
+      <div style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '6px', lineHeight: 1.5 }}>
+        P(slow) = 1 − (1 − 0.01)<sup>N</sup>. See Dean &amp; Barroso, "The Tail at Scale" (CACM 2013).
+        The 1% synthetic threshold is a UI prior — the engine doesn't measure a per-request p99 at
+        tick granularity (see Decisions §59).
+      </div>
     </div>
   );
 }

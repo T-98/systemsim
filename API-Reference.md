@@ -616,6 +616,10 @@ new SimulationEngine(
   trafficProfile: TrafficProfile,
   schemaShardKey?: string,                              // LEGACY fallback (Phase 4.5 §56); prefer routingContext.schemaMemory
   schemaShardKeyCardinality?: 'low' | 'medium' | 'high', // LEGACY fallback (Phase 4.5 §56)
+  // Per-component: `config.serviceVariance?: number` (Phase 4.6 §57) — C_s² for Kingman,
+  // defaults to 1.0 (exponential service, M/M/1-equivalent). Set to <1 for near-deterministic,
+  // >1 for long-tailed services. `config.multiplier?: number` on `fanout` components drives
+  // the N displayed in the fan-out tail risk viz (Phase 4.7 §58).
   seed?: number,                                        // for reproducible tests
   stressedMode = false,                                 // worst-case run
   routingContext?: RoutingContext,                      // Phase 4: per-endpoint routing + schema

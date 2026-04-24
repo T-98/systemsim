@@ -192,7 +192,14 @@ Five commits, each reviewable:
   - `partitionKeyCardinalityWarning === true` overrides the field's own cardinality.
   - 5 new tests in [engineShardCardinality.test.ts](src/engine/__tests__/engineShardCardinality.test.ts). Full suite 394/394.
   - [API-Reference.md](API-Reference.md) marks `schemaShardKey`/`schemaShardKeyCardinality` as legacy fallbacks; Decisions [§56](Decisions.md), [Knowledge.md](Knowledge.md) updated. Codex unavailable → adversarial review deferred.
-- [ ] **Commit 5 — `feat(engine): Kingman G/G/1 + fan-out tail viz + dispatch-timestamp plumbing`**
+- [x] **Commit 5 — `feat(engine): Kingman G/G/1 + fan-out tail viz + dispatch-timestamp plumbing`** (2026-04-24)
+  - **Kingman:** `QueueingModel.computeQueueing` replaces M/M/1 with Whitt 1993 two-moment. `serviceVariance` (new optional config, default 1.0) and `arrivalVariance` (from phase shape — `getCurrentArrivalVariance()`) feed the formula. Degenerate case Cₐ²=C_s²=1.0 reproduces M/M/1 exactly — all 394 pre-Commit-5 tests keep passing.
+  - **Fan-out tail viz:** `FanoutTailSection` in ConfigPanel.tsx — pure UI, Dean-Barroso `P = 1 - (1-p)^N` curve with synthetic `p_single_slow=0.01` threshold; N = fanout multiplier OR outbound wire count.
+  - **CO plumbing:** `WireTickOutcome.dispatchedAtTickMs` stamped at emit time; engine docstring claim downgraded from "CO-safe by construction" to "CO-correct within 1-tick granularity."
+  - 11 new tests split across `engineKingman.test.ts` (6) and `engineFanoutTail.test.ts` (6 — two files have 5 and 6 respectively, total 11). Full suite 405/405.
+  - Playwright `simfid-phase4-schema-driven.spec.ts` created (2 tests: unindexed-scan callout fires; indexed regression guard). Not run in this sandbox — Playwright deferred to user's real machine.
+  - Decisions [§57](Decisions.md), [§58](Decisions.md), [§59](Decisions.md); [Knowledge.md](Knowledge.md) queueing + CO + fan-out sections; [API-Reference.md](API-Reference.md) constructor annotations.
+  - Codex unavailable → adversarial review deferred to end-of-phase subagent.
 
 **Handoff doc for agents continuing Commits 2–5:** [`docs/plans/2026-04-23-simfid-phase4-handoff.md`](docs/plans/2026-04-23-simfid-phase4-handoff.md).
 
