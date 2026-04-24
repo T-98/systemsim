@@ -700,7 +700,19 @@ export class SimulationEngine {
       source: w.source,
       target: w.target,
     }));
-    const { order, backEdges } = topologicalOrder(edgesForTopo, this.entryPoints);
+    // Topological roots = explicit entry points ∪ every route's chain head.
+    // Without the chain heads, a route whose `componentChain[0]` isn't in
+    // `entryPoints` (common when `setApiContracts` falls back to
+    // `[ownerServiceId]` while the graph is still incomplete) would be
+    // seeded in Phase A but run only in the Map-insertion-order catch-all
+    // below — producing a persistent one-tick lag and order-dependent
+    // downstream metrics. See Decisions §62 / codex round 3.
+    const topoRoots = new Set<string>(this.entryPoints);
+    for (const route of this.endpointRoutes) {
+      const head = route.componentChain[0];
+      if (head && this.components.has(head)) topoRoots.add(head);
+    }
+    const { order, backEdges } = topologicalOrder(edgesForTopo, Array.from(topoRoots));
 
     // Seed inbound traffic for this tick. Per-endpoint routing via
     // `endpointRoutes` + `requestMix` when available; legacy even-split over
@@ -1421,10 +1433,36 @@ export class SimulationEngine {
     if (totalInboundRps <= 0 || this.endpointRoutes.length === 0) return 0;
     let entryShareToDb = 0;
     for (const route of this.endpointRoutes) {
-      if (!route.componentChain.includes(dbId)) continue;
+      if (!this.routeReachesDbInLiveGraph(route, dbId)) continue;
       entryShareToDb += this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
     }
     return entryShareToDb > 0 ? totalInboundRps / entryShareToDb : 0;
+  }
+
+  /**
+   * True iff `route.componentChain` is still a faithful prefix-path in the
+   * current live graph up to and including `dbId`. Used to skip stale
+   * routes from DB attribution — a route whose chain says `['svc', 'db']`
+   * after the svc→db edge was removed would otherwise project its entry
+   * share onto whatever traffic the DB currently receives and fire phantom
+   * saturation / scan diagnostics. Codex round 3 [P1].
+   *
+   * Cheap — a handful of Map lookups per route. Called inside the DB
+   * processor's attribution loops, which only run when routes are present.
+   */
+  private routeReachesDbInLiveGraph(route: EndpointRoute, dbId: string): boolean {
+    const chain = route.componentChain;
+    const dbIdx = chain.indexOf(dbId);
+    if (dbIdx < 0) return false;
+    if (!this.components.has(chain[0])) return false;
+    for (let i = 0; i < dbIdx; i++) {
+      const src = chain[i];
+      const tgt = chain[i + 1];
+      if (!this.components.has(tgt)) return false;
+      const succ = this.adjacency.get(src) ?? [];
+      if (!succ.includes(tgt)) return false;
+    }
+    return true;
   }
 
   private computeDbReadWriteBreakdown(
@@ -1465,7 +1503,7 @@ export class SimulationEngine {
     // Codex [P1a].
     let attributedRpsAtDb = 0;
     for (const route of this.endpointRoutes) {
-      if (!route.componentChain.includes(dbId)) continue;
+      if (!this.routeReachesDbInLiveGraph(route, dbId)) continue;
       const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
       if (entryShare <= 0) continue;
       const dbShare = entryShare * dbArrivalFactor;
@@ -1717,7 +1755,7 @@ export class SimulationEngine {
       // Decisions §60.
       let unindexedSum = 0;
       for (const route of this.endpointRoutes) {
-        if (!route.componentChain.includes(state.id)) continue;
+        if (!this.routeReachesDbInLiveGraph(route, state.id)) continue;
         const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
         if (entryShare <= 0) continue;
         const dbShare = entryShare * scanArrivalFactor;

@@ -251,6 +251,99 @@ describe('Phase 4.3 — DB read/write split with diagnostic errorRate fields', (
     expect(db.errorRate).toBeCloseTo(db.readErrorRate!, 4);
   });
 
+  it('a stale route chain (svc→db edge removed) does NOT project attribution onto the live DB (codex round 3 [P2])', () => {
+    // Two routes attempt to reach `db`. `ep-legit` flows through `svc2 → db`
+    // which is a real edge. `ep-stale` has chain ['svc1', 'db'] but the
+    // svc1→db edge was never wired (graph-edit scenario the round-3
+    // review named). Pre-fix, ep-stale's entry share polluted
+    // dbArrivalFactor, and its `indexed: false` TableAccess would fire a
+    // phantom unindexed-scan callout + scale down the read attribution
+    // for ep-legit via over-sized entryShareToDb. Post-fix, stale routes
+    // are filtered from attribution via routeReachesDbInLiveGraph.
+    const nodes = [
+      node('svc1', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('svc2', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('db', 'database', {
+        readThroughputRps: 1000,
+        writeThroughputRps: 1000,
+        readReplicas: 0,
+        connectionPoolSize: 10_000,
+      }),
+    ];
+    // Only svc2 → db is wired. svc1 has no outbound edge.
+    const edges = [edge('svc2-db', 'svc2', 'db')];
+    const routes: EndpointRoute[] = [
+      {
+        endpointId: 'ep-legit',
+        componentChain: ['svc2', 'db'],
+        tablesAccessed: [{ tableId: 'events', mode: 'read', indexed: true }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+      {
+        endpointId: 'ep-stale',
+        componentChain: ['svc1', 'db'], // stale: svc1→db edge doesn't exist.
+        tablesAccessed: [{ tableId: 'events', mode: 'write', indexed: true }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+    ];
+    const mix = { 'ep-legit': 0.5, 'ep-stale': 0.5 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(500, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, schemaMemory: schema([entity('events', 'db')]), requestMix: mix },
+    );
+    const { metrics } = engine.tick();
+    // Only ep-legit's 250 rps actually reaches the DB. Its mode is 'read',
+    // so routedReadRps = 250 (dbArrivalFactor = 250/250 = 1 — stale route
+    // excluded from entryShareToDb). writeErrorRate must stay 0 — the stale
+    // write route no longer attributes load the DB isn't seeing.
+    expect(metrics.db.writeErrorRate!).toBeCloseTo(0, 3);
+    expect(metrics.db.readErrorRate!).toBeCloseTo(0, 3);
+  });
+
+  it('route heads that are not graph entry points still process in topological order (codex round 3 [P1])', () => {
+    // Graph: isolated node `side` → `sideDb`, no connection to the actual
+    // entry point `main`. Route seeds traffic into `side` via
+    // componentChain[0]. Pre-fix, `side` and `sideDb` would run only in
+    // the Map-insertion-order catch-all; if `sideDb` was inserted first,
+    // it would process 0 RPS this tick (persistent 1-tick lag). Post-fix,
+    // `side` is added to topoRoots so the ordering is deterministic and
+    // `sideDb` sees the forwarded traffic the same tick.
+    const nodes = [
+      // Intentional insertion order: sideDb BEFORE side, so the catch-all
+      // loop would process sideDb first without the fix.
+      node('main', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('sideDb', 'database', {
+        readThroughputRps: 1_000_000,
+        writeThroughputRps: 1_000_000,
+        readReplicas: 0,
+        connectionPoolSize: 10_000,
+      }),
+      node('side', 'api_gateway', { isEntry: false, rateLimitRps: 1_000_000 }),
+    ];
+    const edges = [edge('side-sidedb', 'side', 'sideDb')];
+    const routes: EndpointRoute[] = [
+      {
+        endpointId: 'ep-side',
+        componentChain: ['side', 'sideDb'],
+        tablesAccessed: [{ tableId: 'events', mode: 'write', indexed: true }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+    ];
+    const mix = { 'ep-side': 1 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(100, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, schemaMemory: schema([entity('events', 'sideDb')]), requestMix: mix },
+    );
+    const { metrics } = engine.tick();
+    // Routed head → DB on the SAME tick, not with a one-tick lag.
+    expect(metrics.sideDb.rps).toBeCloseTo(100, 0);
+  });
+
   it('read_write share is counted ONCE in the remainder calculation, not twice (codex round 2 [P1a])', () => {
     // Before the round-2 fix, `attributedRps = routedReadRps + routedWriteRps`
     // double-counted `read_write` shares (they land in BOTH buckets), shrinking
