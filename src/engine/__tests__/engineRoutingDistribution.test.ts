@@ -178,6 +178,45 @@ describe('Phase 4.2 — per-endpoint traffic distribution', () => {
     expect(metrics.inboxSvc.rps).toBeCloseTo(200, 0);
   });
 
+  it('treats duplicate "METHOD PATH" across contracts as ambiguous (no silent misroute)', () => {
+    // Two contracts declaring the same POST /checkout → engine must NOT pick
+    // one arbitrarily. The ambiguous key falls to the default bucket with a
+    // one-shot warning. A third endpoint "GET /status" still routes normally.
+    const nodes = [
+      node('svcA', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('svcB', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('statusSvc', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+    ];
+    const edges: Edge<{ config: WireConfig }>[] = [];
+    const contracts: ApiContract[] = [
+      { id: 'c-a', method: 'POST', path: '/checkout', description: '', authMode: 'none', ownerServiceId: 'svcA' },
+      { id: 'c-b', method: 'POST', path: '/checkout', description: '', authMode: 'none', ownerServiceId: 'svcB' },
+      { id: 'c-s', method: 'GET',  path: '/status',   description: '', authMode: 'none', ownerServiceId: 'statusSvc' },
+    ];
+    const routes: EndpointRoute[] = [
+      { endpointId: 'c-a', componentChain: ['svcA'], tablesAccessed: [], weight: 1, estimatedPayloadBytes: 0 },
+      { endpointId: 'c-b', componentChain: ['svcB'], tablesAccessed: [], weight: 1, estimatedPayloadBytes: 0 },
+      { endpointId: 'c-s', componentChain: ['statusSvc'], tablesAccessed: [], weight: 1, estimatedPayloadBytes: 0 },
+    ];
+    const mix = { 'POST /checkout': 0.6, 'GET /status': 0.4 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(1000, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, requestMix: mix, apiContracts: contracts },
+    );
+    const { metrics, newLogs } = engine.tick();
+    // /status gets its 0.4 share = 400 rps → statusSvc.
+    // /checkout's 0.6 share is ambiguous → default bucket → even-split over
+    // all three entry points = 200 each. So:
+    //   svcA = 0 (no valid routed share) + 200 (default) = 200
+    //   svcB = same = 200
+    //   statusSvc = 400 (routed) + 200 (default) = 600
+    expect(metrics.svcA.rps).toBeCloseTo(200, 0);
+    expect(metrics.svcB.rps).toBeCloseTo(200, 0);
+    expect(metrics.statusSvc.rps).toBeCloseTo(600, 0);
+    expect(newLogs.some((l) => l.message.includes('ambiguous') && l.message.includes('POST /checkout'))).toBe(true);
+  });
+
   it('redistributes a stale chain head\'s share across remaining valid endpoints', () => {
     // `ghost` references a node that isn't in the graph. Its 0.25 share must NOT
     // be dropped — it redistributes proportionally across real endpoints.

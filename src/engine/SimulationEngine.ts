@@ -433,20 +433,35 @@ export class SimulationEngine {
     // Pass 1 — partition requestMix into matched vs unmatched. A key matches if
     // it equals an endpointId (uuid shape) OR if it matches the "METHOD PATH"
     // form of the route's ApiContract (path-string shape, what checked-in
-    // scenarios like `src/scenarios/discord.ts` author).
+    // scenarios like `src/scenarios/discord.ts` author). Ambiguous "METHOD PATH"
+    // (two contracts sharing the same method+path, which is a data bug in the
+    // user's design) is treated as unmatched + warned, not silently misrouted.
     const matched: Array<{ route: EndpointRoute; weight: number }> = [];
     let unmatchedWeight = 0;
     if (this.requestMix) {
-      const byMethodPath = new Map<string, EndpointRoute>();
+      const byMethodPath = new Map<string, EndpointRoute | null>();
       for (const contract of this.apiContracts) {
         const route = this.endpointRoutes.find((r) => r.endpointId === contract.id);
         if (!route) continue;
-        byMethodPath.set(`${contract.method} ${contract.path}`, route);
+        const key = `${contract.method} ${contract.path}`;
+        byMethodPath.set(key, byMethodPath.has(key) ? null : route);
       }
       for (const [key, weight] of Object.entries(this.requestMix)) {
         if (!Number.isFinite(weight) || weight <= 0) continue;
-        const route =
-          this.endpointRoutes.find((r) => r.endpointId === key) ?? byMethodPath.get(key);
+        const idMatch = this.endpointRoutes.find((r) => r.endpointId === key);
+        const pathMatch = idMatch ? undefined : byMethodPath.get(key);
+        if (pathMatch === null) {
+          // Ambiguous METHOD+PATH — fall through to default bucket + warn once.
+          this.fireCallout(
+            logs,
+            key,
+            `routing-ambiguous:${key}`,
+            `Two or more API contracts share "${key}" — requestMix key "${key}" is ambiguous, falling back to default bucket at t=${Math.round(this.time)}s`,
+          );
+          unmatchedWeight += weight;
+          continue;
+        }
+        const route = idMatch ?? pathMatch;
         if (route) matched.push({ route, weight });
         else unmatchedWeight += weight;
       }
