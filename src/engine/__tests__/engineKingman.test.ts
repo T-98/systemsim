@@ -150,6 +150,50 @@ describe('Phase 4.6 — Kingman G/G/1 via Whitt 1993 two-moment', () => {
     expect(deterministic.waitTimeMs / mm1.waitTimeMs).toBeCloseTo(0.55, 2);
   });
 
+  it('stressed mode pulls arrival variance from the peak phase, not the current-time phase (codex round 5 [P2])', () => {
+    // Profile: steady (Cₐ²=1.0) at t=0..1, then peak instant_spike (Cₐ²=4.0)
+    // at t=1..5. Stressed mode runs at peak RPS for the ENTIRE duration.
+    // Pre-fix: the first tick at t=0 uses steady-phase Cₐ²=1.0 while
+    // running at peak RPS → Kingman underestimates wait. Post-fix: peak
+    // RPS phase's Cₐ²=4.0 is used from t=0 onwards.
+    const nodes = [node('s', 'server', { isEntry: true, processingTimeMs: 10, maxConcurrent: 1000 })];
+    const edges: Edge<{ config: WireConfig }>[] = [];
+    const profile: TrafficProfile = {
+      profileName: 'kg-stressed',
+      durationSeconds: 5,
+      jitterPercent: 0,
+      phases: [
+        { startS: 0, endS: 1, rps: 40,  shape: 'steady' as const,         description: 'calm' },
+        { startS: 1, endS: 5, rps: 80,  shape: 'instant_spike' as const,  description: 'peak' },
+      ],
+      requestMix: { default: 1 },
+      userDistribution: 'uniform',
+    } as unknown as TrafficProfile;
+    // stressedMode = true → peak RPS (80) held full run.
+    const stressedEng = new SimulationEngine(nodes, edges, profile, undefined, undefined, SEED, true);
+    // A tick at t=0 — pre-fix this would use the steady phase's Cₐ²=1.
+    const { metrics: stressedMetrics } = stressedEng.tick();
+    // Reference: same peak RPS with an explicit instant_spike-only profile.
+    // Both should produce roughly the same p99 in the first tick when the
+    // fix is in place.
+    const peakOnly: TrafficProfile = {
+      profileName: 'kg-peakonly',
+      durationSeconds: 5,
+      jitterPercent: 0,
+      phases: [{ startS: 0, endS: 5, rps: 80, shape: 'instant_spike' as const, description: 'peak' }],
+      requestMix: { default: 1 },
+      userDistribution: 'uniform',
+    } as unknown as TrafficProfile;
+    const peakOnlyEng = new SimulationEngine(nodes, edges, peakOnly, undefined, undefined, SEED, false);
+    const { metrics: peakOnlyMetrics } = peakOnlyEng.tick();
+    // The stressed-mode p99 should be close to the direct-peak-spike p99
+    // (variance aligned). Previously, stressed at t=0 used Cₐ²=1 while
+    // peak-only used Cₐ²=4, so stressed.p99 would be ~2/5 of peakOnly.p99.
+    const ratio = stressedMetrics.s.p99 / peakOnlyMetrics.s.p99;
+    expect(ratio).toBeGreaterThan(0.9);
+    expect(ratio).toBeLessThan(1.1);
+  });
+
   it('zero arrival rate returns zero wait regardless of variance params', () => {
     const q = computeQueueing({
       arrivalRateRps: 0,

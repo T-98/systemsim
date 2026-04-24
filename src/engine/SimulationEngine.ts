@@ -420,17 +420,40 @@ export class SimulationEngine {
    * to zero arrivals.
    */
   private getCurrentArrivalVariance(): number {
-    for (const phase of this.trafficProfile.phases) {
-      if (this.time >= phase.startS && this.time < phase.endS) {
-        switch (phase.shape) {
-          case 'steady': return 1.0;
-          case 'ramp_up':
-          case 'ramp_down':
-          case 'spike': return 2.0;
-          case 'instant_spike': return 4.0;
-          default: return 1.0;
+    const shapeToCa2 = (shape: string): number => {
+      switch (shape) {
+        case 'steady': return 1.0;
+        case 'ramp_up':
+        case 'ramp_down':
+        case 'spike': return 2.0;
+        case 'instant_spike': return 4.0;
+        default: return 1.0;
+      }
+    };
+    if (this.stressedMode) {
+      // Stressed mode holds peak RPS from across ALL phases — the Cₐ² must
+      // come from the SAME phase as the peak, not from `this.time`'s phase.
+      // Otherwise a stressed run that peaks in a later `instant_spike`
+      // phase would simulate early ticks at peak RPS with steady-phase
+      // Cₐ²=1, and Kingman would materially underestimate the queueing
+      // delay in the mode that's supposed to be worst-case. Codex round
+      // 5 [P2]. If multiple phases share the peak, the worst-burstiness
+      // (highest Cₐ²) wins.
+      let peakRps = 0;
+      let peakCa2 = 1.0;
+      for (const phase of this.trafficProfile.phases) {
+        const phaseCa2 = shapeToCa2(phase.shape);
+        if (phase.rps > peakRps) {
+          peakRps = phase.rps;
+          peakCa2 = phaseCa2;
+        } else if (phase.rps === peakRps && phaseCa2 > peakCa2) {
+          peakCa2 = phaseCa2;
         }
       }
+      return peakCa2;
+    }
+    for (const phase of this.trafficProfile.phases) {
+      if (this.time >= phase.startS && this.time < phase.endS) return shapeToCa2(phase.shape);
     }
     return 1.0;
   }
@@ -569,15 +592,32 @@ export class SimulationEngine {
     const valid: Array<{ route: EndpointRoute; weight: number }> = [];
     let invalidWeight = 0;
     for (const m of matched) {
-      const head = m.route.componentChain[0];
-      if (head && this.components.has(head)) valid.push(m);
-      else {
+      const chain = m.route.componentChain;
+      const head = chain[0];
+      // Whole-chain validity. Seeding into a chain whose head still exists
+      // but whose downstream edges were removed / never wired would bypass
+      // the real graph entirely — a newly-added upstream gateway/LB would
+      // see 0 RPS while the stale chain's head absorbed the full endpoint
+      // load. Codex round 5 [P1]. Walk consecutive pairs against the live
+      // adjacency; if any pair is broken OR any node is missing, the
+      // route is stale.
+      let chainValid = Boolean(head && this.components.has(head));
+      if (chainValid) {
+        for (let i = 0; i < chain.length - 1; i++) {
+          if (!this.components.has(chain[i + 1])) { chainValid = false; break; }
+          const succ = this.adjacency.get(chain[i]) ?? [];
+          if (!succ.includes(chain[i + 1])) { chainValid = false; break; }
+        }
+      }
+      if (chainValid) {
+        valid.push(m);
+      } else {
         invalidWeight += m.weight;
         this.fireCallout(
           logs,
           head ?? m.route.endpointId,
           `routing-stale:${m.route.endpointId}`,
-          `Endpoint ${m.route.endpointId} references node "${head ?? '<empty>'}" that isn't on the graph — redistributing its share across valid endpoints at t=${Math.round(this.time)}s`,
+          `Endpoint ${m.route.endpointId} chain ${JSON.stringify(chain)} no longer matches the live graph — redistributing its share across valid endpoints at t=${Math.round(this.time)}s`,
         );
       }
     }

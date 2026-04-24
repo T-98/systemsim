@@ -217,6 +217,43 @@ describe('Phase 4.2 — per-endpoint traffic distribution', () => {
     expect(newLogs.some((l) => l.message.includes('ambiguous') && l.message.includes('POST /checkout'))).toBe(true);
   });
 
+  it('a broken mid-chain edge is treated as stale — seed traffic does NOT bypass missing upstream components (codex round 5 [P1])', () => {
+    // Graph: gateway → svc, svc → anotherDownstream (but NOT gateway → svc
+    // through the edge the route's chain implies). Chain says `[gateway, svc]`
+    // but gateway→svc edge is absent. Pre-fix the seed would still inject
+    // at `gateway` (head valid), so the chain's implied path bypasses a
+    // hypothetical upstream the user just added. Post-fix, the route is
+    // detected as stale and its share redistributes — flagged via the
+    // `routing-stale:<endpointId>` callout.
+    const nodes = [
+      node('gateway', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('svc', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('realEntry', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+    ];
+    // Critical: gateway has NO outbound edge to svc. The chain [gateway, svc]
+    // is stale relative to this live graph.
+    const edges: Edge<{ config: WireConfig }>[] = [];
+    const routes: EndpointRoute[] = [
+      route('ep_stale', ['gateway', 'svc'], 1),
+      route('ep_live',  ['realEntry'],      1),
+    ];
+    const engine = new SimulationEngine(
+      nodes, edges, profile(1000, { ep_stale: 0.5, ep_live: 0.5 }),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, requestMix: { ep_stale: 0.5, ep_live: 0.5 } },
+    );
+    const { metrics, newLogs } = engine.tick();
+    // Stale route's share (500 rps) redistributes to the only valid endpoint,
+    // so realEntry sees the full 1000 rps.
+    expect(metrics.realEntry.rps).toBeCloseTo(1000, 0);
+    // gateway and svc see zero — the stale chain does NOT bypass the rest
+    // of the graph.
+    expect(metrics.gateway.rps).toBeCloseTo(0, 0);
+    expect(metrics.svc.rps).toBeCloseTo(0, 0);
+    // Callout fires once with the endpoint id + chain.
+    expect(newLogs.some((l) => l.message.includes('ep_stale'))).toBe(true);
+  });
+
   it('redistributes a stale chain head\'s share across remaining valid endpoints', () => {
     // `ghost` references a node that isn't in the graph. Its 0.25 share must NOT
     // be dropped — it redistributes proportionally across real endpoints.
