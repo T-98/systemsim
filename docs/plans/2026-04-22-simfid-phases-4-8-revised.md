@@ -152,6 +152,32 @@ Five commits, each reviewable:
 4. `feat(engine): per-DB shard cardinality from schemaMemory`
 5. `feat(engine): Kingman G/G/1 + fan-out tail viz + dispatch-timestamp plumbing`
 
+### 4.11 Progress log (updated 2026-04-23)
+
+- [x] **Commit 1 — `9770776` `feat(engine): routing context + per-endpoint traffic distribution`** (2026-04-22)
+  - `RoutingContext` exported from [SimulationEngine.ts](src/engine/SimulationEngine.ts), threaded through [useSimulation.ts](src/engine/useSimulation.ts).
+  - `seedInboundTraffic` / `seedAt` helpers replace the legacy even-split seed.
+  - Fallback layering as specified in §4.2 — matched `requestMix` → `EndpointRoute.weight` → legacy even-split.
+  - Stale `componentChain[0]` fires one-shot `routing-stale:<endpointId>` callout + redistributes share.
+  - 5 new tests in [engineRoutingDistribution.test.ts](src/engine/__tests__/engineRoutingDistribution.test.ts). Full suite 376/376.
+  - Decisions [§53](Decisions.md), [Knowledge.md](Knowledge.md), [API-Reference.md](API-Reference.md) updated.
+- [x] **Commit 1.5 — `70d4169` `fix(engine): requestMix matches "METHOD PATH" via ApiContract join`** (codex-flagged)
+  - Codex review caught a feature cliff: `EndpointRoute.endpointId` is the uuid from `ApiContract.id`, but checked-in scenarios like [`src/scenarios/discord.ts`](src/scenarios/discord.ts) author `requestMix` keyed on `"POST /event/everyone"`. Keys silently fell through to even-split.
+  - Fix: extended `RoutingContext` with `apiContracts?: ApiContract[]`. Matcher tries `endpointId` first, then `"METHOD PATH"` via the contract join.
+  - Also cleaned a dead `effectiveDefault` local in the all-stale redistribution path (same review NIT).
+  - +1 test covering the Discord-shape case. Full suite 377/377.
+- [x] **Commit 1.6 — `9538f23` `fix(engine): treat duplicate "METHOD PATH" as ambiguous, not last-wins`** (codex-flagged)
+  - Codex re-review caught a silent-misroute hole: `byMethodPath.set(...)` would overwrite on collision.
+  - Fix: null-sentinel pattern. Duplicate METHOD+PATH keys poison the map entry; at match time `null` fires `routing-ambiguous:<key>` and the weight falls into the default bucket.
+  - +1 test covering the ambiguous case. Full suite 378/378.
+  - Codex final re-review on `9538f23` returned NIT only (un-routed duplicate contracts don't trigger ambiguity — policy call, accepted: an un-routed duplicate has no destination, so there's only one valid target for the mix key regardless).
+- [ ] **Commit 2 — `feat(engine): read/write split with split error fields`** (next)
+- [ ] **Commit 3 — `feat(engine): index coverage → latency multiplier (10x, matches preflight)`**
+- [ ] **Commit 4 — `feat(engine): per-DB shard cardinality from schemaMemory`**
+- [ ] **Commit 5 — `feat(engine): Kingman G/G/1 + fan-out tail viz + dispatch-timestamp plumbing`**
+
+**Handoff doc for agents continuing Commits 2–5:** [`docs/plans/2026-04-23-simfid-phase4-handoff.md`](docs/plans/2026-04-23-simfid-phase4-handoff.md).
+
 ---
 
 ## Phase 8a — BOTE calculator + `calibration.json` scaffolding (pulled forward)
