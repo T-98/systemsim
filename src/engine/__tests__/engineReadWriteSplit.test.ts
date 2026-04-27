@@ -251,6 +251,57 @@ describe('Phase 4.3 — DB read/write split with diagnostic errorRate fields', (
     expect(db.errorRate).toBeCloseTo(db.readErrorRate!, 4);
   });
 
+  it('fanout-amplified writes saturate the DB — aggregate errorRate reflects real load (codex round 8 [P1])', () => {
+    // Codex desktop review of phase4-final-convergence flagged that the
+    // round-4 dbArrivalFactor cap silently breaks the aggregate control
+    // signal in fanout-write topologies (Discord-style). Codex's worked
+    // example: route svc → fanout(multiplier=10) → db with entry=100 rps
+    // sends 1000 writes to a writeCap=500 DB. Pre-fix, the cap clamped
+    // routed share to 100, then 30% of 900 fallback writes = 270, total
+    // 370/500 = 74% util → writeErrorRate=0, aggregate errorRate=0 →
+    // breakers/BP miss real saturation. Post-fix, routeStaticAmplification
+    // counts the route's amplified share (100 × 10 = 1000) so the
+    // attribution lands at 1000/500 = 200% → writeErrorRate ≈ 0.5.
+    const nodes = [
+      node('svc', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('fan', 'fanout', { multiplier: 10, deliveryMode: 'parallel' }),
+      node('db', 'database', {
+        readThroughputRps: 1_000_000,
+        writeThroughputRps: 500,
+        readReplicas: 0,
+        connectionPoolSize: 100_000,
+      }),
+    ];
+    const edges = [
+      edge('svc-fan', 'svc', 'fan'),
+      edge('fan-db', 'fan', 'db'),
+    ];
+    const routes: EndpointRoute[] = [
+      {
+        endpointId: 'ep-fanout-write',
+        componentChain: ['svc', 'fan', 'db'],
+        tablesAccessed: [{ tableId: 'events', mode: 'write', indexed: true }],
+        weight: 1,
+        estimatedPayloadBytes: 0,
+      },
+    ];
+    const mix = { 'ep-fanout-write': 1 };
+    const engine = new SimulationEngine(
+      nodes, edges, profile(100, mix),
+      undefined, undefined, SEED, false,
+      { endpointRoutes: routes, schemaMemory: schema([entity('events', 'db')]), requestMix: mix },
+    );
+    const { metrics } = engine.tick();
+    // DB sees fanout-amplified 1000 rps. 1000/500 cap → 200% util → errorRate
+    // saturates above the (util-1)×0.5 floor — pin > 0 to catch the bug
+    // without over-specifying the exact saturation curve.
+    expect(metrics.db.rps).toBeCloseTo(1000, 0);
+    expect(metrics.db.writeErrorRate!).toBeGreaterThan(0.2);
+    // Aggregate errorRate carries the worst side — breakers / retry / BP
+    // (which read state.metrics.errorRate per §52) now correctly trip.
+    expect(metrics.db.errorRate).toBeGreaterThan(0.2);
+  });
+
   it('dbArrivalFactor caps at 1 so default-bucket traffic is not absorbed into routed attribution (codex round 4 [P1])', () => {
     // 10% routed write + 90% default-bucket traffic at the same DB. Without
     // the cap, dbArrivalFactor would be totalInboundRps / routedEntryShare

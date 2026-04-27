@@ -1522,23 +1522,61 @@ export class SimulationEngine {
    */
   private computeDbArrivalFactor(dbId: string, totalInboundRps: number): number {
     if (totalInboundRps <= 0 || this.endpointRoutes.length === 0) return 0;
-    let entryShareToDb = 0;
+    let amplifiedEntryShareToDb = 0;
     for (const route of this.endpointRoutes) {
       if (!this.routeReachesDbInLiveGraph(route, dbId)) continue;
-      entryShareToDb += this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+      const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+      amplifiedEntryShareToDb += entryShare * this.routeStaticAmplificationToNode(route, dbId);
     }
-    if (entryShareToDb <= 0) return 0;
+    if (amplifiedEntryShareToDb <= 0) return 0;
     // Cap at 1 — the factor can scale routes' DB share DOWN (upstream filters
-    // like cache hits) but NEVER UP beyond what was seeded. The "up" case
-    // would misattribute default-bucket or unmatched-mix traffic onto
-    // whatever read/write/indexed metadata the matched routes happen to
-    // carry — a DB with 10% routed writes + 90% default traffic would be
-    // simulated as 100% writes. The caller's 70/30 remainder path handles
-    // whatever totalInboundRps exceeds the routed entry share. Codex round 4
-    // [P1]. Loses fan-out amplification modeling for routes whose chain
-    // crosses a fanout node — acceptable; Phase 4.7 fan-out viz is a UI
-    // signal, not an engine-attribution primitive.
-    return Math.min(1, totalInboundRps / entryShareToDb);
+    // like cache hits) but NEVER UP beyond what the route is statically
+    // configured to deliver. The "up" case would misattribute default-bucket
+    // or unmatched-mix traffic onto whatever read/write/indexed metadata the
+    // matched routes happen to carry — a DB with 10% routed writes + 90%
+    // default traffic would be simulated as 100% writes. The caller's 70/30
+    // remainder path handles whatever totalInboundRps exceeds the routed
+    // share. Codex round 4 [P1].
+    //
+    // Round-8 fix (Decisions §66): the denominator multiplies entry shares
+    // by `routeStaticAmplificationToNode` so fanout-amplified routes are
+    // counted at their actually-delivered share, not their seeded entry
+    // share. Without this, `svc → fanout(10) → db` with 100 entry-rps would
+    // attribute 100 writes against a DB receiving 1000 — silently hiding
+    // saturation when capacity sits between 100 and 1000.
+    return Math.min(1, totalInboundRps / amplifiedEntryShareToDb);
+  }
+
+  /**
+   * Static amplification factor for a route's chain prefix from
+   * `componentChain[0]` up to (but not including) `targetId`. Reads each
+   * intermediate component's CONFIGURED amplification — currently only
+   * `fanout.config.multiplier` (other component types are 1:1 in their
+   * static config; their dynamic effects like cache-hit-rate filtering are
+   * captured by the `dbArrivalFactor < 1` clamp via the observed
+   * `totalInboundRps`).
+   *
+   * Returns 1 when the target is the chain head (no amplification before
+   * it) or when no fanout components are in the prefix.
+   *
+   * Codex round 8 [P1] — without this, `dbArrivalFactor`'s cap at 1 would
+   * silently flatten fanout-amplified routes' DB share to their entry
+   * share, hiding real saturation under realistic fanout-write topologies.
+   */
+  private routeStaticAmplificationToNode(route: EndpointRoute, targetId: string): number {
+    const chain = route.componentChain;
+    const targetIdx = chain.indexOf(targetId);
+    if (targetIdx <= 0) return 1;
+    let amp = 1;
+    for (let i = 0; i < targetIdx; i++) {
+      const comp = this.components.get(chain[i]);
+      if (!comp) return 1;
+      if (comp.type === 'fanout') {
+        const m = comp.config.multiplier as number | undefined;
+        if (Number.isFinite(m) && (m as number) > 0) amp *= m as number;
+      }
+    }
+    return amp;
   }
 
   /**
@@ -1608,7 +1646,12 @@ export class SimulationEngine {
       if (!this.routeReachesDbInLiveGraph(route, dbId)) continue;
       const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
       if (entryShare <= 0) continue;
-      const dbShare = entryShare * dbArrivalFactor;
+      // dbShare = entry × static-amplification × cap-or-filter — round-8 §66.
+      // The amplification term restores fanout modeling lost in §63;
+      // dbArrivalFactor still clamps default-bucket bleed and applies the
+      // observed filter ratio for cache-fronted paths.
+      const amp = this.routeStaticAmplificationToNode(route, dbId);
+      const dbShare = entryShare * amp * dbArrivalFactor;
       let touchedRead = false;
       let touchedWrite = false;
       for (const ta of route.tablesAccessed) {
@@ -1860,7 +1903,8 @@ export class SimulationEngine {
         if (!this.routeReachesDbInLiveGraph(route, state.id)) continue;
         const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
         if (entryShare <= 0) continue;
-        const dbShare = entryShare * scanArrivalFactor;
+        const amp = this.routeStaticAmplificationToNode(route, state.id);
+        const dbShare = entryShare * amp * scanArrivalFactor;
         routedDbShareSum += dbShare;
         for (const ta of route.tablesAccessed) {
           // Only count shares tied to tables we can confirm live on this DB

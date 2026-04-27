@@ -114,7 +114,9 @@ Whitt 1993 validates this as "usually an excellent approximation" for two-moment
 
 ### 4.7 Dean-Barroso fan-out tail visualization (research: high pedagogical value, pure algorithm)
 
-When an LB or fanout forks to N downstreams and the canvas view is on that component, compute and display:
+When a `fanout` component forks to N downstreams (scatter-gather, every backend hits per request, slowest dominates) and the canvas view is on that component, compute and display:
+
+> Round-7 update (`c667e73`, Decisions §58 follow-up): the original wording said "LB or fanout" — that's wrong. Load balancers and API gateways route ONE request to ONE backend, so their tail risk is the single-backend p99, not the compounded `1 − (1−p)^N`. The widget is now gated on `data.type === 'fanout'` only.
 
 ```
 P(slow response) = 1 − (1 − p_single_slow)^N
@@ -214,7 +216,9 @@ Five commits, each reviewable:
   - `3f57b2a` **Item 2 [P2-CO multi-hop]** — round-6's `componentEarliestInboundMs` was seeded only from `pendingInbound` at tick-start. When the FIRST hop receiving deferred traffic emitted to its own downstream IN THE SAME TICK, the next outcome stamped fresh `this.time * 1000` because the in-tick real-delivery branch never wrote back to the map. Cycle `A→B→A→C` exposed it. Fix: in `emitOutbound`'s non-deferred branch, after `inboundRps`/`inboundLat` updates, also `componentEarliestInboundMs[targetId] = min(existing, dispatchedAtTickMs)`. New `fanIn.test.ts` `multi-hop in-tick paths` test pins the chain. Decisions §65 round-7 follow-up paragraph appended. 420/420 vitest.
   - `08e46e2` **Item 3 [P2 per-route DB scaling — accepted-as-documented]** — `computeDbArrivalFactor` collapses heterogeneous-upstream routes to a single scalar; per-side / per-table attribution can mislead when routes have different filter/amplification (one through a cache, one direct). Fix would require either per-provenance tracking (undoes §52 fan-in) or per-chain filter modeling (introduces tick-time dependencies on cache state). Aggregate `errorRate`, total DB RPS, and saturation behavior are unaffected — breakers/BP keep working. Documented as a "Known limitation" subsection on Decisions §61, deferred to Phase 4.5b. No code change.
 
-**Phase 4 status: shipped, ready for PR.** 17 commits ahead of `main`, 7 codex rounds + the round-7 convergence pass closed, full vitest 420/420 green, Playwright `simfid-phase4-schema-driven.spec.ts` 2/2 green at the time it was last run on the user's machine.
+- [x] **Codex round 8 (2026-04-27, desktop) — Decisions §66.** The codex CLI rounds 8a–8d kept timing out on the branch's ~50 pre-existing ReactFlow `Node<SimComponentData>` tsc errors; review re-routed through the new file-handoff system at [`docs/codex-reviews/2026-04-27-phase4-final-convergence/`](../codex-reviews/2026-04-27-phase4-final-convergence/REQUEST.md). Codex desktop confirmed rounds 1–7 hold up, surfaced one BLOCKER (fanout-amplified writes silently flatten to entry-share, hiding real saturation — `errorRate=0` on a 200%-utilized DB) and two NITs (stale `Knowledge.md` + parent §4.7 wording on the fan-out tail widget; §61/§63 doc inconsistency). Fix: new `routeStaticAmplificationToNode` walk reads each chain's `fanout.config.multiplier`; `computeDbArrivalFactor` and the per-route attribution loops scale by amp before the cap. Round-4's "loses fan-out amplification" trade-off is now overridden — both default-bucket containment AND fanout amplification work. New regression test: `fanout-amplified writes saturate the DB`. Full suite 421/421 + Playwright 2/2 green.
+
+**Phase 4 status: shipped, ready for PR.** 19+ commits ahead of `main`, 8 codex rounds (CLI rounds 1–7 + desktop round 8) closed, full vitest 421/421 green, Playwright `simfid-phase4-schema-driven.spec.ts` 2/2 green.
 
 **Handoff docs (now historical):** [`docs/plans/2026-04-23-simfid-phase4-handoff.md`](2026-04-23-simfid-phase4-handoff.md) (Commits 2-5 spec), [`docs/plans/2026-04-24-simfid-phase4-final-handoff.md`](2026-04-24-simfid-phase4-final-handoff.md) (round-7 closeout).
 

@@ -694,7 +694,7 @@ Post Phase 4.6 (§57), Kingman G/G/1 two-moment (Whitt 1993) replaces M/M/1:
 
 **Coordinated-omission (§59):** the engine is CO-correct within 1-tick granularity. `WireTickOutcome.dispatchedAtTickMs` is stamped at `emitOutbound` and carried through `pendingInbound` cross-tick deferrals so a delivered-next-tick request reports `wireLatency + tickDelay`, not `wireLatency` alone.
 
-**Fan-out tail risk (§58):** pure UI. `FanoutTailSection` in `ConfigPanel.tsx` shows `P(at_least_one_slow) = 1 - (1 - p)^N` Dean-Barroso curve for scatter-gather components (LB, fanout, api_gateway). Synthetic threshold `p_single_slow = 0.01` is a UI prior — the engine doesn't measure per-request p99 at tick granularity.
+**Fan-out tail risk (§58):** pure UI. `FanoutTailSection` in `ConfigPanel.tsx` shows `P(at_least_one_slow) = 1 - (1 - p)^N` Dean-Barroso curve for `fanout` components only (round-7 fix `c667e73` — see §58 for why LBs and api_gateways were dropped: they route ONE request to ONE backend, so their tail risk is the single-backend p99, not compounding). Synthetic threshold `p_single_slow = 0.01` is a UI prior — the engine doesn't measure per-request p99 at tick granularity.
 
 **Cache model (src/engine/WorkingSetCache.ts):**
 - Working set = `min(keyCardinality, rps × ttlSeconds)`

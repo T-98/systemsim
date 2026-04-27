@@ -97,4 +97,4 @@ Update this list when a new review folder is added. Reverse-chronological.
 
 | Date | Slug | Status | Findings |
 |---|---|---|---|
-| 2026-04-27 | [`phase4-final-convergence`](2026-04-27-phase4-final-convergence/REQUEST.md) | awaiting Codex | TBD |
+| 2026-04-27 | [`phase4-final-convergence`](2026-04-27-phase4-final-convergence/REQUEST.md) | closed (1 BLOCKER fixed, 2 NITs fixed) | [output](2026-04-27-phase4-final-convergence/OUTPUT.md) — fix in Decisions §66 |
