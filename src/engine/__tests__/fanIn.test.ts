@@ -173,6 +173,40 @@ describe('fan-in aggregation', () => {
     expect(abOutcome!.dispatchedAtTickMs).toBe(0);
   });
 
+  it('dispatchedAtTickMs propagates through multi-hop in-tick paths after deferral (round 7 [P2])', () => {
+    // Cycle A → B → A → C: tick 0 has A → B direct AND B → A as a back
+    // edge → deferred into pendingInbound. Tick 1 merges the deferred
+    // into A's inbound, A emits to B, B emits to C ALL IN THE SAME TICK.
+    // The B → C outcome must report dispatchedAtTickMs = 0 (the original
+    // tick-0 dispatch that caused the deferred chain), not 1000.
+    //
+    // Pre round-7 [P2-CO] fix: only the FIRST hop (A → B in tick 1)
+    // inherited the propagated earliest dispatch via
+    // `componentEarliestInboundMs` (which was seeded from pendingInbound
+    // at tick start). The second hop B → C lost it because B's
+    // `componentEarliestInboundMs` was never written when B received
+    // A's in-tick delivery — emitOutbound only updated `inboundRps` /
+    // `inboundLat`. Round 7 adds the matching `min` write so the chain
+    // propagates indefinitely.
+    const nodes = [
+      node('a', 'api_gateway', { isEntry: true, rateLimitRps: 1_000_000 }),
+      node('b', 'api_gateway', { rateLimitRps: 1_000_000 }),
+      node('c', 'api_gateway', { rateLimitRps: 1_000_000 }),
+    ];
+    const edges = [
+      edge('e_a_b', 'a', 'b'),
+      edge('e_b_a', 'b', 'a'),  // back edge → deferred at tick 0
+      edge('e_b_c', 'b', 'c'),  // multi-hop tail in tick 1
+    ];
+    const engine = new SimulationEngine(nodes, edges, steadyProfile(100), undefined, undefined, SEED);
+    engine.tick();  // tick 0 — back edge defers
+    engine.tick();  // tick 1 — pendingInbound merges, in-tick A→B→C
+    const outcomes = engine.tickOutcomes();
+    const bcOutcome = outcomes.find((o) => o.source === 'b' && o.target === 'c');
+    expect(bcOutcome).toBeDefined();
+    expect(bcOutcome!.dispatchedAtTickMs).toBe(0);
+  });
+
   it('totalRequests sums aggregate inbound exactly once per tick (no double-count)', () => {
     // Pre-refactor, fan-in made totalRequests += rps fire twice, once per
     // recursive call. Post-refactor, it fires once per tick per component

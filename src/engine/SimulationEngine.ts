@@ -1009,6 +1009,21 @@ export class SimulationEngine {
         acc.num += eff * targetAccLat;
         acc.denom += eff;
         this.inboundLat.set(targetId, acc);
+        // Codex round 7 [P2-CO]. Propagate the dispatch timestamp through
+        // multi-hop in-tick paths. Without this, only the FIRST component
+        // receiving deferred traffic emits with the original dispatch
+        // time — once that component runs and emits to its OWN downstream,
+        // the next outcome stamps `this.time * 1000` again because the
+        // target's `componentEarliestInboundMs` was never seeded for the
+        // in-tick path. Cycle A→B→A→C demonstrated the leak: tick T+1
+        // merged A's deferred inbound with earliest=T*1000, but B→C in
+        // the same tick lost it. Same `min` semantics as the deferred
+        // branch above so multiple in-tick wires onto the same target
+        // keep the earliest dispatch.
+        const existingEarliest = this.componentEarliestInboundMs.get(targetId) ?? Number.POSITIVE_INFINITY;
+        if (dispatchedAtTickMs < existingEarliest) {
+          this.componentEarliestInboundMs.set(targetId, dispatchedAtTickMs);
+        }
       }
     }
 
