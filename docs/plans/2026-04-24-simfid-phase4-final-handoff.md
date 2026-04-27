@@ -192,7 +192,7 @@ After Item 3's documentation lands, run **one final `codex review --base main` p
 
 ### Progress log for the three items
 
-- [ ] **Item 1 — `fix(ui): gate tail-risk widget on fanout type only`**
+- [x] **Item 1 — `fix(ui): gate tail-risk widget on fanout type only`** (2026-04-24; ConfigPanel.tsx:209 gate narrowed to `data.type === 'fanout'` only; Decisions §58 round-7 paragraph appended; 419/419 vitest)
 - [ ] **Item 2 — `fix(engine): propagate dispatchedAtTickMs through in-tick real-delivery hops`**
 - [ ] **Item 3 — `docs(decisions): document per-route DB scaling as a known limitation`**
 - [ ] **Final codex pass for convergence**

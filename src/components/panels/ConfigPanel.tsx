@@ -203,10 +203,14 @@ export default function ConfigPanel() {
           <AssignedTablesSection nodeId={selectedNode.id} disabled={isRunning} />
         )}
 
-        {/* Fan-out tail risk (Phase 4.7 §58) — shown for components that
-            scatter to many downstreams. Explains Dean-Barroso's
-            P(at_least_one_slow) = 1 - (1 - p)^N scaling inline. */}
-        {(data.type === 'load_balancer' || data.type === 'fanout' || data.type === 'api_gateway') && (
+        {/* Fan-out tail risk (Phase 4.7 §58) — gated to TRUE scatter-gather
+            components only (`fanout`). Load balancers and API gateways
+            route ONE request to ONE backend, so their tail risk equals
+            the single-backend p99, NOT the Dean-Barroso compounding curve.
+            Showing the widget on `load_balancer` was the round-7 [P1] bug:
+            an LB with 100 backends and p_single_slow=0.01 currently looked
+            like 63% slow, when the user-experienced rate is ~1%. */}
+        {data.type === 'fanout' && (
           <FanoutTailSection config={config} fanoutSize={countDownstreams(selectedNode.id, edges)} />
         )}
 
