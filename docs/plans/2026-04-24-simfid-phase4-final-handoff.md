@@ -194,7 +194,7 @@ After Item 3's documentation lands, run **one final `codex review --base main` p
 
 - [x] **Item 1 — `fix(ui): gate tail-risk widget on fanout type only`** (2026-04-24; ConfigPanel.tsx:209 gate narrowed to `data.type === 'fanout'` only; Decisions §58 round-7 paragraph appended; 419/419 vitest)
 - [x] **Item 2 — `fix(engine): propagate dispatchedAtTickMs through in-tick real-delivery hops`** (2026-04-24; emitOutbound non-deferred branch now updates `componentEarliestInboundMs[targetId] = min(existing, dispatchedAtTickMs)`; new fanIn.test.ts `multi-hop in-tick paths` test for the A→B→A→C cycle; Decisions §65 round-7 paragraph appended; 420/420 vitest)
-- [ ] **Item 3 — `docs(decisions): document per-route DB scaling as a known limitation`**
+- [x] **Item 3 — `docs(decisions): document per-route DB scaling as a known limitation`** (2026-04-24; "Known limitation" subsection appended to Decisions §61 verbatim from the handoff; no code change)
 - [ ] **Final codex pass for convergence**
 
 ---

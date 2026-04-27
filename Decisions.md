@@ -695,6 +695,17 @@ Every significant engineering or product decision made on SystemSim, with the re
 - **Known approximation:** When default-bucket traffic also reaches this DB, `dbArrivalFactor` over-attributes routes' share (the default's DB contribution mixes into `totalInboundRps` without a separate provenance track). The error is bounded by the default bucket's DB share ratio; in the pathological case of 100% default-bucket + 0 routes touching, `computeDbArrivalFactor` returns 0 and the caller falls back to pure 70/30 on `totalInboundRps` — safe.
 - **Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `computeDbArrivalFactor` (new), `computeDbReadWriteBreakdown` (refactored with `attributionRatio`), `processDatabase` scan path (uses `scanArrivalFactor`). New tests: [engineReadWriteSplit.test.ts](src/engine/__tests__/engineReadWriteSplit.test.ts) `read_write share is counted ONCE`, `scales attributed DB load by the ACTUAL inbound`, `suppresses write-saturation callout when attribution is <50%`. Full suite 410/410 + Playwright 2/2. Codex sessions: `019dbe91-106f-7e60-8802-7da147992aa9` (round 1), round 2 same session resumed post-commit.
 
+#### Known limitation — per-route DB arrival scaling assumes uniform upstream filtering
+
+`computeDbArrivalFactor` collapses every route reaching a DB to a single scalar. When routes' chains have heterogeneous filter/amplification (one through a cache, one direct; one through a fanout multiplier, one not), per-route DB shares are wrong even though the DB's total inbound is correct. This affects:
+
+- `readErrorRate` / `writeErrorRate` per-side attribution — the saturated side may be reported wrong if the saturation is driven by a route that filters more than another.
+- Unindexed-scan callout target naming — may name the wrong endpoint as the source of the unindexed traffic.
+
+Aggregate `errorRate`, total DB RPS, and overall saturation behavior are unaffected — breakers and backpressure (§52, §54) continue to react correctly to total load.
+
+The fix would require either per-provenance tracking through the graph (undoes the §52 fan-in refactor) or per-chain filter-walking with cache-hit-rate / fanout-multiplier modeling. Deferred until user feedback shows the limitation matters in practice. Codex round 7 [P2] flagged this; accepted as a documented approximation — same trade-off codex flagged in round 4 [P1] in a different skin.
+
 ### 62. SIMFID Phase 4 codex round 3 — routed chain heads are topo roots; stale route chains drop from DB attribution
 
 - **When:** 2026-04-24 (third `codex review --base main` pass after §61).
