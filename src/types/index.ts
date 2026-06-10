@@ -41,13 +41,20 @@ export interface ComponentDef {
 
 export type HealthState = 'healthy' | 'warning' | 'critical' | 'crashed';
 
-export interface SimComponentData {
+/**
+ * Declared as a type alias, not an interface, on purpose: ReactFlow v12's
+ * `Node<T extends Record<string, unknown>>` constraint is satisfied by type
+ * literals (which get an implicit index signature) but not by interfaces.
+ * Converting keeps excess-property checking intact — an explicit
+ * `[key: string]: unknown` index signature would have disabled it.
+ */
+export type SimComponentData = {
   type: ComponentType;
   label: string;
   config: Record<string, unknown>;
   health: HealthState;
   metrics: ComponentMetrics;
-}
+};
 
 export interface ComponentMetrics {
   rps: number;

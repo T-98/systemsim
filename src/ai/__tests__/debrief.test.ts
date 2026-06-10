@@ -30,7 +30,7 @@ function makeEdge(id: string, source: string, target: string): Edge<{ config: Wi
 
 function makeRun(): SimulationRun {
   const profile: TrafficProfile = {
-    name: 'test',
+    profileName: 'test',
     durationSeconds: 60,
     jitterPercent: 0,
     phases: [{ startS: 0, endS: 60, rps: 1000, shape: 'steady', description: 'test' }],

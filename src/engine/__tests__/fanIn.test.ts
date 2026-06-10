@@ -43,7 +43,7 @@ function edge(id: string, source: string, target: string, config: Partial<WireCo
 
 function steadyProfile(rps: number, durationSeconds = 10): TrafficProfile {
   return {
-    name: 'fan-in',
+    profileName: 'fan-in',
     durationSeconds,
     jitterPercent: 0,
     phases: [{ startS: 0, endS: durationSeconds, rps, shape: 'steady' as const, description: 'fan-in' }],
