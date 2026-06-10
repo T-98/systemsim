@@ -16,6 +16,7 @@
 import { useRef, useCallback, useEffect } from 'react';
 import { useStore } from '../store';
 import { SimulationEngine } from './SimulationEngine';
+import { primeCalibration, getCalibrationSet } from './calibration';
 import { generateDebrief } from '../ai/debrief';
 import { buildSimulationSummary } from '../ai/buildSimulationSummary';
 import { fetchAIDebrief } from '../ai/anthropicDebrief';
@@ -52,6 +53,14 @@ export function useSimulation() {
   const addSimulationRun = useStore((s) => s.addSimulationRun);
   const setCurrentRunId = useStore((s) => s.setCurrentRunId);
   const resetSimulationState = useStore((s) => s.resetSimulationState);
+
+  // Phase 8a.2 — kick off the calibration.json fetch once per session.
+  // Idempotent fire-and-forget; the engine reads whatever has loaded by the
+  // time the user hits Run (shipped files are empty defaults, so an
+  // unsettled fetch is indistinguishable from a loaded one today).
+  useEffect(() => {
+    primeCalibration();
+  }, []);
 
   // Graph-swap teardown: if the graph is replaced (graphVersion bumped) while
   // an engine instance is live, tear it down so stale ticks don't write
@@ -220,6 +229,7 @@ export function useSimulation() {
         requestMix: trafficProfile.requestMix,
         apiContracts,
       },
+      getCalibrationSet(),
     );
     engineRef.current = engine;
 
