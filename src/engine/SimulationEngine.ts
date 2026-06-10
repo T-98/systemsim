@@ -839,8 +839,14 @@ export class SimulationEngine {
     // matches real systems.
     //
     // No-traffic guard as above.
+    //
+    // Crashed components are NOT skipped: their metrics are frozen at the
+    // last processed tick (§12c), so the signal derives from that frozen
+    // aggregate errorRate. Skipping them left acceptanceRate at its init
+    // value 1.0 whenever the crash landed before the first evaluation —
+    // a dead, 100%-saturated database advertising full acceptance, so no
+    // upstream ever scaled down or logged the backpressure callout.
     this.components.forEach((state) => {
-      if (state.crashed) return;
       if (!readBackpressureConfig(state.config)) return;
       if (state.metrics.rps <= 0) return; // no traffic = no new signal
       state.acceptanceRate = computeAcceptanceRate(state.metrics.errorRate);
