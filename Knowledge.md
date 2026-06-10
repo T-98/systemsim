@@ -499,10 +499,18 @@ Phase B of tick: runComponent(target) eventually consumes the aggregated
 inbound and produces target.metrics.errorRate.
 
 Phase C of tick:
-    → for each non-crashed, backpressure-enabled component with rps > 0:
+    → for each backpressure-enabled component with rps > 0 (crashed included):
        → acceptanceRate = 1 - errorRate   (computed on TRUE aggregate errorRate)
     → for each wire: wire.lastObservedErrorRate = target.metrics.errorRate
 ```
+
+**Crashed targets (Decisions §67, 2026-06-10):** crashed components are NOT
+skipped in the Phase C update. Their metrics are frozen at the last processed
+tick (§12c), so the signal derives from that frozen aggregate `errorRate` — a
+saturated DB that crashes keeps signaling acceptance ≈ 0.05–0.1 instead of
+freezing at the init value 1.0. Before this fix, a crash landing on tick 0
+(30%-per-tick chance at >98% utilization) silenced backpressure forever and
+made the Phase 3 backpressure e2e spec flaky.
 
 **Composition with retry storms:** retry amplifies first (optimistic caller), backpressure scales down (downstream's pushback). At steady state with shared `errorRate e`: `amplification × acceptance = (1 + e + e² + …) × (1 - e) ≈ 1` → self-stabilizing. Post fan-in fix this stabilization holds in fan-in topologies too, because every inbound wire reads the same aggregate `e`.
 
@@ -715,6 +723,7 @@ Post Phase 4.6 (§57), Kingman G/G/1 two-moment (Whitt 1993) replaces M/M/1:
 - **Simulation state:** `simulationStatus, simulationTime, simulationSpeed, currentRunId, simulationRuns, liveMetrics, liveLog, particles, viewMode`
 - **Debrief state:** `debrief, debriefVisible, debriefLoading`
 - **UX state:** `pulseTarget, hints`
+- **BOTE state (Phase 8a.1):** `boteInputs` (capacity-estimator inputs, store-resident so they survive the panel unmounting on node selection — Decisions §68), `setBoteInputs(patch)`, `botePanelOpen`/`setBotePanelOpen` (explicit open flag; cleared on node/wire selection)
 
 **Exposed on `window.__SYSTEMSIM_STORE__`** for Playwright tests (Zustand store's `getState` + `setState`).
 
@@ -742,6 +751,33 @@ Post Phase 4.6 (§57), Kingman G/G/1 two-moment (Whitt 1993) replaces M/M/1:
 **LLM-augmented:**
 - `fetchAIDebrief(summary, scenarioId)` — POSTs summary to `/api/debrief`, parses `{ questions }`, falls back to null on error
 - `buildSimulationSummary(nodes, edges, run, shardKey)` — compresses to ~4K tokens: topology, peak metrics, failure events, traffic, shard distribution
+
+### BOTE capacity estimator (Phase 8a.1)
+
+**Files:** [src/util/bote.ts](src/util/bote.ts) (pure math), [src/components/panels/BotePanel.tsx](src/components/panels/BotePanel.tsx) (UI), [src/components/panels/TrafficEditor.tsx](src/components/panels/TrafficEditor.tsx) (open button + draft re-seed).
+
+**Purpose:** back-of-the-envelope capacity math with zero engine coupling. DAU × actions/day → avg QPS; peak QPS via multiplier (default 3×); read/write split; storage growth per month and at the retention window (write QPS × payload bytes); concurrent connections via Little's Law (N = QPS × avg response time).
+
+**Where it renders:** the right inspector dock when the explicit `botePanelOpen` store flag is set AND no node/wire is selected (ConfigPanel's no-selection branch). Opened from the Traffic tab's "Pre-populate from capacity estimator →" button (`setSelectedNodeId(null)` + `setBotePanelOpen(true)` + `setConfigPanelOpen(true)`); selecting any node/wire clears the flag so stale-selection paths (delete, undo) can't resurrect the panel uninvited. Apply is disabled while a simulation is running.
+
+**Apply flow:** "Apply to traffic profile" → `toTwoPhaseProfile(estimates, existingProfile)` replaces `phases` with a steady baseline (avg QPS, first ~2/3 of the run) + a spike phase (peak QPS), preserving `requestMix`/`userDistribution`/`jitterPercent`; sidebar switches to Traffic; TrafficEditor's local draft re-seeds via an effect watching `trafficProfile`. Decisions §68.
+
+**Inputs validation:** `computeBote` clamps NaN/negative/non-finite to 0 (readRatio to [0,1], peakMultiplier up to ≥1) so the panel never renders NaN.
+
+### Calibration scaffold (Phase 8a.2)
+
+**Files:** [src/engine/calibration.ts](src/engine/calibration.ts) (types + loader + module cache), `public/calibration/laptop-m-series-16gb/{postgres-16,redis-7,fastify-5}.json` (shipped empty defaults), [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) (optional trailing `calibration` constructor param), [src/engine/useSimulation.ts](src/engine/useSimulation.ts) (`primeCalibration()` on mount, `getCalibrationSet()` at Run).
+
+**Purpose:** ship the schema Phase 5's `npx systemsim-daemon` harness will emit, wired so measured anchors become engine defaults for UNSET component configs. Explicit per-component config always wins. Shipped anchors are all null (`source: "empty-default"`) so behavior is bit-identical today (pinned by test).
+
+**Anchor → default mapping (only sites with a real config knob):**
+- `postgres.anchors.readThroughputRps` → database `readThroughputRps` default (50 000)
+- `postgres.anchors.writeThroughputRps` → database `writeThroughputRps` default (20 000)
+- `fastify.anchors.serviceTimeMs.p50` → server `processingTimeMs` default (50)
+- `fastify.anchors.serviceVariance` → server Kingman C_s² default (1.0)
+- redis ships schema-only (no calibrated cache-latency knob yet — lands with Phase 5)
+
+**Failure handling:** missing file / network error / malformed JSON → primitive absent from the set → hard-coded defaults. The loader never throws; `primeCalibration` is idempotent fire-and-forget.
 
 ### Design flow
 

@@ -560,6 +560,10 @@ Zustand store. Single source of truth for all state.
   // UX
   pulseTarget: string | null        // e.g. "node:abc", "sidebar:design:schema"
   hints: HintMessage[]
+
+  // BOTE capacity estimator (Phase 8a.1 §68)
+  boteInputs: BoteInputs            // store-resident so panel unmount doesn't lose edits
+  botePanelOpen: boolean            // explicit open flag; cleared on node/wire selection
 }
 ```
 
@@ -591,6 +595,8 @@ Zustand store. Single source of truth for all state.
 | `resetSimulationState()` | Clears metrics/log/particles/status/time/currentRunId/debrief. Does NOT clear nodes/edges/design. |
 | `undo()` / `redo()` | Graph undo/redo (guards: skips when `simulationStatus !== 'idle'`) |
 | `toggleTheme()` | Toggles `document.documentElement.classList.dark` + stores preference |
+| `setBoteInputs(patch)` | Merges `patch` into `boteInputs` (Phase 8a.1) |
+| `setBotePanelOpen(open)` | Shows/hides the BOTE panel in the empty inspector dock; `setSelectedNodeId`/`setSelectedEdgeId` with a non-null id clear it |
 
 ### Window exposure
 
@@ -623,6 +629,7 @@ new SimulationEngine(
   seed?: number,                                        // for reproducible tests
   stressedMode = false,                                 // worst-case run
   routingContext?: RoutingContext,                      // Phase 4: per-endpoint routing + schema
+  calibration?: CalibrationSet,                         // Phase 8a.2 §68: anchors as config defaults
 )
 
 export interface RoutingContext {
