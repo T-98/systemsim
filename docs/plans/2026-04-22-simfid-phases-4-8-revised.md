@@ -270,6 +270,29 @@ Engine reads this at tick-start and uses it as the default for unset component c
 1. `feat(bote): math panel with DAU/QPS/storage/connection estimates`
 2. `feat(engine): calibration.json loader with empty defaults + engine fallback`
 
+### 8a.5 Progress log
+
+- [x] **Shipped 2026-06-10** on `feat/simfid-phase8a-bote-calibration` (stacked on the
+  Phase 4 branch — the calibration serviceVariance default lands inside Phase 4's
+  Kingman site, so "parallel off main" no longer applied). Decisions §68.
+  Commits: `2cd1916` (BOTE panel), `6cefeb9` (calibration loader), plus an
+  adversarial-review fix commit. Three leading fix commits on the Phase 4 branch
+  cleared pre-existing red found by the first FULL Playwright run (Decisions §67):
+  WikiRoute duplicate tab bar (7 specs), crashed-backpressure acceptanceRate flake
+  (engine fix + seed-pinned regression), all 53 tsc errors.
+- [x] **Adversarial review** (2026-06-10): codex CLI quota-blocked until 2026-07-04;
+  fell back to two Claude reviewer subagents (engine lens + UI/math lens) per the
+  documented fallback rule. 1 P1 fixed (ConfigPanel no-selection fallthrough
+  surfaced BotePanel on delete/undo paths → explicit `botePanelOpen` flag),
+  7 P2s fixed (mid-run Apply disabled, duration preserved, positive-only anchors,
+  primitive-slot integrity, calibrated crash-advice chain, formatter unit-boundary
+  rollups, tick-0 test pin, e2e live-value selector), 3 pre-existing engine P2s
+  documented + deferred in §67's known-limitation bullet (errorRate=0 crash window,
+  breaker-onto-dead-target, autoscaler-on-crashed — one root cause, needs its own
+  reviewed pass).
+- Suite after Phase 8a: vitest 452/452, Playwright full suite green (incl. 4 new
+  BOTE specs with screenshots in `test-results/simfid-phase8a-bote/`), tsc 0 errors.
+
 ---
 
 ## Phase 5 — Companion daemon + Validation Mode (re-scoped)

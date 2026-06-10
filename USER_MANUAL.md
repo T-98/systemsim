@@ -137,6 +137,30 @@ On the landing page, the "Describe your system" input accepts **text, image uplo
 - Live log shows warnings and critical events
 - Debrief panel opens with scores (Pass/Warn/Fail) and Socratic questions
 
+## Flow 4b: Capacity Estimator (back-of-the-envelope math)
+
+Freeform mode only. Turns "1M daily users" into traffic numbers before you run.
+
+1. Open the **Traffic** tab in the left sidebar
+2. Expand **Traffic Profile** and click **Pre-populate from capacity estimator →**
+3. The Capacity Estimator opens in the right dock. Enter:
+   - Daily active users, actions per user per day
+   - Read share (0–1), payload per write (bytes), retention (days)
+   - Peak-to-average multiplier (default 3×), avg response time (ms)
+4. Estimates update live: average/peak QPS, read/write QPS, storage growth
+   per month and at the retention window, concurrent requests (Little's Law)
+5. Click **Apply to traffic profile** — the traffic phases are replaced with a
+   steady baseline at average QPS plus a spike to peak QPS. Duration, request
+   mix, and distribution are kept. The sidebar switches to the Traffic tab so
+   you can hand-tune the result.
+
+**What to verify:**
+- Outputs update as you type (no NaN, ever — empty inputs read as 0)
+- Apply writes a two-phase profile visible in the phase list and curve
+- Apply is disabled while a simulation is running
+- Selecting a node replaces the estimator with that node's config panel;
+  deleting the node does NOT bring the estimator back uninvited
+
 ## Flow 5: AI Debrief
 
 1. After simulation completes, click **Debrief**

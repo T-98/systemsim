@@ -50,6 +50,7 @@ import type {
   ApiContract,
 } from '../types';
 import type { Node, Edge } from '@xyflow/react';
+import type { CalibrationSet } from './calibration';
 import { computeQueueing } from './QueueingModel';
 import { computeCacheModel, networkAwareCacheLatency } from './WorkingSetCache';
 import {
@@ -257,6 +258,14 @@ export class SimulationEngine {
   private calloutEntries: WeakSet<LogEntry> = new WeakSet(); // entries that bypass the per-tick throttle
   private peakCacheHitRate: Map<string, number> = new Map(); // track peak hitRate per cache for miss-storm detection
   private stressedMode = false; // worst-case run: peak RPS held, cold cache, wire p99
+  /**
+   * Phase 8a.2 — calibration anchors used as defaults for UNSET component
+   * configs. Shipped files are empty (all-null anchors), so `??` chains fall
+   * through to the same hard-coded defaults as before; Phase 5's harness
+   * populates them with real measurements. Explicit per-component config
+   * always wins over calibration.
+   */
+  private calibration: CalibrationSet = {};
 
   constructor(
     nodes: Node<SimComponentData>[],
@@ -267,9 +276,11 @@ export class SimulationEngine {
     seed?: number,
     stressedMode = false,
     routingContext?: RoutingContext,
+    calibration?: CalibrationSet,
   ) {
     this.random = seed != null ? mulberry32(seed) : Math.random;
     this.trafficProfile = trafficProfile;
+    this.calibration = calibration ?? {};
     this.schemaShardKey = schemaShardKey ?? null;
     this.schemaShardKeyCardinality = schemaShardKeyCardinality ?? 'high';
     this.stressedMode = stressedMode;
@@ -1259,7 +1270,10 @@ export class SimulationEngine {
 
   private processServer(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number, backEdges: Set<string>) {
     const maxConcurrent = (state.config.maxConcurrent as number) ?? 1000;
-    const processingTime = (state.config.processingTimeMs as number) ?? 50;
+    // Phase 8a.2 — calibrated default for unset config; ships null → 50.
+    const processingTime = (state.config.processingTimeMs as number)
+      ?? this.calibration.fastify?.anchors.serviceTimeMs.p50
+      ?? 50;
     const instances = state.instanceCount;
 
     const arrivalRateRps = rps / this.tickInterval;
@@ -1270,7 +1284,7 @@ export class SimulationEngine {
     // `arrivalVariance` comes from the tick's current traffic phase shape.
     const serviceVariance = typeof state.config.serviceVariance === 'number'
       ? (state.config.serviceVariance as number)
-      : 1.0;
+      : this.calibration.fastify?.anchors.serviceVariance ?? 1.0;
     const q = computeQueueing({
       arrivalRateRps,
       processingTimeMs: processingTime,
@@ -1780,8 +1794,13 @@ export class SimulationEngine {
     const shardingEnabled = state.config.shardingEnabled as boolean;
     const shardCount = (state.config.shardCount as number) ?? 1;
     const connectionPoolSize = (state.config.connectionPoolSize as number) ?? 100;
-    const writeThroughput = (state.config.writeThroughputRps as number) ?? 20000;
-    const readThroughput = (state.config.readThroughputRps as number) ?? 50000;
+    // Phase 8a.2 — calibrated defaults for unset configs; ship null → 20k/50k.
+    const writeThroughput = (state.config.writeThroughputRps as number)
+      ?? this.calibration.postgres?.anchors.writeThroughputRps
+      ?? 20000;
+    const readThroughput = (state.config.readThroughputRps as number)
+      ?? this.calibration.postgres?.anchors.readThroughputRps
+      ?? 50000;
     const readReplicas = (state.config.readReplicas as number) ?? 0;
     const replicationLag = (state.config.replicationLagMs as number) ?? 10;
 
@@ -2180,7 +2199,11 @@ export class SimulationEngine {
         const resource = cpu > mem ? 'CPU' : 'Memory';
         let fix = '';
         if (state.type === 'server') {
-          const procTime = (state.config.processingTimeMs as number) ?? 50;
+          // Same default chain as processServer so the advice numbers match
+          // the model once fastify p50 is calibrated (Phase 8a.2).
+          const procTime = (state.config.processingTimeMs as number)
+            ?? this.calibration.fastify?.anchors.serviceTimeMs.p50
+            ?? 50;
           const serviceRate = Math.round(1000 / procTime);
           const rps = Math.round(state.metrics.rps);
           const needed = Math.ceil(rps / serviceRate);
