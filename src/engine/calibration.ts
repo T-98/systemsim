@@ -51,8 +51,15 @@ const PRIMITIVE_VERSIONS: Record<CalibrationPrimitive, string> = {
   fastify: '5',
 };
 
-function numberOrNull(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+/**
+ * All current anchors are throughputs, latencies, or variance — strictly
+ * positive quantities. Zero or negative values would poison downstream math
+ * (`serviceTimeMs.p50: 0` → `1000/0 = Infinity` RPS per instance in
+ * QueueingModel; negative throughput → negative utilization), so they are
+ * rejected at the parse boundary, same as non-numbers.
+ */
+function positiveOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
 }
 
 /**
@@ -76,13 +83,13 @@ export function parseCalibrationProfile(json: unknown): CalibrationProfile | nul
     capturedAt: typeof o.capturedAt === 'string' ? o.capturedAt : null,
     anchors: {
       serviceTimeMs: {
-        p50: numberOrNull(rawService.p50),
-        p99: numberOrNull(rawService.p99),
+        p50: positiveOrNull(rawService.p50),
+        p99: positiveOrNull(rawService.p99),
       },
-      serviceVariance: numberOrNull(rawAnchors.serviceVariance),
-      readThroughputRps: numberOrNull(rawAnchors.readThroughputRps),
-      writeThroughputRps: numberOrNull(rawAnchors.writeThroughputRps),
-      connectionPoolExhaustionMs: numberOrNull(rawAnchors.connectionPoolExhaustionMs),
+      serviceVariance: positiveOrNull(rawAnchors.serviceVariance),
+      readThroughputRps: positiveOrNull(rawAnchors.readThroughputRps),
+      writeThroughputRps: positiveOrNull(rawAnchors.writeThroughputRps),
+      connectionPoolExhaustionMs: positiveOrNull(rawAnchors.connectionPoolExhaustionMs),
     },
     source: typeof o.source === 'string' ? o.source : 'unknown',
   };
@@ -105,7 +112,10 @@ export async function loadCalibrationSet(
         const res = await fetchImpl(url);
         if (!res.ok) return;
         const profile = parseCalibrationProfile(await res.json());
-        if (profile) set[primitive] = profile;
+        // The body must claim the primitive its filename promises — a
+        // postgres-16.json declaring `primitive: "fastify"` would otherwise
+        // silently apply service-time anchors as database throughput.
+        if (profile && profile.primitive === primitive) set[primitive] = profile;
       } catch {
         // Network/parse failure → primitive stays absent → engine defaults.
       }

@@ -99,6 +99,22 @@ describe('toTwoPhaseProfile', () => {
     expect(p.largeServerConcentration).toBe(0.4);
   });
 
+  it('preserves the existing profile duration when no override is given', () => {
+    const e = computeBote(BASE);
+    const existing = {
+      profileName: 'old',
+      durationSeconds: 120,
+      phases: [],
+      requestMix: {},
+      userDistribution: 'uniform' as const,
+      jitterPercent: 5,
+    };
+    const p = toTwoPhaseProfile(e, existing);
+    expect(p.durationSeconds).toBe(120);
+    expect(p.phases[1].endS).toBe(120);
+    expect(p.phases[0].endS).toBe(80);
+  });
+
   it('floors phase RPS at 1 so tiny DAU still produces a runnable profile', () => {
     const e = computeBote({ ...BASE, dau: 10, actionsPerUserPerDay: 1 });
     const p = toTwoPhaseProfile(e, null);
@@ -115,11 +131,20 @@ describe('formatters', () => {
     expect(formatBytes(61_440_000_000)).toBe('57.2 GB');
   });
 
+  it('formatBytes rolls up when rounding crosses the unit boundary', () => {
+    // 1 048 166 B = 1023.6 KB → rounds to 1024 KB → must render as MB.
+    expect(formatBytes(1_048_166)).toBe('1.0 MB');
+  });
+
   it('formatCount humanizes thousands/millions', () => {
     expect(formatCount(0)).toBe('0');
     expect(formatCount(115.7)).toBe('116');
     expect(formatCount(34.7)).toBe('34.7');
     expect(formatCount(2_300_000)).toBe('2.3M');
+  });
+
+  it('formatCount rolls up when rounding crosses the bucket boundary', () => {
+    expect(formatCount(999.6)).toBe('1.0K');
   });
 });
 

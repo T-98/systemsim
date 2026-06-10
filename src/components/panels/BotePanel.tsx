@@ -27,10 +27,16 @@ export default function BotePanel({ onClose }: { onClose: () => void }) {
   const setTrafficProfile = useStore((s) => s.setTrafficProfile);
   const appMode = useStore((s) => s.appMode);
   const setSidebarTab = useStore((s) => s.setSidebarTab);
+  const simulationStatus = useStore((s) => s.simulationStatus);
+  // Mid-run apply would mutate the profile the already-constructed engine
+  // ignores (useSimulation snapshots at start) while the traffic editor
+  // re-seeds — it would LOOK applied without being applied.
+  const isRunning = simulationStatus === 'running' || simulationStatus === 'paused';
 
   const estimates = computeBote(boteInputs);
 
   const apply = () => {
+    if (isRunning) return;
     setTrafficProfile(toTwoPhaseProfile(estimates, trafficProfile));
     if (appMode === 'freeform') setSidebarTab('traffic');
   };
@@ -116,7 +122,8 @@ export default function BotePanel({ onClose }: { onClose: () => void }) {
           type="button"
           data-testid="bote-apply"
           onClick={apply}
-          className="w-full rounded-lg transition-all duration-200"
+          disabled={isRunning}
+          className="w-full rounded-lg transition-all duration-200 disabled:opacity-30"
           style={{
             padding: '10px 16px',
             fontSize: '14px',
@@ -124,14 +131,14 @@ export default function BotePanel({ onClose }: { onClose: () => void }) {
             background: 'var(--accent)',
             color: 'var(--text-on-accent)',
             border: 'none',
-            cursor: 'pointer',
+            cursor: isRunning ? 'default' : 'pointer',
           }}
         >
           Apply to traffic profile
         </button>
         <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: -8, lineHeight: 1.5 }}>
           Replaces the traffic phases with a steady baseline at average QPS and a
-          spike to peak QPS. Request mix and distribution are kept.
+          spike to peak QPS. Duration, request mix, and distribution are kept.
         </div>
       </div>
     </div>

@@ -189,6 +189,15 @@ export interface AppState {
   // so the inputs survive the panel unmounting when a node is selected.
   boteInputs: BoteInputs;
   setBoteInputs: (patch: Partial<BoteInputs>) => void;
+  /**
+   * Explicit open flag for the BOTE panel. The panel renders ONLY when this
+   * is true AND nothing is selected — "configPanelOpen with no selection"
+   * alone would surface it uninvited on every stale-selection path (Delete
+   * Component, Backspace delete, undo of a node add). Selecting a node
+   * clears it; the Traffic tab's estimator button sets it.
+   */
+  botePanelOpen: boolean;
+  setBotePanelOpen: (open: boolean) => void;
 
   // Runs
   simulationRuns: SimulationRun[];
@@ -379,8 +388,20 @@ export const useStore = create<AppState>((set, get) => ({
   },
   selectedNodeId: null,
   selectedEdgeId: null,
-  setSelectedNodeId: (id) => set({ selectedNodeId: id, selectedEdgeId: null, configPanelOpen: id !== null }),
-  setSelectedEdgeId: (id) => set({ selectedEdgeId: id, selectedNodeId: null, configPanelOpen: id !== null }),
+  setSelectedNodeId: (id) => set({
+    selectedNodeId: id,
+    selectedEdgeId: null,
+    configPanelOpen: id !== null,
+    // Selecting a node dismisses the BOTE panel so a later deselect/delete
+    // doesn't resurrect it uninvited.
+    ...(id !== null ? { botePanelOpen: false } : {}),
+  }),
+  setSelectedEdgeId: (id) => set({
+    selectedEdgeId: id,
+    selectedNodeId: null,
+    configPanelOpen: id !== null,
+    ...(id !== null ? { botePanelOpen: false } : {}),
+  }),
 
   // Design flow
   functionalReqs: [],
@@ -526,6 +547,8 @@ export const useStore = create<AppState>((set, get) => ({
   // BOTE capacity estimator (Phase 8a.1)
   boteInputs: DEFAULT_BOTE_INPUTS,
   setBoteInputs: (patch) => set({ boteInputs: { ...get().boteInputs, ...patch } }),
+  botePanelOpen: false,
+  setBotePanelOpen: (open) => set({ botePanelOpen: open }),
 
   // Runs
   simulationRuns: [],

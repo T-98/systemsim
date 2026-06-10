@@ -163,6 +163,27 @@ describe('parseCalibrationProfile', () => {
     expect(p!.anchors.readThroughputRps).toBeNull();
     expect(p!.anchors.serviceVariance).toBeNull();
   });
+
+  it('rejects zero and negative anchors (would poison queueing math)', () => {
+    const p = parseCalibrationProfile({
+      primitive: 'fastify',
+      version: '5',
+      anchors: { serviceTimeMs: { p50: 0 }, readThroughputRps: -100 },
+    });
+    expect(p!.anchors.serviceTimeMs.p50).toBeNull();
+    expect(p!.anchors.readThroughputRps).toBeNull();
+  });
+});
+
+describe('primitive-slot integrity', () => {
+  it('a file whose body claims a different primitive than its filename is dropped', async () => {
+    const set = await loadCalibrationSet('laptop-m-series-16gb', async (url) =>
+      String(url).includes('postgres-16')
+        ? okJson({ ...emptyProfile('fastify', '5') })
+        : notFound());
+    expect(set.postgres).toBeUndefined();
+    expect(set.fastify).toBeUndefined();
+  });
 });
 
 // ── module cache ────────────────────────────────────────────────────────────

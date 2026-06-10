@@ -103,8 +103,10 @@ export function computeBote(inputs: BoteInputs): BoteEstimates {
 export function toTwoPhaseProfile(
   estimates: BoteEstimates,
   existing: TrafficProfile | null,
-  durationSeconds = 60,
+  durationSecondsOverride?: number,
 ): TrafficProfile {
+  // Keep the user's run length: an existing 120s profile stays 120s.
+  const durationSeconds = durationSecondsOverride ?? existing?.durationSeconds ?? 60;
   const spikeStart = Math.round(durationSeconds * (2 / 3));
   const avg = Math.max(1, Math.round(estimates.avgQps));
   const peak = Math.max(avg, Math.round(estimates.peakQps));
@@ -130,7 +132,7 @@ export function toTwoPhaseProfile(
         endS: durationSeconds,
         rps: peak,
         shape: 'spike',
-        description: `Peak load (${peak} RPS, ${estimates.avgQps > 0 ? (peak / avg).toFixed(1) : '0'}× baseline)`,
+        description: `Peak load (${peak} RPS, ${(peak / avg).toFixed(1)}× baseline)`,
       },
     ],
   };
@@ -140,16 +142,22 @@ export function toTwoPhaseProfile(
 export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-  const i = Math.min(units.length - 1, Math.floor(Math.log2(bytes) / 10));
-  const v = bytes / 2 ** (10 * i);
+  let i = Math.min(units.length - 1, Math.floor(Math.log2(bytes) / 10));
+  let v = bytes / 2 ** (10 * i);
+  // Rounding can cross the unit boundary (1 048 166 B → "1024 KB"): roll up.
+  if (Math.round(v) >= 1024 && i < units.length - 1) {
+    i += 1;
+    v = bytes / 2 ** (10 * i);
+  }
   return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
 /** "1.2M", "340K", "12" — humanized counts for the panel. */
 export function formatCount(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '0';
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  // Round before bucketing so 999.6 renders "1.0K", not "1000".
+  if (Math.round(n) >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
+  if (Math.round(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (Math.round(n) >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return n >= 100 ? String(Math.round(n)) : n.toFixed(1);
 }

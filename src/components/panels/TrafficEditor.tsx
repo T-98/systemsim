@@ -22,6 +22,7 @@ export default function TrafficEditor() {
   const appMode = useStore((s) => s.appMode);
   const setSelectedNodeId = useStore((s) => s.setSelectedNodeId);
   const setConfigPanelOpen = useStore((s) => s.setConfigPanelOpen);
+  const setBotePanelOpen = useStore((s) => s.setBotePanelOpen);
   const [collapsed, setCollapsed] = useState(true);
 
   const [name, setName] = useState(trafficProfile?.profileName ?? 'custom_profile');
@@ -65,6 +66,7 @@ export default function TrafficEditor() {
   // inspector hosts BotePanel (Phase 8a.1).
   const openBote = () => {
     setSelectedNodeId(null);
+    setBotePanelOpen(true);
     setConfigPanelOpen(true);
   };
 

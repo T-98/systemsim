@@ -61,6 +61,20 @@ test.describe('SIMFID Phase 8a — BOTE capacity estimator', () => {
     await page.screenshot({ path: path.join(RESULTS_DIR, 'bote-panel-live-update.png'), fullPage: true });
   });
 
+  test('deleting a selected component does NOT surface the estimator uninvited', async ({ page }) => {
+    await openCanvasFreeform(page);
+
+    // Select a node (opens its config), then delete it from the panel.
+    await page.locator('.react-flow__node').first().click();
+    await expect(page.getByRole('button', { name: 'Delete Component' })).toBeVisible();
+    await page.getByRole('button', { name: 'Delete Component' }).click();
+
+    // The dock must close — not fall through to the BOTE panel (review P1).
+    await expect(page.getByTestId('bote-panel')).not.toBeVisible();
+
+    await page.screenshot({ path: path.join(RESULTS_DIR, 'no-bote-after-delete.png'), fullPage: true });
+  });
+
   test('"Apply to traffic profile" writes a two-phase profile the traffic panel reflects', async ({ page }) => {
     await openCanvasFreeform(page);
     await expandTrafficEditor(page);
@@ -83,9 +97,15 @@ test.describe('SIMFID Phase 8a — BOTE capacity estimator', () => {
 
     // UI-level assertion: the traffic editor's draft re-seeded from the
     // applied profile (the sidebar switched to the Traffic tab on apply).
+    // Read live input values — attribute selectors (input[value*=...]) go
+    // stale on controlled inputs that React reuses across re-seeds.
     await expect(page.getByTestId('traffic-editor-toggle')).toBeVisible();
-    const phaseDescriptions = page.locator('input[value*="Baseline average"]');
-    await expect(phaseDescriptions.first()).toBeVisible();
+    await expect.poll(async () => {
+      const values = await page.locator('input').evaluateAll(
+        (els) => els.map((el) => (el as HTMLInputElement).value),
+      );
+      return values.some((v) => v.includes('Baseline average'));
+    }).toBe(true);
 
     await page.screenshot({ path: path.join(RESULTS_DIR, 'bote-applied-to-traffic.png'), fullPage: true });
   });

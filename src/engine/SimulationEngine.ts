@@ -2199,7 +2199,11 @@ export class SimulationEngine {
         const resource = cpu > mem ? 'CPU' : 'Memory';
         let fix = '';
         if (state.type === 'server') {
-          const procTime = (state.config.processingTimeMs as number) ?? 50;
+          // Same default chain as processServer so the advice numbers match
+          // the model once fastify p50 is calibrated (Phase 8a.2).
+          const procTime = (state.config.processingTimeMs as number)
+            ?? this.calibration.fastify?.anchors.serviceTimeMs.p50
+            ?? 50;
           const serviceRate = Math.round(1000 / procTime);
           const rps = Math.round(state.metrics.rps);
           const needed = Math.ceil(rps / serviceRate);
