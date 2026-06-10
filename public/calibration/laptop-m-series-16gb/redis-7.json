@@ -1,0 +1,14 @@
+{
+  "primitive": "redis",
+  "version": "7",
+  "hardwareClass": "laptop-m-series-16gb",
+  "capturedAt": null,
+  "anchors": {
+    "serviceTimeMs": { "p50": null, "p99": null },
+    "serviceVariance": null,
+    "readThroughputRps": null,
+    "writeThroughputRps": null,
+    "connectionPoolExhaustionMs": null
+  },
+  "source": "empty-default"
+}

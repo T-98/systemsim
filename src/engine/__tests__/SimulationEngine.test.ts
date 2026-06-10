@@ -979,16 +979,20 @@ describe('SimulationEngine', () => {
       const edges = [makeEdge('e1', 'lb', 'srv'), makeEdge('e2', 'srv', 'db')];
       const engine = new SimulationEngine(nodes, edges, steadyProfile(40), undefined, undefined, 4);
 
-      const logs: string[] = [];
+      const logsByTick: string[][] = [];
       for (let i = 0; i < 4; i++) {
         const r = engine.tick();
-        for (const e of r.newLogs) logs.push(e.message);
+        logsByTick.push(r.newLogs.map((e) => e.message));
       }
 
-      // Precondition: the crash really happened on tick 0 (seed-pinned).
-      expect(logs.find((m) => m.includes('db CRASH'))).toBeDefined();
+      // Precondition: the crash really happened ON TICK 0 (seed-pinned). If
+      // an engine change shifts RNG draw order and moves the crash off tick
+      // 0, this assertion fails loudly instead of the test going evergreen
+      // without exercising the crash-before-first-evaluation window.
+      expect(logsByTick[0].find((m) => m.includes('db CRASH'))).toBeDefined();
       // The callout must still fire — acceptance derives from frozen metrics.
-      expect(logs.find((m) => m.includes('signaling backpressure'))).toBeDefined();
+      const all = logsByTick.flat();
+      expect(all.find((m) => m.includes('signaling backpressure'))).toBeDefined();
     });
 
     it('backpressure does not fire on tick 0 (no prior observation)', () => {
