@@ -687,7 +687,7 @@ Too short a duration is the easiest way to grade a broken design as passing.`,
       'Declared arrival-time noise (0–100). Profile metadata — burstiness in the engine comes from phase shape, not this field.',
     body: `# Jitter %
 
-Declared relative noise on request arrival times, 0–100. Editor default 15; the AI traffic generator also defaults to 15 unless you describe unusually regular arrivals.
+Declared relative noise on request arrival times, 0–100. Editor default 15.
 
 Honest model note: the tick engine does **not** read this field. Arrival burstiness is modeled through the phase **shape** instead — each shape maps to a Kingman arrival-variance prior (steady 1.0, ramps/spike 2.0, instant_spike 4.0) that feeds the queueing formula. Per-request arrival gaps don't exist at 1-second tick granularity, so a percent-jitter on arrivals has nothing to perturb. Don't confuse it with the wire-level \`jitterMs\`, which **is** simulated (uniform ± on each hop's latency) — that's where latency noise in your results comes from.
 

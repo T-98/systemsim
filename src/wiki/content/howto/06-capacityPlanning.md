@@ -20,5 +20,5 @@ Most designs start with a gut-feel guess: "two app servers should be plenty." Th
 ## Fix direction
 
 - **Size for peak, not average.** Sizing for the 116 RPS average (6 instances × 20 RPS = 120 RPS) still dies at the 347 RPS spike. That's the lesson: average-based sizing always dies at peak, and peak is ~3× average as a rule of thumb — see [§5 Back-of-Envelope Resource Estimation](#docs/reference/5-back-of-envelope-resource-estimation).
-- **Leave queueing headroom.** 18 instances (360 RPS) technically covers the peak, but at ρ ≈ 0.96 the queue makes latency unusable. Aim for ρ ≤ ~0.7 at peak — around 24 instances here.
+- **Leave queueing headroom.** 18 instances (360 RPS) technically covers the peak, but at ρ ≈ 0.96 the queue makes latency unusable. Aim for ρ ≤ ~0.7 at peak — 25 instances here.
 - **Re-check the tier.** ~350 peak QPS sits in the medium tier — load balancer, replicas, caching — not a two-box stack. See [§4 QPS Tiers & What They Imply](#docs/reference/4-qps-tiers-what-they-imply).
