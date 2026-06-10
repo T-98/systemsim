@@ -184,6 +184,22 @@ export const TOPICS: Record<string, Topic> = {
   'severity.critical': empty('Critical', 'severity'),
 };
 
+// Merge in hand-written topic content (the Phase A-content back-fill the
+// scaffold header above promised). Content lives in per-category modules
+// under src/wiki/content/topics/ so writers can work in parallel without
+// touching this registry; entries here override the empty() placeholders
+// above. The generated merges below still win over these where keys
+// overlap (only `howto.*`, whose bodies come from markdown).
+import { COMPONENT_AND_CONCEPT_TOPICS } from './content/topics/componentsAndConcepts';
+import { CONFIG_INFRA_TOPICS } from './content/topics/configsInfra';
+import { CONFIG_DATA_TRAFFIC_TOPICS } from './content/topics/configsDataTraffic';
+import { NEW_FEATURE_TOPICS } from './content/topics/newFeatures';
+
+for (const [key, topic] of Object.entries(COMPONENT_AND_CONCEPT_TOPICS)) TOPICS[key] = topic;
+for (const [key, topic] of Object.entries(CONFIG_INFRA_TOPICS)) TOPICS[key] = topic;
+for (const [key, topic] of Object.entries(CONFIG_DATA_TRAFFIC_TOPICS)) TOPICS[key] = topic;
+for (const [key, topic] of Object.entries(NEW_FEATURE_TOPICS)) TOPICS[key] = topic;
+
 // Merge in auto-generated reference topics at module load. The generator
 // emits one entry per top-level `## N. Title` section of
 // `system-design-knowledgebase.md`; see `scripts/generate-reference-topics.ts`.

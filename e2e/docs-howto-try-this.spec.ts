@@ -45,8 +45,8 @@ test.describe('Docs How-to tab + CanvasEmbed', () => {
     expect(firstNode).toContain('Edge LB');
   });
 
-  test('all 5 how-to templates render without error', async ({ page }) => {
-    for (const slug of ['cacheStampede', 'hotShard', 'retryStorm', 'breakerTrip', 'backpressurePropagation']) {
+  test('all 6 how-to templates render without error', async ({ page }) => {
+    for (const slug of ['cacheStampede', 'hotShard', 'retryStorm', 'breakerTrip', 'backpressurePropagation', 'capacityPlanning']) {
       await openHowtoTab(page, slug);
       await page.getByTestId('canvas-embed').waitFor({ state: 'visible', timeout: 5000 });
       await expect(page.getByTestId('canvas-embed-error')).toHaveCount(0);
