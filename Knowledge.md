@@ -649,7 +649,9 @@ Decisions [§52](Decisions.md). Knowledge base [§40.6](system-design-knowledgeb
 
 **File:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts)
 
-**Entry point:** `new SimulationEngine(nodes, edges, profile, schemaShardKey, cardinality, seed, stressedMode)` → `.tick()` loop.
+**Entry point:** `new SimulationEngine(nodes, edges, profile, schemaShardKey, cardinality, seed, stressedMode, routingContext?)` → `.tick()` loop.
+
+**Routing context (Phase 4, 2026-04-22):** the optional trailing `routingContext: RoutingContext` bag — `{ endpointRoutes?, schemaMemory?, requestMix? }` — lets the tick-start seed send `requestMix`-weighted traffic to each endpoint's `componentChain[0]`. Unmatched keys fall into a default bucket that's distributed evenly across `entryPoints` (legacy behavior). Fallback layering: matched `requestMix` → `EndpointRoute.weight` → even-split. Stale chain heads fire a one-shot `routing-stale:<endpointId>` callout and redistribute their share across remaining valid endpoints. See [`src/engine/SimulationEngine.ts`](src/engine/SimulationEngine.ts) `seedInboundTraffic`, Decisions [§53](Decisions.md), plan [docs/plans/2026-04-22-simfid-phases-4-8-revised.md](docs/plans/2026-04-22-simfid-phases-4-8-revised.md) §4.2.
 
 **Internal state per component:** `ComponentState { queueDepth, currentConnections, memoryUsed, cacheEntries, shardLoads, accumulatedErrors, totalRequests, crashed, instanceCount, lastComputedLatencyMs }`
 
@@ -662,7 +664,7 @@ Decisions [§52](Decisions.md). Knowledge base [§40.6](system-design-knowledgeb
     - `processServer` — `computeQueueing(...)` from [QueueingModel.ts](src/engine/QueueingModel.ts), saturation callout at ρ≥0.85
     - `processCache` — `computeCacheModel(...)` from [WorkingSetCache.ts](src/engine/WorkingSetCache.ts), Zipfian hit rate, cold-start warmup, stampede detection, miss-storm callout
     - `processQueue` — Little's-Law-ish depth model, 70% capacity callout, overflow log, DLQ handling
-    - `processDatabase` — connection pool, throughput limits, hot-shard Pareto distribution, pool-pressure callout at 80%
+    - `processDatabase` — connection pool, throughput limits, hot-shard Pareto distribution, pool-pressure callout at 80%. Post Phase 4.5 (§56): shard key + cardinality derived per-DB via `resolveShardKeyForDb(dbId)` — `schemaMemory.entities[].assignedDbId` first, then `config.shardKey`, then legacy constructor globals, then `{null, 'high'}`. Dangling partition field names degrade gracefully to 'high'. Multi-DB scenarios now express distinct shard behavior. Post Phase 4.4 (§55): base `dbLatency` is multiplied by `1 + 9 × unindexedShare` where `unindexedShare` = fraction of routed DB-visiting endpoint shares whose `TableAccess.indexed === false` for tables on this DB. `SCAN_FACTOR=10` is locked to `preflight.ts:140`'s "10× slower" copy — change both together. One-shot `unindexed-scan:<tableId>` callout per-DB-per-table fires above 5% of routed traffic using hedged "may include unindexed access" wording. Post Phase 4.3 (§54): read/write sides saturate independently. `computeDbReadWriteBreakdown(dbId, rps)` walks `endpointRoutes[].tablesAccessed` (filtered by `schemaMemory.entities[].assignedDbId === dbId`) to attribute per-endpoint share to read vs write buckets (`read_write` mode adds full share to BOTH — per-operation semantics). With no usable attribution, the full inbound falls back to a 70/30 read/write split (`SimulationEngine.DB_FALLBACK_READ_SHARE`). Each side's saturation curve is the same `clamp(0, 0.9, (util-1)*0.5)` used by connection-pool exhaustion; `errorRate = max(readErrorRate, writeErrorRate, poolDropRate)` so fan-in control signals (breakers/retry/BP) still read the aggregate. Per-side callouts (`read-saturation:<dbId>`, `write-saturation:<dbId>`) fire only when attribution was available.
     - `processWebSocketGateway`, `processFanout`, `processCdn`, `processExternal`, `processAutoscaler`
     Processors emit outbound via `emitOutbound(src, tgt, rps, accLat, logs, backEdges)` / `emitToDownstreams(...)` — no recursion. Back-edge and late-to-target deliveries are deferred into `pendingInbound`.
 4. **Phase C** — for every wire with `target.metrics.rps > 0`, write `wire.lastObservedErrorRate = target.metrics.errorRate` (true aggregate). `evaluateBreakers` and the `acceptanceRate` update proceed against the aggregate.
@@ -678,11 +680,21 @@ Decisions [§52](Decisions.md). Knowledge base [§40.6](system-design-knowledgeb
 - `mulberry32(seed)` — seeded PRNG for reproducible tests
 
 **Queueing math (src/engine/QueueingModel.ts):**
+
+Post Phase 4.6 (§57), Kingman G/G/1 two-moment (Whitt 1993) replaces M/M/1:
+
 - `ρ = arrivalRate / (instanceCount × serviceRate)`
-- `waitTime = procTime × ρ / (1 - ρ)` clamped at `procTime × 19`, total wait capped at 5000ms
+- `waitTime ≈ (ρ / (1-ρ)) × (Cₐ² + C_s²)/2 × procTime` clamped via effective ρ ≤ 0.95, total wait ≤ 5000ms
+  - `Cₐ²` (arrivalVariance) — modeled prior from the current `TrafficPhase.shape`: steady=1.0, ramp_up/ramp_down/spike=2.0, instant_spike=4.0
+  - `C_s²` (serviceVariance) — from component `config.serviceVariance`, default 1.0
+  - `Cₐ² = C_s² = 1.0` collapses to M/M/1 exactly (back-compat invariant)
 - p50 = 0.7 × totalLatency, p95 = 2×, p99 = 4×
 - Drop rate = `1 - 1/ρ` when ρ > 1
 - Concurrency cap: if `arrivalRate × totalLatency/1000 > maxConcurrent × instances`, additional drops
+
+**Coordinated-omission (§59):** the engine is CO-correct within 1-tick granularity. `WireTickOutcome.dispatchedAtTickMs` is stamped at `emitOutbound` and carried through `pendingInbound` cross-tick deferrals so a delivered-next-tick request reports `wireLatency + tickDelay`, not `wireLatency` alone.
+
+**Fan-out tail risk (§58):** pure UI. `FanoutTailSection` in `ConfigPanel.tsx` shows `P(at_least_one_slow) = 1 - (1 - p)^N` Dean-Barroso curve for `fanout` components only (round-7 fix `c667e73` — see §58 for why LBs and api_gateways were dropped: they route ONE request to ONE backend, so their tail risk is the single-backend p99, not compounding). Synthetic threshold `p_single_slow = 0.01` is a UI prior — the engine doesn't measure per-request p99 at tick granularity.
 
 **Cache model (src/engine/WorkingSetCache.ts):**
 - Working set = `min(keyCardinality, rps × ttlSeconds)`

@@ -8,10 +8,23 @@
  * things collapse.
  *
  * Core modeling:
- * - M/M/1-per-instance queueing via Little's Law (see QueueingModel.ts)
- * - Zipfian working-set cache model (see WorkingSetCache.ts)
- * - Wire latency propagation (latency compounds per hop)
- * - Hot shard Pareto distribution when shard key is low-cardinality or user_id
+ * - Kingman G/G/1-per-instance queueing via Whitt 1993 two-moment (see
+ *   QueueingModel.ts). Defaults (`serviceVariance = 1.0`, steady arrivals
+ *   → `Cₐ² = 1.0`) reduce to M/M/1 exactly.
+ * - Zipfian working-set cache model (see WorkingSetCache.ts).
+ * - Wire latency propagation (latency compounds per hop).
+ * - Hot shard Pareto distribution, per-DB via `resolveShardKeyForDb` (§56).
+ * - Read/write split with diagnostic split errorRate fields (§54).
+ * - Unindexed-access latency multiplier (§55, `SCAN_FACTOR=10` locked to
+ *   preflight's user copy).
+ *
+ * Coordinated-omission: the engine is **CO-correct within 1-tick
+ * granularity** — `WireTickOutcome.dispatchedAtTickMs` is stamped at the
+ * upstream processor's emit time and carried through any `pendingInbound`
+ * cross-tick deferral, so saturated components' reported latency accounts
+ * for the scheduling delay, not just the wire hop. The 1-tick residual
+ * imprecision (tick interval = 1 sim-second) is the engine's bucket size,
+ * not an omission. See Decisions §59.
  *
  * Runs entirely in the browser. No backend simulation. The only server-side
  * code (api/*) is for LLM calls.
@@ -32,6 +45,9 @@ import type {
   Particle,
   SimComponentData,
   WireConfig,
+  EndpointRoute,
+  SchemaMemoryBlock,
+  ApiContract,
 } from '../types';
 import type { Node, Edge } from '@xyflow/react';
 import { computeQueueing } from './QueueingModel';
@@ -122,12 +138,50 @@ export interface WireTickOutcome {
   amplification: number;
   /** Target's acceptanceRate used to scale down (1 = pass-through, 0 = fully rejected). */
   appliedBackpressure: number;
+  /**
+   * Phase 4.8 — coordinated-omission-aware dispatch timestamp. Stamped
+   * with `this.time * 1000` (sim-seconds → ms) at the instant the
+   * upstream processor emits this wire outcome. Latency attribution
+   * downstream is computed against this value, NOT against whenever
+   * the request actually gets served — so a request deferred via
+   * `pendingInbound` one tick later reads (t_response − dispatchedAtTickMs)
+   * = wire latency + wait, not wire latency alone. See Decisions §59.
+   * "CO-correct within 1-tick granularity" — the tick-interval
+   * bucketing is the residual imprecision.
+   */
+  dispatchedAtTickMs: number;
 }
 
 /** Per-component inbound latency aggregator: numerator = Σ rps·accLat, denominator = Σ rps. */
 interface InboundLatencyAccumulator {
   num: number;
   denom: number;
+}
+
+/**
+ * Schema + routing information the engine consumes to shape traffic beyond
+ * the raw graph topology. Every field is optional; absent fields fall back
+ * to the pre-Phase-4 even-split-over-entry-points behavior so existing call
+ * sites stay source-compatible.
+ *
+ * - `endpointRoutes` — first node of each `componentChain` becomes the
+ *   per-endpoint traffic sink (Phase 4.2). The DB processor also reads these
+ *   chains for read/write split and unindexed-scan attribution (Phase 4.3-4.4).
+ * - `schemaMemory` — per-DB shard key + cardinality derivation (Phase 4.5)
+ *   and table→DB resolution for scan-attribution.
+ * - `requestMix` — weights keyed by either `EndpointRoute.endpointId` (uuid)
+ *   or the contract's `"METHOD PATH"` form (e.g. `"POST /checkout"`). The
+ *   second form is the shape authored scenarios use (see `src/scenarios/discord.ts`)
+ *   and requires `apiContracts` to resolve. Keys that match neither fall into
+ *   a "default" bucket distributed evenly across `entryPoints`.
+ * - `apiContracts` — joined to `endpointRoutes` by `contract.id === route.endpointId`
+ *   so the engine can match `"METHOD PATH"` keys in `requestMix`.
+ */
+export interface RoutingContext {
+  endpointRoutes?: EndpointRoute[];
+  schemaMemory?: SchemaMemoryBlock | null;
+  requestMix?: Record<string, number>;
+  apiContracts?: ApiContract[];
 }
 
 // Seeded PRNG (mulberry32) for reproducible simulations in tests
@@ -163,6 +217,11 @@ export class SimulationEngine {
   private entryPoints: string[] = [];
   private schemaShardKey: string | null = null;
   private schemaShardKeyCardinality: 'low' | 'medium' | 'high' = 'high';
+  // Phase 4 routing context — additive; null/empty preserves pre-Phase-4 behavior.
+  private endpointRoutes: EndpointRoute[] = [];
+  private schemaMemory: SchemaMemoryBlock | null = null;
+  private requestMix: Record<string, number> | null = null;
+  private apiContracts: ApiContract[] = [];
   private lastLogTime: Map<string, number> = new Map(); // throttle logs per component
   private random: () => number; // seeded PRNG for reproducibility
   private firedCallouts: Set<string> = new Set(); // saturation warnings, once per component per run
@@ -171,8 +230,30 @@ export class SimulationEngine {
   private inboundLat: Map<string, InboundLatencyAccumulator> = new Map();
   private wireOutcomes: Map<string, WireTickOutcome> = new Map();
   private processedThisTick: Set<string> = new Set();
+  /**
+   * Per-endpoint entry-RPS map populated by `seedInboundTraffic` and consumed
+   * by downstream processors (DB read/write split, unindexed-scan multiplier —
+   * Phase 4.3 / 4.4). Keyed by `EndpointRoute.endpointId`; value is the RPS
+   * (per-tick units, same as `inboundRps`) actually routed to that endpoint's
+   * `componentChain[0]` THIS tick — i.e., includes the redistribution of
+   * stale-chain and unmatched weight. Stale endpoints are absent. Cleared at
+   * tick start before seeding. Readers must treat this as an at-the-entry
+   * signal; RPS may amplify (fan-out) or shrink (cache hit) along the chain,
+   * so this is an attribution proxy, not the DB's exact inbound. See
+   * Decisions §54 for the diagnostic-not-control-signal compromise.
+   */
+  private endpointShareRpsThisTick: Map<string, number> = new Map();
   // Cycle/back-edge traffic that couldn't be delivered this tick is carried into next tick.
-  private pendingInbound: Map<string, { rps: number; latNum: number }> = new Map();
+  private pendingInbound: Map<string, { rps: number; latNum: number; earliestDispatchMs: number }> = new Map();
+  // Per-component earliest dispatch timestamp among this tick's INBOUND
+  // (fresh + deferred-from-prior-tick). When a component emits outbound,
+  // `WireTickOutcome.dispatchedAtTickMs` must reflect the original request's
+  // dispatch time, not the emit time — otherwise deferred paths report
+  // downstream requests as "younger" than they are, breaking the CO-correct-
+  // within-1-tick semantic Decisions §59 promised. Populated at tick-start
+  // when pendingInbound is drained; consulted in emitOutbound.
+  // Codex round 6 [P2].
+  private componentEarliestInboundMs: Map<string, number> = new Map();
   private calloutEntries: WeakSet<LogEntry> = new WeakSet(); // entries that bypass the per-tick throttle
   private peakCacheHitRate: Map<string, number> = new Map(); // track peak hitRate per cache for miss-storm detection
   private stressedMode = false; // worst-case run: peak RPS held, cold cache, wire p99
@@ -185,12 +266,20 @@ export class SimulationEngine {
     schemaShardKeyCardinality?: 'low' | 'medium' | 'high',
     seed?: number,
     stressedMode = false,
+    routingContext?: RoutingContext,
   ) {
     this.random = seed != null ? mulberry32(seed) : Math.random;
     this.trafficProfile = trafficProfile;
     this.schemaShardKey = schemaShardKey ?? null;
     this.schemaShardKeyCardinality = schemaShardKeyCardinality ?? 'high';
     this.stressedMode = stressedMode;
+    this.endpointRoutes = routingContext?.endpointRoutes ?? [];
+    this.schemaMemory = routingContext?.schemaMemory ?? null;
+    this.apiContracts = routingContext?.apiContracts ?? [];
+    // Prefer the explicit routing-context mix; fall back to the mix embedded in
+    // the TrafficProfile so callers that haven't been updated still get
+    // per-endpoint routing if the profile has matching keys.
+    this.requestMix = routingContext?.requestMix ?? trafficProfile.requestMix ?? null;
 
     // Initialize component states
     for (const node of nodes) {
@@ -324,6 +413,60 @@ export class SimulationEngine {
     return this.time >= this.trafficProfile.durationSeconds;
   }
 
+  /**
+   * Phase 4.6 — Kingman arrival-variance prior. Maps the current traffic
+   * phase's `shape` to a squared coefficient of variation of interarrival
+   * times (Cₐ²):
+   *
+   *   - `steady`                         → 1.0 (Poisson-style, M/M/1 default)
+   *   - `ramp_up` / `ramp_down` / `spike` → 2.0 (mild burstiness)
+   *   - `instant_spike`                  → 4.0 (hard burstiness)
+   *
+   * This is a MODELED prior, not a measurement — the tick interval doesn't
+   * give us per-request arrival-gap samples. See Decisions §57 and the
+   * QueueingModel.ts file docstring for the rationale. Returns 1.0 when
+   * no phase covers `this.time` (no-traffic gap) — no burstiness applies
+   * to zero arrivals.
+   */
+  private getCurrentArrivalVariance(): number {
+    const shapeToCa2 = (shape: string): number => {
+      switch (shape) {
+        case 'steady': return 1.0;
+        case 'ramp_up':
+        case 'ramp_down':
+        case 'spike': return 2.0;
+        case 'instant_spike': return 4.0;
+        default: return 1.0;
+      }
+    };
+    if (this.stressedMode) {
+      // Stressed mode holds peak RPS from across ALL phases — the Cₐ² must
+      // come from the SAME phase as the peak, not from `this.time`'s phase.
+      // Otherwise a stressed run that peaks in a later `instant_spike`
+      // phase would simulate early ticks at peak RPS with steady-phase
+      // Cₐ²=1, and Kingman would materially underestimate the queueing
+      // delay in the mode that's supposed to be worst-case. Codex round
+      // 5 [P2]. If multiple phases share the peak, the worst-burstiness
+      // (highest Cₐ²) wins.
+      let peakRps = 0;
+      let peakCa2 = 1.0;
+      for (const phase of this.trafficProfile.phases) {
+        const phaseCa2 = shapeToCa2(phase.shape);
+        if (phase.rps > peakRps) {
+          peakRps = phase.rps;
+          peakCa2 = phaseCa2;
+        } else if (phase.rps === peakRps && phaseCa2 > peakCa2) {
+          peakCa2 = phaseCa2;
+        }
+      }
+      return peakCa2;
+    }
+    for (const phase of this.trafficProfile.phases) {
+      if (this.time >= phase.startS && this.time < phase.endS) return shapeToCa2(phase.shape);
+    }
+    return 1.0;
+  }
+
   private getCurrentRps(): number {
     if (this.stressedMode) {
       // Stressed mode: hold the peak RPS for the full run
@@ -357,6 +500,177 @@ export class SimulationEngine {
   private addJitter(value: number, jitterPct: number): number {
     const jitter = (this.random() - 0.5) * 2 * (jitterPct / 100) * value;
     return Math.max(0, value + jitter);
+  }
+
+  /** Inbound-accumulator write with 0 upstream latency — used by entry seeding. */
+  private seedAt(id: string, rps: number) {
+    if (rps <= 0) return;
+    this.inboundRps.set(id, (this.inboundRps.get(id) ?? 0) + rps);
+    const acc = this.inboundLat.get(id) ?? { num: 0, denom: 0 };
+    acc.denom += rps;
+    this.inboundLat.set(id, acc);
+  }
+
+  /**
+   * Seed each component's per-tick inbound accumulators with the tick's total
+   * traffic. Per-endpoint routing when `endpointRoutes` + weights are available,
+   * legacy even-split over `entryPoints` otherwise. See Phase 4.2 of
+   * `docs/plans/2026-04-22-simfid-phases-4-8-revised.md` for the fallback
+   * layering this implements.
+   */
+  private seedInboundTraffic(rpsPerTick: number, logs: LogEntry[]) {
+    if (rpsPerTick <= 0) return;
+
+    const fallbackEvenSplit = () => {
+      const per = rpsPerTick / Math.max(this.entryPoints.length, 1);
+      for (const id of this.entryPoints) this.seedAt(id, per);
+    };
+
+    if (this.endpointRoutes.length === 0) {
+      fallbackEvenSplit();
+      return;
+    }
+
+    // Pass 1 — partition requestMix into matched vs unmatched. A key matches if
+    // it equals an endpointId (uuid shape) OR if it matches the "METHOD PATH"
+    // form of the route's ApiContract (path-string shape, what checked-in
+    // scenarios like `src/scenarios/discord.ts` author). Ambiguous "METHOD PATH"
+    // (two contracts sharing the same method+path, which is a data bug in the
+    // user's design) is treated as unmatched + warned, not silently misrouted.
+    const matched: Array<{ route: EndpointRoute; weight: number }> = [];
+    let unmatchedWeight = 0;
+    if (this.requestMix) {
+      const byMethodPath = new Map<string, EndpointRoute | null>();
+      for (const contract of this.apiContracts) {
+        const route = this.endpointRoutes.find((r) => r.endpointId === contract.id);
+        if (!route) continue;
+        const key = `${contract.method} ${contract.path}`;
+        byMethodPath.set(key, byMethodPath.has(key) ? null : route);
+      }
+      for (const [key, weight] of Object.entries(this.requestMix)) {
+        if (!Number.isFinite(weight) || weight <= 0) continue;
+        const idMatch = this.endpointRoutes.find((r) => r.endpointId === key);
+        const pathMatch = idMatch ? undefined : byMethodPath.get(key);
+        if (pathMatch === null) {
+          // Ambiguous METHOD+PATH — fall through to default bucket + warn once.
+          this.fireCallout(
+            logs,
+            key,
+            `routing-ambiguous:${key}`,
+            `Two or more API contracts share "${key}" — requestMix key "${key}" is ambiguous, falling back to default bucket at t=${Math.round(this.time)}s`,
+          );
+          unmatchedWeight += weight;
+          continue;
+        }
+        const route = idMatch ?? pathMatch;
+        if (route) matched.push({ route, weight });
+        else unmatchedWeight += weight;
+      }
+    }
+
+    // Fallback layer 2: no endpoint-keyed weights in requestMix, but routes
+    // carry a non-zero `weight` field — use those instead.
+    if (matched.length === 0) {
+      const routeWeightSum = this.endpointRoutes.reduce(
+        (s, r) => s + (Number.isFinite(r.weight) && r.weight > 0 ? r.weight : 0),
+        0,
+      );
+      if (routeWeightSum > 0) {
+        for (const r of this.endpointRoutes) {
+          if (Number.isFinite(r.weight) && r.weight > 0) matched.push({ route: r, weight: r.weight });
+        }
+        unmatchedWeight = 0;
+      }
+    }
+
+    // Fallback layer 3: neither a matching mix key nor a non-zero route weight.
+    if (matched.length === 0) {
+      fallbackEvenSplit();
+      return;
+    }
+
+    // Pass 2 — split matched into valid (chain head is a known node) and
+    // invalid (stale chain → redistribute its share across valid matched).
+    const totalMatchedWeight = matched.reduce((s, m) => s + m.weight, 0);
+    const totalMixSum = totalMatchedWeight + unmatchedWeight;
+    if (totalMixSum <= 0) {
+      fallbackEvenSplit();
+      return;
+    }
+
+    const valid: Array<{ route: EndpointRoute; weight: number }> = [];
+    let invalidWeight = 0;
+    for (const m of matched) {
+      const chain = m.route.componentChain;
+      const head = chain[0];
+      // Whole-chain validity. Seeding into a chain whose head still exists
+      // but whose downstream edges were removed / never wired would bypass
+      // the real graph entirely — a newly-added upstream gateway/LB would
+      // see 0 RPS while the stale chain's head absorbed the full endpoint
+      // load. Codex round 5 [P1]. Walk consecutive pairs against the live
+      // adjacency; if any pair is broken OR any node is missing, the
+      // route is stale.
+      let chainValid = Boolean(head && this.components.has(head));
+      if (chainValid) {
+        for (let i = 0; i < chain.length - 1; i++) {
+          if (!this.components.has(chain[i + 1])) { chainValid = false; break; }
+          const succ = this.adjacency.get(chain[i]) ?? [];
+          if (!succ.includes(chain[i + 1])) { chainValid = false; break; }
+        }
+      }
+      // Ingress-bypass check: if the head now has predecessors in the live
+      // graph AND isn't flagged as an entry point, the user added an
+      // upstream component (gateway/LB/rate-limiter) that the route doesn't
+      // know about. Seeding at the head would silently skip that upstream's
+      // rate-limit / latency / resilience logic. Codex round 6 [P1].
+      if (chainValid && head) {
+        const hasPredecessors = (this.reverseAdj.get(head) ?? []).length > 0;
+        const isExplicitEntry = this.entryPoints.includes(head);
+        if (hasPredecessors && !isExplicitEntry) chainValid = false;
+      }
+      if (chainValid) {
+        valid.push(m);
+      } else {
+        invalidWeight += m.weight;
+        this.fireCallout(
+          logs,
+          head ?? m.route.endpointId,
+          `routing-stale:${m.route.endpointId}`,
+          `Endpoint ${m.route.endpointId} chain ${JSON.stringify(chain)} no longer matches the live graph — redistributing its share across valid endpoints at t=${Math.round(this.time)}s`,
+        );
+      }
+    }
+
+    // If every matched endpoint was stale, degrade gracefully to a pure even
+    // split over entry points so the full tick RPS still flows. The per-stale
+    // callouts already named which endpoints broke; no extra signal needed.
+    if (valid.length === 0) {
+      void invalidWeight; // weights already accounted for by the per-endpoint callouts
+      fallbackEvenSplit();
+      return;
+    }
+
+    // Routed portion = full matched share (valid + invalid). Invalid share is
+    // redistributed proportionally across valid endpoints via validWeightSum.
+    const routedShareRps = (totalMatchedWeight / totalMixSum) * rpsPerTick;
+    const validWeightSum = valid.reduce((s, v) => s + v.weight, 0);
+    for (const v of valid) {
+      const share = routedShareRps * (v.weight / validWeightSum);
+      this.seedAt(v.route.componentChain[0], share);
+      // Record the at-entry share so DB processor can attribute read/write
+      // traffic to this endpoint. Accumulate in case the same endpointId
+      // appears in multiple matched buckets.
+      const prev = this.endpointShareRpsThisTick.get(v.route.endpointId) ?? 0;
+      this.endpointShareRpsThisTick.set(v.route.endpointId, prev + share);
+    }
+
+    // Default bucket → even-split across entry points (matches legacy behavior
+    // for the "/*" portion of traffic).
+    const defaultRps = rpsPerTick - routedShareRps;
+    if (defaultRps > 0 && this.entryPoints.length > 0) {
+      const per = defaultRps / this.entryPoints.length;
+      for (const id of this.entryPoints) this.seedAt(id, per);
+    }
   }
 
   /**
@@ -422,6 +736,7 @@ export class SimulationEngine {
     this.inboundLat.clear();
     this.wireOutcomes.clear();
     this.processedThisTick.clear();
+    this.endpointShareRpsThisTick.clear();
 
     // Merge any back-edge traffic that was deferred from the previous tick.
     // Each deferred hop incurs a full tick of scheduling delay (~tickInterval
@@ -430,6 +745,7 @@ export class SimulationEngine {
     // accumulatedLatencyMs. pendingInbound is emptied; fresh deferrals added
     // during Phase B accumulate for the following tick.
     const tickDelayMs = this.tickInterval * 1000;
+    this.componentEarliestInboundMs.clear();
     this.pendingInbound.forEach((pending, id) => {
       if (pending.rps <= 0) return;
       this.inboundRps.set(id, (this.inboundRps.get(id) ?? 0) + pending.rps);
@@ -437,6 +753,10 @@ export class SimulationEngine {
       acc.num += pending.latNum + pending.rps * tickDelayMs;
       acc.denom += pending.rps;
       this.inboundLat.set(id, acc);
+      // Record earliest dispatch for emits this tick — lets outbound wire
+      // outcomes from `id` correctly report the ORIGINAL dispatch time
+      // instead of this tick's time. Codex round 6 [P2].
+      this.componentEarliestInboundMs.set(id, pending.earliestDispatchMs);
     });
     this.pendingInbound.clear();
 
@@ -444,18 +764,24 @@ export class SimulationEngine {
       source: w.source,
       target: w.target,
     }));
-    const { order, backEdges } = topologicalOrder(edgesForTopo, this.entryPoints);
-
-    // Seed entry points with the tick's total RPS divided evenly. Entry
-    // components have no upstream latency — accLat starts at 0.
-    const rpsPerEntry = rpsPerTick / Math.max(this.entryPoints.length, 1);
-    for (const entryId of this.entryPoints) {
-      this.inboundRps.set(entryId, (this.inboundRps.get(entryId) ?? 0) + rpsPerEntry);
-      // Entry latency denominator is rpsPerEntry; numerator is 0 (0 upstream latency).
-      const acc = this.inboundLat.get(entryId) ?? { num: 0, denom: 0 };
-      acc.denom += rpsPerEntry;
-      this.inboundLat.set(entryId, acc);
+    // Topological roots = explicit entry points ∪ every route's chain head.
+    // Without the chain heads, a route whose `componentChain[0]` isn't in
+    // `entryPoints` (common when `setApiContracts` falls back to
+    // `[ownerServiceId]` while the graph is still incomplete) would be
+    // seeded in Phase A but run only in the Map-insertion-order catch-all
+    // below — producing a persistent one-tick lag and order-dependent
+    // downstream metrics. See Decisions §62 / codex round 3.
+    const topoRoots = new Set<string>(this.entryPoints);
+    for (const route of this.endpointRoutes) {
+      const head = route.componentChain[0];
+      if (head && this.components.has(head)) topoRoots.add(head);
     }
+    const { order, backEdges } = topologicalOrder(edgesForTopo, Array.from(topoRoots));
+
+    // Seed inbound traffic for this tick. Per-endpoint routing via
+    // `endpointRoutes` + `requestMix` when available; legacy even-split over
+    // `entryPoints` otherwise. Entry components have 0 upstream latency.
+    this.seedInboundTraffic(rpsPerTick, newLogs);
 
     // ── Phase B: process every reachable component exactly once, in order ──
     //
@@ -513,8 +839,14 @@ export class SimulationEngine {
     // matches real systems.
     //
     // No-traffic guard as above.
+    //
+    // Crashed components are NOT skipped: their metrics are frozen at the
+    // last processed tick (§12c), so the signal derives from that frozen
+    // aggregate errorRate. Skipping them left acceptanceRate at its init
+    // value 1.0 whenever the crash landed before the first evaluation —
+    // a dead, 100%-saturated database advertising full acceptance, so no
+    // upstream ever scaled down or logged the backpressure callout.
     this.components.forEach((state) => {
-      if (state.crashed) return;
       if (!readBackpressureConfig(state.config)) return;
       if (state.metrics.rps <= 0) return; // no traffic = no new signal
       state.acceptanceRate = computeAcceptanceRate(state.metrics.errorRate);
@@ -598,6 +930,17 @@ export class SimulationEngine {
     const wire = this.findWire(sourceId, targetId);
     const wireId = wire?.id ?? `${sourceId}|${targetId}`;
 
+    // CO-aware dispatch timestamp — reflects the ORIGINAL request's
+    // dispatch time, not the emit time. When the source component's
+    // inbound this tick included deferred traffic (from the prior tick's
+    // pendingInbound), propagate the earliest dispatch forward so
+    // downstream consumers of `WireTickOutcome.dispatchedAtTickMs`
+    // report the request as the age it actually is. Codex round 6 [P2].
+    const srcEarliestMs = this.componentEarliestInboundMs.get(sourceId);
+    const dispatchedAtTickMs = srcEarliestMs !== undefined
+      ? Math.min(this.time * 1000, srcEarliestMs)
+      : this.time * 1000;
+
     const outcome: WireTickOutcome = {
       wireId,
       source: sourceId,
@@ -606,6 +949,7 @@ export class SimulationEngine {
       rpsEffective: 0,
       amplification: 1,
       appliedBackpressure: 1,
+      dispatchedAtTickMs,
     };
 
     if (wire?.breaker?.status === 'open') {
@@ -653,9 +997,14 @@ export class SimulationEngine {
         // The NEXT tick's emitOutbound sees this as fresh inbound (merged in at
         // tick start) and only then sets `hadTrafficThisTick` if delivery
         // succeeds.
-        const p = this.pendingInbound.get(targetId) ?? { rps: 0, latNum: 0 };
+        const p = this.pendingInbound.get(targetId)
+          ?? { rps: 0, latNum: 0, earliestDispatchMs: Number.POSITIVE_INFINITY };
         p.rps += eff;
         p.latNum += eff * targetAccLat;
+        // Multiple wires can defer to the same target this tick — keep the
+        // earliest so the downstream emit next tick reports the original
+        // dispatch, not the youngest contributor. Codex round 6 [P2].
+        p.earliestDispatchMs = Math.min(p.earliestDispatchMs, dispatchedAtTickMs);
         this.pendingInbound.set(targetId, p);
       } else {
         // Real delivery this tick. Safe to mark the breaker as having seen
@@ -666,6 +1015,21 @@ export class SimulationEngine {
         acc.num += eff * targetAccLat;
         acc.denom += eff;
         this.inboundLat.set(targetId, acc);
+        // Codex round 7 [P2-CO]. Propagate the dispatch timestamp through
+        // multi-hop in-tick paths. Without this, only the FIRST component
+        // receiving deferred traffic emits with the original dispatch
+        // time — once that component runs and emits to its OWN downstream,
+        // the next outcome stamps `this.time * 1000` again because the
+        // target's `componentEarliestInboundMs` was never seeded for the
+        // in-tick path. Cycle A→B→A→C demonstrated the leak: tick T+1
+        // merged A's deferred inbound with earliest=T*1000, but B→C in
+        // the same tick lost it. Same `min` semantics as the deferred
+        // branch above so multiple in-tick wires onto the same target
+        // keep the earliest dispatch.
+        const existingEarliest = this.componentEarliestInboundMs.get(targetId) ?? Number.POSITIVE_INFINITY;
+        if (dispatchedAtTickMs < existingEarliest) {
+          this.componentEarliestInboundMs.set(targetId, dispatchedAtTickMs);
+        }
       }
     }
 
@@ -900,11 +1264,20 @@ export class SimulationEngine {
 
     const arrivalRateRps = rps / this.tickInterval;
 
+    // Phase 4.6 — Kingman G/G/1. `serviceVariance` is an optional config
+    // field; default 1.0 collapses the two-moment formula back to M/M/1
+    // exactly, preserving pre-Phase-4.6 behavior for every existing test.
+    // `arrivalVariance` comes from the tick's current traffic phase shape.
+    const serviceVariance = typeof state.config.serviceVariance === 'number'
+      ? (state.config.serviceVariance as number)
+      : 1.0;
     const q = computeQueueing({
       arrivalRateRps,
       processingTimeMs: processingTime,
       instanceCount: instances,
       maxConcurrentPerInstance: maxConcurrent,
+      arrivalVariance: this.getCurrentArrivalVariance(),
+      serviceVariance,
     });
 
     state.metrics.cpuPercent = q.utilization * 100;
@@ -1084,6 +1457,325 @@ export class SimulationEngine {
     this.emitToDownstreams(state.id, consumed, accumulatedLatencyMs + state.metrics.p50, logs, backEdges);
   }
 
+  /**
+   * Phase 4.3 — read/write attribution fallback. Applies when the DB has no
+   * usable per-endpoint attribution (no `endpointRoutes`, or no chain visits
+   * this DB). Matches typical load-generator defaults; see Decisions §54 for
+   * why 70/30 and not 80/20. Don't change in isolation — the unindexed-scan
+   * multiplier (Phase 4.4) and the Kingman arrival-variance math (Phase 4.6)
+   * assume this split shape for their fallback branches too.
+   */
+  private static readonly DB_FALLBACK_READ_SHARE = 0.7;
+
+  /**
+   * Phase 4.4 — latency multiplier for unindexed access. Must match
+   * [`src/engine/preflight.ts:140`](preflight.ts) user-facing copy ("Queries
+   * without indexes are 10x slower"). Changing this in one place and not the
+   * other is a correctness regression; they MUST agree.
+   */
+  private static readonly SCAN_FACTOR = 10;
+
+  /**
+   * Phase 4.4 — threshold (fraction of this DB's routed inbound) above which
+   * the one-shot unindexed-scan callout fires per `(dbId, tableId)` key. 5%
+   * picks up meaningful scans while staying quiet for scenarios that model
+   * tiny admin endpoints (1% of traffic hitting an un-indexed internal
+   * table is not a finding worth surfacing).
+   */
+  private static readonly UNINDEXED_CALLOUT_THRESHOLD = 0.05;
+
+  /**
+   * Compute read vs write inbound RPS breakdown for a database from the
+   * per-tick endpoint share map (populated by `seedInboundTraffic`) + the
+   * `schemaMemory` table→DB join.
+   *
+   * Algorithm — walks every EndpointRoute whose `componentChain` visits this
+   * DB id; for each such route, only `TableAccess` entries whose `tableId`
+   * resolves (via `schemaMemory.entities[].assignedDbId`) to THIS DB are
+   * counted. Mode semantics are per-operation, not per-request: `read_write`
+   * adds the full endpoint share to both buckets (one request does both a
+   * read AND a write), matching the plan's §4.3 algorithm.
+   *
+   * Fallback — when no endpoint contributes to either bucket, the full
+   * inbound RPS splits `DB_FALLBACK_READ_SHARE / 1-DB_FALLBACK_READ_SHARE`
+   * between read and write. A `null` return would force every call site to
+   * handle the degenerate case; instead we always return a sensible shape.
+   *
+   * Edge cases: routes with `tablesAccessed` pointing to tables not on this
+   * DB contribute zero; the endpoint visit itself is "ambient" and folded
+   * into the untracked-remainder 70/30. Endpoints whose `tablesAccessed`
+   * arrays are empty but whose chain visits this DB are treated as having
+   * no read/write operations here (same rationale — we can't infer the
+   * mode). Callers get back rps-per-tick in both fields (matching
+   * `inboundRps` units).
+   */
+  /**
+   * DB-arrival scaling factor. The seeded `endpointShareRpsThisTick` is the
+   * RPS set at `componentChain[0]`, NOT what reaches the DB after upstream
+   * caches/CDNs filter or fan-outs amplify. Without this factor, a route
+   * like `svc → cache(90% hit) → db` would still attribute the full entry
+   * share to the DB, making breakers/retry/backpressure react to phantom
+   * saturation. Codex [P1b] / [P2a].
+   *
+   * Factor = totalInboundRps / Σ(entry share of routes visiting this DB).
+   * Filter case (factor < 1): routes scale down. Amplification case
+   * (factor > 1): routes scale up. Mixed default-bucket-contribution case
+   * over-attributes routes by the default bucket's DB share — documented
+   * approximation, acceptable vs the alternative (false-negative saturation).
+   *
+   * Returns 0 when no routes visit (caller falls back to pure 70/30) or
+   * when totalInboundRps is 0.
+   */
+  private computeDbArrivalFactor(dbId: string, totalInboundRps: number): number {
+    if (totalInboundRps <= 0 || this.endpointRoutes.length === 0) return 0;
+    let amplifiedEntryShareToDb = 0;
+    for (const route of this.endpointRoutes) {
+      if (!this.routeReachesDbInLiveGraph(route, dbId)) continue;
+      const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+      amplifiedEntryShareToDb += entryShare * this.routeStaticAmplificationToNode(route, dbId);
+    }
+    if (amplifiedEntryShareToDb <= 0) return 0;
+    // Cap at 1 — the factor can scale routes' DB share DOWN (upstream filters
+    // like cache hits) but NEVER UP beyond what the route is statically
+    // configured to deliver. The "up" case would misattribute default-bucket
+    // or unmatched-mix traffic onto whatever read/write/indexed metadata the
+    // matched routes happen to carry — a DB with 10% routed writes + 90%
+    // default traffic would be simulated as 100% writes. The caller's 70/30
+    // remainder path handles whatever totalInboundRps exceeds the routed
+    // share. Codex round 4 [P1].
+    //
+    // Round-8 fix (Decisions §66): the denominator multiplies entry shares
+    // by `routeStaticAmplificationToNode` so fanout-amplified routes are
+    // counted at their actually-delivered share, not their seeded entry
+    // share. Without this, `svc → fanout(10) → db` with 100 entry-rps would
+    // attribute 100 writes against a DB receiving 1000 — silently hiding
+    // saturation when capacity sits between 100 and 1000.
+    return Math.min(1, totalInboundRps / amplifiedEntryShareToDb);
+  }
+
+  /**
+   * Static amplification factor for a route's chain prefix from
+   * `componentChain[0]` up to (but not including) `targetId`. Reads each
+   * intermediate component's CONFIGURED amplification — currently only
+   * `fanout.config.multiplier` (other component types are 1:1 in their
+   * static config; their dynamic effects like cache-hit-rate filtering are
+   * captured by the `dbArrivalFactor < 1` clamp via the observed
+   * `totalInboundRps`).
+   *
+   * Returns 1 when the target is the chain head (no amplification before
+   * it) or when no fanout components are in the prefix.
+   *
+   * Codex round 8 [P1] — without this, `dbArrivalFactor`'s cap at 1 would
+   * silently flatten fanout-amplified routes' DB share to their entry
+   * share, hiding real saturation under realistic fanout-write topologies.
+   */
+  private routeStaticAmplificationToNode(route: EndpointRoute, targetId: string): number {
+    const chain = route.componentChain;
+    const targetIdx = chain.indexOf(targetId);
+    if (targetIdx <= 0) return 1;
+    let amp = 1;
+    for (let i = 0; i < targetIdx; i++) {
+      const comp = this.components.get(chain[i]);
+      if (!comp) return 1;
+      if (comp.type === 'fanout') {
+        const m = comp.config.multiplier as number | undefined;
+        if (Number.isFinite(m) && (m as number) > 0) amp *= m as number;
+      }
+    }
+    return amp;
+  }
+
+  /**
+   * True iff `route.componentChain` is still a faithful prefix-path in the
+   * current live graph up to and including `dbId`. Used to skip stale
+   * routes from DB attribution — a route whose chain says `['svc', 'db']`
+   * after the svc→db edge was removed would otherwise project its entry
+   * share onto whatever traffic the DB currently receives and fire phantom
+   * saturation / scan diagnostics. Codex round 3 [P1].
+   *
+   * Cheap — a handful of Map lookups per route. Called inside the DB
+   * processor's attribution loops, which only run when routes are present.
+   */
+  private routeReachesDbInLiveGraph(route: EndpointRoute, dbId: string): boolean {
+    const chain = route.componentChain;
+    const dbIdx = chain.indexOf(dbId);
+    if (dbIdx < 0) return false;
+    if (!this.components.has(chain[0])) return false;
+    for (let i = 0; i < dbIdx; i++) {
+      const src = chain[i];
+      const tgt = chain[i + 1];
+      if (!this.components.has(tgt)) return false;
+      const succ = this.adjacency.get(src) ?? [];
+      if (!succ.includes(tgt)) return false;
+    }
+    return true;
+  }
+
+  private computeDbReadWriteBreakdown(
+    dbId: string,
+    totalInboundRps: number,
+  ): { readRps: number; writeRps: number; attributed: boolean; attributionRatio: number } {
+    if (totalInboundRps <= 0) return { readRps: 0, writeRps: 0, attributed: false, attributionRatio: 0 };
+
+    // Early-out: no routing context at all → full 70/30 fallback.
+    if (this.endpointRoutes.length === 0) {
+      return {
+        readRps: totalInboundRps * SimulationEngine.DB_FALLBACK_READ_SHARE,
+        writeRps: totalInboundRps * (1 - SimulationEngine.DB_FALLBACK_READ_SHARE),
+        attributed: false,
+        attributionRatio: 0,
+      };
+    }
+
+    // Table→DB join. Tables "live on" this DB iff their owning entity is
+    // assigned to the DB via `assignedDbId`. For the common case where no
+    // entities are mapped yet we keep the map empty — every TableAccess
+    // lookup will miss, and the fallback branch below handles it.
+    const tablesOnThisDb = new Set<string>();
+    if (this.schemaMemory) {
+      for (const entity of this.schemaMemory.entities) {
+        if (entity.assignedDbId === dbId) tablesOnThisDb.add(entity.id);
+      }
+    }
+
+    const dbArrivalFactor = this.computeDbArrivalFactor(dbId, totalInboundRps);
+
+    let routedReadRps = 0;
+    let routedWriteRps = 0;
+    // Unique route share at the DB — counts each endpoint ONCE regardless
+    // of how many table ops it did. Critical: `read_write` mode contributes
+    // to BOTH read and write buckets, so summing `routedReadRps +
+    // routedWriteRps` would double-count the share for remainder math.
+    // Codex [P1a].
+    let attributedRpsAtDb = 0;
+    for (const route of this.endpointRoutes) {
+      if (!this.routeReachesDbInLiveGraph(route, dbId)) continue;
+      const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+      if (entryShare <= 0) continue;
+      // dbShare = entry × static-amplification × cap-or-filter — round-8 §66.
+      // The amplification term restores fanout modeling lost in §63;
+      // dbArrivalFactor still clamps default-bucket bleed and applies the
+      // observed filter ratio for cache-fronted paths.
+      const amp = this.routeStaticAmplificationToNode(route, dbId);
+      const dbShare = entryShare * amp * dbArrivalFactor;
+      let touchedRead = false;
+      let touchedWrite = false;
+      for (const ta of route.tablesAccessed) {
+        // If we know the schema join, filter to tables on this DB. If we
+        // don't (empty schemaMemory or entity unassigned), accept any table
+        // in the endpoint's list — better over-attribute than silently zero.
+        if (tablesOnThisDb.size > 0 && !tablesOnThisDb.has(ta.tableId)) continue;
+        if (ta.mode === 'read') touchedRead = true;
+        else if (ta.mode === 'write') touchedWrite = true;
+        else if (ta.mode === 'read_write') { touchedRead = true; touchedWrite = true; }
+      }
+      if (touchedRead) routedReadRps += dbShare;
+      if (touchedWrite) routedWriteRps += dbShare;
+      if (touchedRead || touchedWrite) attributedRpsAtDb += dbShare;
+    }
+
+    // Nothing attributable (schema missing, tables unknown, or chains don't
+    // visit) → 70/30 fallback on the full inbound, matching no-routing case.
+    if (routedReadRps === 0 && routedWriteRps === 0) {
+      return {
+        readRps: totalInboundRps * SimulationEngine.DB_FALLBACK_READ_SHARE,
+        writeRps: totalInboundRps * (1 - SimulationEngine.DB_FALLBACK_READ_SHARE),
+        attributed: false,
+        attributionRatio: 0,
+      };
+    }
+
+    // Partial attribution: fold the unclassified remainder via the same 70/30
+    // default the no-attribution branch uses (see Decisions §60 / codex [P1]).
+    // `attributedRpsAtDb` is the UNIQUE-endpoint sum, so `read_write` routes
+    // don't get subtracted twice.
+    const remainderRps = Math.max(0, totalInboundRps - attributedRpsAtDb);
+    if (remainderRps > 0) {
+      routedReadRps += remainderRps * SimulationEngine.DB_FALLBACK_READ_SHARE;
+      routedWriteRps += remainderRps * (1 - SimulationEngine.DB_FALLBACK_READ_SHARE);
+    }
+
+    // `attributed: true` gates user-visible saturation callouts. Only fire
+    // when classified routes actually dominate the DB's load — when the
+    // 70/30 filler is the majority, the callouts would be about synthetic
+    // traffic, which sends users chasing phantom hot spots. Codex [P2b].
+    const attributionRatio = Math.min(1, attributedRpsAtDb / totalInboundRps);
+    return {
+      readRps: routedReadRps,
+      writeRps: routedWriteRps,
+      attributed: attributionRatio >= 0.5,
+      attributionRatio,
+    };
+  }
+
+  /**
+   * Phase 4.5 — resolve the effective shard key + cardinality for a given
+   * DB id, walking four fallback layers in order:
+   *
+   *   1. `schemaMemory.entities` — first entity whose `assignedDbId === dbId`
+   *      that declares a `partitionKey`. Cardinality derives from
+   *      `entity.partitionKeyCardinalityWarning === true` (→ 'low') or from
+   *      the partition field's own `cardinality` (`low | medium | high`).
+   *      If the named partition field isn't in `entity.fields`, we degrade
+   *      gracefully: use the key name but treat cardinality as 'high' (no
+   *      hot-shard model) — defensive against dangling partitionKey refs
+   *      codex flagged in the handoff's Commit 4 review questions.
+   *   2. `state.config.shardKey` on the DB node itself (the per-DB UI
+   *      inspector can still override — useful in scenario tests).
+   *   3. `this.schemaShardKey` + `schemaShardKeyCardinality` constructor
+   *      globals (legacy, pre-Phase-4.5 call sites).
+   *   4. `{ null, 'high' }` — no hot-shard behavior.
+   *
+   * Returning `{ shardKey: null, cardinality: 'high' }` is the safe default
+   * — the Pareto hot-shard branch below only fires when cardinality is
+   * low/medium OR the key literally contains "user".
+   */
+  private resolveShardKeyForDb(dbId: string): { shardKey: string | null; cardinality: 'low' | 'medium' | 'high' } {
+    // 1. schemaMemory — first entity assigned to this DB with a partitionKey.
+    if (this.schemaMemory) {
+      for (const ent of this.schemaMemory.entities) {
+        if (ent.assignedDbId !== dbId) continue;
+        if (!ent.partitionKey) continue;
+        // `partitionKeyCardinalityWarning` is the describe-intent pipeline's
+        // explicit "this will hot-shard" flag (set when the author of the
+        // schema already called out the problem). Treat it as authoritative.
+        if (ent.partitionKeyCardinalityWarning === true) {
+          return { shardKey: ent.partitionKey, cardinality: 'low' };
+        }
+        const field = ent.fields.find((f) => f.name === ent.partitionKey);
+        if (field) {
+          return { shardKey: ent.partitionKey, cardinality: field.cardinality };
+        }
+        // partitionKey references a field that isn't in the entity's fields
+        // array (dangling ref, authoring mistake). Use the name but assume
+        // 'high' cardinality — better to under-model hot-shard than to
+        // gratuitously flag everything low.
+        return { shardKey: ent.partitionKey, cardinality: 'high' };
+      }
+    }
+
+    // 2. DB node's own config.shardKey (UI inspector override).
+    const db = this.components.get(dbId);
+    const configKey = db?.config.shardKey as string | undefined;
+    if (configKey) {
+      // No cardinality available here — defer to the legacy global if set,
+      // otherwise 'high'. The `user` substring heuristic on the key still
+      // fires the hot-shard branch below, independent of this cardinality.
+      return {
+        shardKey: configKey,
+        cardinality: this.schemaShardKey === configKey ? this.schemaShardKeyCardinality : 'high',
+      };
+    }
+
+    // 3. Legacy constructor globals.
+    if (this.schemaShardKey) {
+      return { shardKey: this.schemaShardKey, cardinality: this.schemaShardKeyCardinality };
+    }
+
+    // 4. No info at all.
+    return { shardKey: null, cardinality: 'high' };
+  }
+
   private processDatabase(state: ComponentState, rps: number, logs: LogEntry[], accumulatedLatencyMs: number) {
     const shardingEnabled = state.config.shardingEnabled as boolean;
     const shardCount = (state.config.shardCount as number) ?? 1;
@@ -1116,9 +1808,13 @@ export class SimulationEngine {
 
     // Shard distribution
     if (shardingEnabled && shardCount > 1) {
-      // Determine skew based on shard key cardinality
-      const isLowCardinality = this.schemaShardKeyCardinality === 'low' || this.schemaShardKeyCardinality === 'medium';
-      const shardKey = (state.config.shardKey as string) ?? '';
+      // Phase 4.5 — derive shard key + cardinality per-DB from schemaMemory
+      // first, falling back to the DB's own `config.shardKey` heuristic,
+      // then to the legacy constructor-level globals. See Decisions §56.
+      const shardResolution = this.resolveShardKeyForDb(state.id);
+      const shardKey = shardResolution.shardKey ?? '';
+      const resolvedCardinality = shardResolution.cardinality;
+      const isLowCardinality = resolvedCardinality === 'low' || resolvedCardinality === 'medium';
       const isUserIdShard = shardKey.toLowerCase().includes('user');
 
       if (isLowCardinality || isUserIdShard) {
@@ -1169,28 +1865,196 @@ export class SimulationEngine {
     const baseLatency = 5;
     const loadFactor = 1 + Math.pow(utilizationPct / 100, 4) * 50;
     const connectionPenalty = connectionUtilization > 0.8 ? (connectionUtilization - 0.8) * 500 : 0;
-    const dbLatency = baseLatency * loadFactor + connectionPenalty;
+    const dbLatencyBase = baseLatency * loadFactor + connectionPenalty;
+
+    // Phase 4.4 — unindexed-scan latency multiplier. Walks the same routed-
+    // endpoint attribution used by the read/write split (above) and sums
+    // the share (fraction of routed DB inbound) whose `TableAccess.indexed`
+    // is false for tables resident on this DB. Resulting multiplier is
+    // `1 + (SCAN_FACTOR - 1) × unindexedShare`; SCAN_FACTOR is locked to
+    // preflight.ts's "10× slower" copy (Decisions §55).
+    //
+    // Denominator is routed-DB-visiting share, not total inbound: we don't
+    // attribute unindexed-ness to fan-out amplification or to the default
+    // bucket, where the TableAccess shape is unknown. This is the same
+    // "attributed" gate the read-saturation callout uses — keeps the
+    // multiplier honest under partial attribution.
+    let unindexedShare = 0;
+    let routedDbShareSum = 0;
+    const unindexedTablesThisTick: Array<{ tableId: string; endpointId: string; share: number }> = [];
+    if (this.endpointRoutes.length > 0) {
+      // Same DB-arrival scaling as the read/write split (§60 / codex [P2a]):
+      // map each route's seeded entry-point share onto the DB's actual
+      // inbound so filters/amplification don't inflate the scan signal.
+      const scanArrivalFactor = this.computeDbArrivalFactor(state.id, rps);
+      const tablesOnThisDb = new Set<string>();
+      const tableNamesOnThisDb = new Map<string, string>();
+      if (this.schemaMemory) {
+        for (const ent of this.schemaMemory.entities) {
+          if (ent.assignedDbId === state.id) {
+            tablesOnThisDb.add(ent.id);
+            tableNamesOnThisDb.set(ent.id, ent.name);
+          }
+        }
+      }
+      // Canonical denominator — every endpoint share that visits this DB,
+      // including ones with empty / unresolved `tablesAccessed`. Using this
+      // in BOTH the multiplier and the callout threshold keeps the two
+      // signals consistent (codex [P2]): a DB whose latency spike is driven
+      // by a single endpoint doesn't fire the scan multiplier sharply while
+      // diluting the callout below the 5% threshold — or vice versa. See
+      // Decisions §60.
+      let unindexedSum = 0;
+      for (const route of this.endpointRoutes) {
+        if (!this.routeReachesDbInLiveGraph(route, state.id)) continue;
+        const entryShare = this.endpointShareRpsThisTick.get(route.endpointId) ?? 0;
+        if (entryShare <= 0) continue;
+        const amp = this.routeStaticAmplificationToNode(route, state.id);
+        const dbShare = entryShare * amp * scanArrivalFactor;
+        routedDbShareSum += dbShare;
+        for (const ta of route.tablesAccessed) {
+          // Only count shares tied to tables we can confirm live on this DB
+          // (schema join) — or, when the schema is sparse, accept any table
+          // in the endpoint's list (same fallback policy as read/write).
+          if (tablesOnThisDb.size > 0 && !tablesOnThisDb.has(ta.tableId)) continue;
+          if (ta.indexed === false) {
+            unindexedSum += dbShare;
+            unindexedTablesThisTick.push({
+              tableId: ta.tableId,
+              endpointId: route.endpointId,
+              share: dbShare,
+            });
+            // Each endpoint can touch several un-indexed tables; we credit
+            // the full share to each for callout purposes. unindexedSum may
+            // then exceed routedDbShareSum — clamped below before it drives
+            // the multiplier so a 3-un-indexed-table endpoint doesn't
+            // triple-weight the latency bump.
+          }
+        }
+      }
+      if (routedDbShareSum > 0) {
+        unindexedShare = Math.min(1, unindexedSum / routedDbShareSum);
+      }
+    }
+    const scanMultiplier = 1 + (SimulationEngine.SCAN_FACTOR - 1) * unindexedShare;
+    const dbLatency = dbLatencyBase * scanMultiplier;
+
     state.metrics.p50 = dbLatency + accumulatedLatencyMs;
     state.metrics.p95 = dbLatency * 2 + accumulatedLatencyMs;
     state.metrics.p99 = dbLatency * 4 + replicationLag + accumulatedLatencyMs;
     state.lastComputedLatencyMs = dbLatency;
 
-    // Connection pool exhaustion
-    if (connectionUtilization > 1) {
-      const dropRate = Math.min(0.9, (connectionUtilization - 1) * 0.5);
-      state.metrics.errorRate = dropRate;
-      state.accumulatedErrors += rps * dropRate;
+    // One-shot callouts per (dbId, tableId). Wording is deliberately hedged
+    // ("may include unindexed access") because `TableAccess.indexed=false`
+    // is coarse — a single false flag on a table covers every operation on
+    // that table for that endpoint, even reads that the real engine might
+    // push through an existing index. Caller gets the clue, not a verdict.
+    if (unindexedShare > 0 && unindexedTablesThisTick.length > 0 && routedDbShareSum > 0) {
+      // Aggregate per-table across all endpoints visiting this DB with
+      // unindexed access to that table, so the threshold check reflects
+      // the TABLE's unindexed traffic on this DB, not any single
+      // endpoint's. Denominator is the SAME `routedDbShareSum` the
+      // multiplier used — per-commit codex [P2] fix.
+      const perTable = new Map<string, { shareSum: number; endpoints: Set<string>; name: string }>();
+      {
+        for (const hit of unindexedTablesThisTick) {
+          const entry = perTable.get(hit.tableId) ?? { shareSum: 0, endpoints: new Set<string>(), name: hit.tableId };
+          entry.shareSum += hit.share;
+          entry.endpoints.add(hit.endpointId);
+          // Prefer the human-readable entity name when we have it.
+          if (this.schemaMemory) {
+            const ent = this.schemaMemory.entities.find((e) => e.id === hit.tableId);
+            if (ent) entry.name = ent.name;
+          }
+          perTable.set(hit.tableId, entry);
+        }
+        for (const [tableId, entry] of perTable) {
+          const tableShare = Math.min(1, entry.shareSum / routedDbShareSum);
+          if (tableShare < SimulationEngine.UNINDEXED_CALLOUT_THRESHOLD) continue;
+          const firstEp = entry.endpoints.values().next().value;
+          const moreEps = entry.endpoints.size > 1 ? ` (+${entry.endpoints.size - 1} more)` : '';
+          this.fireCallout(
+            logs,
+            state.id,
+            `unindexed-scan:${tableId}`,
+            `${state.id}: may include unindexed access on "${entry.name}" via ${firstEp}${moreEps} — ${Math.round(tableShare * 100)}% of routed traffic at t=${Math.round(this.time)}s — add an index`,
+          );
+        }
+      }
+    }
 
-      if (dropRate > 0.1) {
+    // Phase 4.3 — read/write saturation. Diagnostic split attributed via
+    // endpointRoutes + schemaMemory when available; 70/30 fallback otherwise.
+    // The same saturation curve used by connection-pool exhaustion below
+    // is applied per-side: errorRate = clamp(0, 0.9, (util - 1) * 0.5). This
+    // is intentionally additive to — not a replacement for — connection-pool
+    // errorRate; the aggregate takes max across all three so breakers/retry/
+    // backpressure (which still read the aggregate `errorRate` per §52)
+    // continue to trip on whichever failure mode hits first.
+    const { readRps: inboundReadRps, writeRps: inboundWriteRps, attributed: rwAttributed } =
+      this.computeDbReadWriteBreakdown(state.id, rps);
+    const readCapacityPerTick = readThroughput * (1 + readReplicas) * this.tickInterval;
+    const writeCapacityPerTick = writeThroughput * this.tickInterval;
+    // Divide-by-zero guard: if a side has no capacity AND inbound > 0, that
+    // side is fully saturated. If both are zero (inbound and capacity), we
+    // report 0 errorRate on that side — there's nothing to fail.
+    const readUtilization = readCapacityPerTick > 0
+      ? inboundReadRps / readCapacityPerTick
+      : inboundReadRps > 0 ? Infinity : 0;
+    const writeUtilization = writeCapacityPerTick > 0
+      ? inboundWriteRps / writeCapacityPerTick
+      : inboundWriteRps > 0 ? Infinity : 0;
+    const saturationErr = (u: number) => u > 1 ? Math.min(0.9, (u - 1) * 0.5) : 0;
+    const readErrorRate = saturationErr(readUtilization);
+    const writeErrorRate = saturationErr(writeUtilization);
+    state.metrics.readErrorRate = readErrorRate;
+    state.metrics.writeErrorRate = writeErrorRate;
+
+    // Connection pool exhaustion — orthogonal failure mode (exhaust the pool
+    // before you exhaust throughput = bad pool sizing). Still sets errorRate
+    // aggregate so downstream breakers/retry/BP see it; preserved behavior.
+    let poolDropRate = 0;
+    if (connectionUtilization > 1) {
+      poolDropRate = Math.min(0.9, (connectionUtilization - 1) * 0.5);
+      state.accumulatedErrors += rps * poolDropRate;
+
+      if (poolDropRate > 0.1) {
         logs.push({
           time: this.time,
-          message: `${state.id}: Connection pool exhaustion. ${Math.round(dropRate * 100)}% of queries failing.`,
+          message: `${state.id}: Connection pool exhaustion. ${Math.round(poolDropRate * 100)}% of queries failing.`,
           severity: 'critical',
           componentId: state.id,
         });
       }
-    } else {
-      state.metrics.errorRate = 0;
+    }
+
+    // Aggregate errorRate = max of all three failure modes. Control-signal
+    // consumers (breakers, retry, backpressure) continue reading this
+    // aggregate only; the split fields are strictly diagnostic (§54).
+    state.metrics.errorRate = Math.max(readErrorRate, writeErrorRate, poolDropRate);
+
+    // One-shot callouts per (dbId, side) when the attributed side saturates.
+    // Only fires when attribution was actually available — with the 70/30
+    // fallback the split is a modeling assumption, not a user-facing signal,
+    // so warning about "write saturation" when we can't see their schema is
+    // misleading.
+    if (rwAttributed) {
+      if (readErrorRate > 0.05) {
+        this.fireCallout(
+          logs,
+          state.id,
+          'read-saturation',
+          `${state.id} read side saturated (${Math.round(readUtilization * 100)}% util, errorRate=${readErrorRate.toFixed(2)}) at t=${Math.round(this.time)}s — add read replicas or a cache`,
+        );
+      }
+      if (writeErrorRate > 0.05) {
+        this.fireCallout(
+          logs,
+          state.id,
+          'write-saturation',
+          `${state.id} write side saturated (${Math.round(writeUtilization * 100)}% util, errorRate=${writeErrorRate.toFixed(2)}) at t=${Math.round(this.time)}s — scale writes (sharding, batching, or a write-optimized store)`,
+        );
+      }
     }
   }
 

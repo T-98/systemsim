@@ -41,13 +41,20 @@ export interface ComponentDef {
 
 export type HealthState = 'healthy' | 'warning' | 'critical' | 'crashed';
 
-export interface SimComponentData {
+/**
+ * Declared as a type alias, not an interface, on purpose: ReactFlow v12's
+ * `Node<T extends Record<string, unknown>>` constraint is satisfied by type
+ * literals (which get an implicit index signature) but not by interfaces.
+ * Converting keeps excess-property checking intact — an explicit
+ * `[key: string]: unknown` index signature would have disabled it.
+ */
+export type SimComponentData = {
   type: ComponentType;
   label: string;
   config: Record<string, unknown>;
   health: HealthState;
   metrics: ComponentMetrics;
-}
+};
 
 export interface ComponentMetrics {
   rps: number;
@@ -61,6 +68,16 @@ export interface ComponentMetrics {
   cacheHitRate?: number;
   activeConnections?: number;
   shardDistribution?: number[];
+  /**
+   * Database-only diagnostic split of `errorRate` (Phase 4.3). Populated by
+   * `processDatabase` when it can attribute inbound rps to read vs write —
+   * either via `endpointRoutes.tablesAccessed` or the 70/30 fallback. These
+   * are DIAGNOSTIC fields: breakers, retry, and backpressure continue to
+   * read the aggregate `errorRate` (which becomes `max(readErrorRate,
+   * writeErrorRate, connectionPoolDropRate)`). See Decisions §54.
+   */
+  readErrorRate?: number;
+  writeErrorRate?: number;
 }
 
 export interface WireConfig {

@@ -38,6 +38,8 @@ export function useSimulation() {
   const edges = useStore((s) => s.edges);
   const graphVersion = useStore((s) => s.graphVersion);
   const schemaMemory = useStore((s) => s.schemaMemory);
+  const endpointRoutes = useStore((s) => s.endpointRoutes);
+  const apiContracts = useStore((s) => s.apiContracts);
   const setSimulationStatus = useStore((s) => s.setSimulationStatus);
   const setSimulationTime = useStore((s) => s.setSimulationTime);
   const simulationSpeed = useStore((s) => s.simulationSpeed);
@@ -174,21 +176,51 @@ export function useSimulation() {
     metricsHistoryRef.current = {};
     stressedRef.current = stressedMode;
 
-    // Determine schema shard key info
+    // Legacy constructor-global `schemaShardKey`/`schemaShardKeyCardinality`
+    // are ONLY consulted by `resolveShardKeyForDb` when no per-DB source
+    // resolves. Two cases:
+    //   - schemaMemory has entities with `assignedDbId` set → per-DB
+    //     lookup is authoritative; pre-deriving globals would leak one
+    //     DB's partition key onto DBs with no assignment (§63 cross-DB
+    //     bleed). Pass undefined.
+    //   - schemaMemory has no assigned entities (older saves pre-dating
+    //     the designer's DB-assignment step) → per-DB lookup returns
+    //     nothing for every DB, and without globals the engine falls
+    //     through to `{null, 'high'}` — regresses single-DB hot-shard
+    //     modeling. Keep the legacy first-entity derivation in that
+    //     case so pre-assignment saves still shard correctly. Codex
+    //     round 6 [P2].
     let shardKey: string | undefined;
     let shardKeyCardinality: 'low' | 'medium' | 'high' | undefined;
     if (schemaMemory) {
-      for (const entity of schemaMemory.entities) {
-        if (entity.partitionKey) {
-          shardKey = entity.partitionKey;
-          const field = entity.fields.find((f) => f.name === entity.partitionKey);
-          shardKeyCardinality = field?.cardinality;
-          break;
+      const hasAssigned = schemaMemory.entities.some((e) => e.assignedDbId !== null);
+      if (!hasAssigned) {
+        for (const entity of schemaMemory.entities) {
+          if (entity.partitionKey) {
+            shardKey = entity.partitionKey;
+            const field = entity.fields.find((f) => f.name === entity.partitionKey);
+            shardKeyCardinality = field?.cardinality;
+            break;
+          }
         }
       }
     }
 
-    const engine = new SimulationEngine(nodes, edges, trafficProfile, shardKey, shardKeyCardinality, undefined, stressedMode);
+    const engine = new SimulationEngine(
+      nodes,
+      edges,
+      trafficProfile,
+      shardKey,
+      shardKeyCardinality,
+      undefined,
+      stressedMode,
+      {
+        endpointRoutes,
+        schemaMemory,
+        requestMix: trafficProfile.requestMix,
+        apiContracts,
+      },
+    );
     engineRef.current = engine;
 
     const runId = uuid();
@@ -205,7 +237,7 @@ export function useSimulation() {
         stopSimulation(runId, trafficProfile);
       }
     }, tickRate);
-  }, [nodes, edges, schemaMemory, simulationSpeed, resetSimulationState, clearLiveLog, setSimulationStatus, setCurrentRunId, runTick, stopSimulation]);
+  }, [nodes, edges, schemaMemory, endpointRoutes, apiContracts, simulationSpeed, resetSimulationState, clearLiveLog, setSimulationStatus, setCurrentRunId, runTick, stopSimulation]);
 
   const pauseSimulation = useCallback(() => {
     if (timerRef.current) {

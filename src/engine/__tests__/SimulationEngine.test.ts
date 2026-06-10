@@ -30,7 +30,7 @@ function makeEdge(id: string, source: string, target: string, config: Partial<Wi
 
 function steadyProfile(rps: number, duration = 10): TrafficProfile {
   return {
-    name: 'test',
+    profileName: 'test',
     durationSeconds: duration,
     jitterPercent: 0,
     phases: [{ startS: 0, endS: duration, rps, shape: 'steady' as const, description: 'test' }],
@@ -316,7 +316,7 @@ describe('SimulationEngine', () => {
   describe('Traffic Phase Interpolation', () => {
     it('should handle instant spike phase', () => {
       const profile: TrafficProfile = {
-        name: 'spike-test',
+        profileName: 'spike-test',
         durationSeconds: 10,
         jitterPercent: 0,
         phases: [
@@ -359,7 +359,7 @@ describe('SimulationEngine', () => {
   describe('Stressed mode', () => {
     function phasesProfile(phases: Array<{ startS: number; endS: number; rps: number }>): TrafficProfile {
       return {
-        name: 'multi-phase',
+        profileName: 'multi-phase',
         durationSeconds: phases[phases.length - 1].endS,
         jitterPercent: 0,
         phases: phases.map((p) => ({ ...p, shape: 'steady' as const, description: `${p.rps} rps` })),
@@ -630,7 +630,7 @@ describe('SimulationEngine', () => {
     it('recovers through HALF_OPEN after cooldown when failures stop', () => {
       // Use a profile where first phase overloads the server, later phase is light load.
       const profile = {
-        name: 'multi-phase',
+        profileName: 'multi-phase',
         durationSeconds: 40,
         jitterPercent: 0,
         phases: [
@@ -959,6 +959,38 @@ describe('SimulationEngine', () => {
       expect(backpressureLogs.length).toBe(1);
     });
 
+    it('a target that crashes on tick 0 still signals backpressure from its frozen errorRate', () => {
+      // Regression (flaky e2e simfid-phase3-backpressure): a saturated DB at
+      // >98% utilization has a 30%-per-tick crash chance. When the crash
+      // landed on tick 0 — before the first end-of-tick acceptanceRate
+      // evaluation — the old `if (state.crashed) return` skip left the
+      // signal at its init value 1.0 forever: a dead, fully saturated
+      // database advertising full acceptance, so upstream never scaled down
+      // and the "signaling backpressure" callout never fired. Seed 4 is
+      // pinned to produce the tick-0 crash in this topology.
+      const nodes = [
+        makeNode('lb', 'load_balancer', { isEntry: true }),
+        makeNode('srv', 'server', { instanceCount: 10, processingTimeMs: 10 }),
+        makeNode('db', 'database', {
+          writeThroughputRps: 2, readThroughputRps: 2, readReplicas: 0,
+          connectionPoolSize: 30, backpressure: { enabled: true },
+        }),
+      ];
+      const edges = [makeEdge('e1', 'lb', 'srv'), makeEdge('e2', 'srv', 'db')];
+      const engine = new SimulationEngine(nodes, edges, steadyProfile(40), undefined, undefined, 4);
+
+      const logs: string[] = [];
+      for (let i = 0; i < 4; i++) {
+        const r = engine.tick();
+        for (const e of r.newLogs) logs.push(e.message);
+      }
+
+      // Precondition: the crash really happened on tick 0 (seed-pinned).
+      expect(logs.find((m) => m.includes('db CRASH'))).toBeDefined();
+      // The callout must still fire — acceptance derives from frozen metrics.
+      expect(logs.find((m) => m.includes('signaling backpressure'))).toBeDefined();
+    });
+
     it('backpressure does not fire on tick 0 (no prior observation)', () => {
       const nodes = [
         makeNode('srv', 'server', {
@@ -1027,7 +1059,7 @@ describe('SimulationEngine', () => {
       ];
       // Profile: 4 ticks of load, then 4 ticks of zero RPS.
       const profile = {
-        name: 'intermittent',
+        profileName: 'intermittent',
         durationSeconds: 10,
         jitterPercent: 0,
         phases: [

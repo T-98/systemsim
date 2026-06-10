@@ -25,7 +25,8 @@ import SimComponentNode from '../nodes/SimComponentNode';
 import SimWireEdge from './SimWireEdge';
 import ParticleOverlay from './ParticleOverlay';
 import PreflightBanner from './PreflightBanner';
-import type { ComponentType } from '../../types';
+import type { Node, Edge } from '@xyflow/react';
+import type { ComponentType, SimComponentData, WireConfig } from '../../types';
 import { MVP_VISIBLE_TYPES } from '../../types/components';
 
 const nodeTypes = { simComponent: SimComponentNode };
@@ -45,7 +46,7 @@ export default function Canvas() {
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
 
-  const rfInstance = useRef<ReactFlowInstance | null>(null);
+  const rfInstance = useRef<ReactFlowInstance<Node<SimComponentData>, Edge<{ config: WireConfig }>> | null>(null);
   const isRunning = simulationStatus === 'running' || simulationStatus === 'paused';
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: { id: string }) => {
