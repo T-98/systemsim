@@ -24,4 +24,4 @@ Component config → Backpressure toggle. When enabled, the component computes `
 
 At steady state with single-inbound, `(1 + e + e² + …) × (1 − e) ≈ 1`. They cancel. That's why retries + backpressure is stable, while retries alone is unstable. Try both in the How-to tab's [Reproduce a retry storm](#docs/howto/retry-storm) scenario.
 
-This is the last page of the Learn track. Head to **Reference** (top nav) for deep-dives, or **How-to** for five hands-on failure-mode scenarios.
+Next: [Capacity estimator](#docs/learn/capacity-estimator).

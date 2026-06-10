@@ -12,6 +12,7 @@
  */
 
 import { useStore } from '../../store';
+import InfoIcon from '../ui/InfoIcon';
 import {
   computeBote,
   toTwoPhaseProfile,
@@ -78,21 +79,23 @@ export default function BotePanel({ onClose }: { onClose: () => void }) {
           Numbers update as you type.
         </div>
 
-        <NumField label="Daily active users" field="dau" value={boteInputs.dau} onPatch={setBoteInputs} />
-        <NumField label="Actions per user per day" field="actionsPerUserPerDay" value={boteInputs.actionsPerUserPerDay} onPatch={setBoteInputs} />
+        <NumField label="Daily active users" field="dau" value={boteInputs.dau} onPatch={setBoteInputs} topic="config.bote.dau" />
+        <NumField label="Actions per user per day" field="actionsPerUserPerDay" value={boteInputs.actionsPerUserPerDay} onPatch={setBoteInputs} topic="config.bote.actionsPerUserPerDay" />
         <NumField
           label="Read share (0–1)" field="readRatio" value={boteInputs.readRatio} onPatch={setBoteInputs}
-          step={0.05} hint="0.8 = 80% reads, 20% writes"
+          step={0.05} hint="0.8 = 80% reads, 20% writes" topic="config.bote.readRatio"
         />
-        <NumField label="Payload per write (bytes)" field="payloadBytes" value={boteInputs.payloadBytes} onPatch={setBoteInputs} />
-        <NumField label="Retention (days)" field="retentionDays" value={boteInputs.retentionDays} onPatch={setBoteInputs} />
+        <NumField label="Payload per write (bytes)" field="payloadBytes" value={boteInputs.payloadBytes} onPatch={setBoteInputs} topic="config.bote.payloadBytes" />
+        <NumField label="Retention (days)" field="retentionDays" value={boteInputs.retentionDays} onPatch={setBoteInputs} topic="config.bote.retentionDays" />
         <NumField
           label="Peak-to-average multiplier" field="peakMultiplier" value={boteInputs.peakMultiplier} onPatch={setBoteInputs}
           step={0.5} hint="Peak traffic as a multiple of the daily average. 3× is a common default."
+          topic="config.bote.peakMultiplier"
         />
         <NumField
           label="Avg response time (ms)" field="avgResponseTimeMs" value={boteInputs.avgResponseTimeMs} onPatch={setBoteInputs}
           hint="The W in Little's Law: connections = QPS × W"
+          topic="config.bote.avgResponseTimeMs"
         />
 
         <div
@@ -145,22 +148,29 @@ export default function BotePanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function NumField({ label, field, value, onPatch, step, hint }: {
+function NumField({ label, field, value, onPatch, step, hint, topic }: {
   label: string;
   field: keyof BoteInputs;
   value: number;
   onPatch: (patch: Partial<BoteInputs>) => void;
   step?: number;
   hint?: string;
+  topic?: string;
 }) {
   return (
     <div>
-      <label
-        className="block font-medium"
-        style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginBottom: '6px' }}
+      <div
+        className="flex items-center gap-2"
+        style={{ marginBottom: '6px' }}
       >
-        {label}
-      </label>
+        <label
+          className="block font-medium"
+          style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}
+        >
+          {label}
+        </label>
+        {topic && <InfoIcon topic={topic} side="left" />}
+      </div>
       <input
         type="number"
         data-testid={`bote-input-${field}`}
