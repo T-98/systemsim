@@ -13,6 +13,7 @@ import { useStore } from '../../store';
 import { COMPONENT_DEFS } from '../../types/components';
 import type { ApiContract } from '../../types';
 import InfoIcon from '../ui/InfoIcon';
+import BotePanel from './BotePanel';
 
 /** Map dynamic component config keys to topic registry keys. */
 function topicForConfigKey(key: string): string {
@@ -44,9 +45,11 @@ export default function ConfigPanel() {
   const selectedNode = selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) : null;
   const selectedEdge = selectedEdgeId ? edges.find((e) => e.id === selectedEdgeId) : null;
 
-  if (!selectedNode && !selectedEdge) return null;
-
   const close = () => setConfigPanelOpen(false);
+
+  // No selection → the inspector dock hosts the BOTE capacity estimator
+  // (Phase 8a.1). Opened from the Traffic tab's "Capacity estimator" link.
+  if (!selectedNode && !selectedEdge) return <BotePanel onClose={close} />;
 
   if (selectedEdge) {
     const wireConfig = selectedEdge.data!.config;

@@ -20,6 +20,8 @@ export default function TrafficEditor() {
   const trafficProfile = useStore((s) => s.trafficProfile);
   const setTrafficProfile = useStore((s) => s.setTrafficProfile);
   const appMode = useStore((s) => s.appMode);
+  const setSelectedNodeId = useStore((s) => s.setSelectedNodeId);
+  const setConfigPanelOpen = useStore((s) => s.setConfigPanelOpen);
   const [collapsed, setCollapsed] = useState(true);
 
   const [name, setName] = useState(trafficProfile?.profileName ?? 'custom_profile');
@@ -46,6 +48,25 @@ export default function TrafficEditor() {
       nlAbortRef.current?.abort();
     };
   }, []);
+
+  // Re-seed the local draft when another surface replaces the live profile
+  // (BOTE "Apply to traffic profile", session load). save()/NL generate also
+  // land here, but they re-seed with the values just written — a no-op.
+  useEffect(() => {
+    if (!trafficProfile) return;
+    setName(trafficProfile.profileName);
+    setDuration(trafficProfile.durationSeconds);
+    setPhases(trafficProfile.phases);
+    setJitter(trafficProfile.jitterPercent);
+  }, [trafficProfile]);
+
+  // Open the BOTE capacity estimator in the right inspector dock: clear any
+  // selection (which closes the panel), then re-open it empty — the empty
+  // inspector hosts BotePanel (Phase 8a.1).
+  const openBote = () => {
+    setSelectedNodeId(null);
+    setConfigPanelOpen(true);
+  };
 
   const handleGenerate = async () => {
     if (!nlDescription.trim() || nlStatus === 'loading') return;
@@ -149,6 +170,28 @@ export default function TrafficEditor() {
       <div className="space-y-3" style={{ padding: '0 16px 12px' }}>
       {/* Phase curve preview — reactive over phases + duration */}
       <PhaseCurve phases={phases} durationSeconds={duration} />
+
+      {/* Pre-populate from the BOTE capacity estimator (Phase 8a.1) */}
+      <button
+        type="button"
+        data-testid="traffic-open-bote"
+        onClick={openBote}
+        className="w-full rounded-lg transition-all duration-200"
+        style={{
+          padding: '8px 12px',
+          fontSize: 13,
+          letterSpacing: '-0.12px',
+          background: 'var(--bg-card)',
+          color: 'var(--text-secondary)',
+          border: '1px solid var(--border-color)',
+          cursor: 'pointer',
+          textAlign: 'left',
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--border-strong)'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-color)'; }}
+      >
+        Pre-populate from capacity estimator →
+      </button>
 
       {/* Natural-language traffic input */}
       {NL_ENABLED && (

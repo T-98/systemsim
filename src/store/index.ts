@@ -74,6 +74,7 @@ export interface ReviewState {
 import { COMPONENT_DEFS } from '../types/components';
 import type { ComponentType } from '../types';
 import { layoutGraph } from '../layout/dagre';
+import { DEFAULT_BOTE_INPUTS, type BoteInputs } from '../util/bote';
 
 const emptyMetrics: ComponentMetrics = {
   rps: 0,
@@ -183,6 +184,11 @@ export interface AppState {
   // Traffic
   trafficProfile: TrafficProfile | null;
   setTrafficProfile: (profile: TrafficProfile) => void;
+
+  // BOTE capacity estimator (Phase 8a.1). Store-resident (not panel-local)
+  // so the inputs survive the panel unmounting when a node is selected.
+  boteInputs: BoteInputs;
+  setBoteInputs: (patch: Partial<BoteInputs>) => void;
 
   // Runs
   simulationRuns: SimulationRun[];
@@ -516,6 +522,10 @@ export const useStore = create<AppState>((set, get) => ({
   // Traffic
   trafficProfile: null,
   setTrafficProfile: (profile) => set({ trafficProfile: profile }),
+
+  // BOTE capacity estimator (Phase 8a.1)
+  boteInputs: DEFAULT_BOTE_INPUTS,
+  setBoteInputs: (patch) => set({ boteInputs: { ...get().boteInputs, ...patch } }),
 
   // Runs
   simulationRuns: [],
