@@ -84,6 +84,8 @@ System design is about reasoning from first principles, not memorizing buzzwords
 
 The tradeoff lens runs through all of it. Every choice closes some doors and opens others. Name both sides.
 
+*Sources: Xu, System Design Interview vol. 1 (interview framework); Kleppmann, Designing Data-Intensive Applications ch. 1.*
+
 ## 2. Core Challenges in Web-Scale Design
 
 Four patterns show up in every large system. Each has a canonical response.
@@ -101,6 +103,8 @@ Four patterns show up in every large system. Each has a canonical response.
 *Response:* accept eventual consistency for most reads. Use last-write-wins or CRDTs for conflicts. Use strong consistency only where it's worth the latency cost (payments, inventory). The CAP theorem forces a choice — pick two of consistency, availability, partition-tolerance, and be honest about which two.
 
 **Summary.** Web-scale systems replicate logic and data, shard their problem space, and process slow work asynchronously. The result is an eventually-consistent app serving all users on arbitrarily large data, gradually adding machines as the user base grows. This is the core philosophy of modern large-scale data-intensive systems.
+
+*Sources: Kleppmann, Designing Data-Intensive Applications ch. 1; Brewer, CAP theorem (PODC 2000 keynote).*
 
 ## 3. Non-Functional Requirements
 
@@ -120,6 +124,8 @@ Each NFR has its own design patterns:
 
 Most real systems trade some dimensions against others. A design that claims to maximize all four is almost always wrong about one of them.
 
+*Sources: Kleppmann, Designing Data-Intensive Applications ch. 1; Beyer et al., Site Reliability Engineering (Google, 2016) — SLOs.*
+
 ## 4. QPS Tiers & What They Imply
 
 The right architecture depends on load tier. Picking the wrong tier is over-engineering (or under-).
@@ -138,6 +144,8 @@ The right architecture depends on load tier. Picking the wrong tier is over-engi
 - Analytics platform (write-heavy bursts, complex reads): Kafka for ingest, Spark/Flink for processing, Snowflake or Hadoop for warehouse
 - Ticket booking (moderate QPS, strong consistency on writes): PostgreSQL/Aurora with row-level locking, message queues for downstream integrations
 - Chat (very high concurrent connections, small payloads): Cassandra for message history, RabbitMQ/Kafka for delivery, Redis for presence, WebSockets for real-time
+
+*Sources: Xu, System Design Interview vol. 1 (scale from zero to millions of users).*
 
 ## 5. Back-of-Envelope Resource Estimation
 
@@ -164,6 +172,8 @@ Before designing, know your load.
 
 Write these numbers down *before* you pick tools. The same "build a feed system" problem has radically different answers at 100 DAU vs 100M DAU.
 
+*Sources: Xu, System Design Interview vol. 1 (back-of-envelope estimation); Dean, "Numbers Everyone Should Know" (LADIS 2009 keynote).*
+
 ---
 
 # Part II — Fundamentals
@@ -185,6 +195,8 @@ Write these numbers down *before* you pick tools. The same "build a feed system"
 **The advice.** Monolith first. Extract services when you feel actual pain — a specific module needs to scale independently, a team bottleneck demands independent deploys, or different parts of the system genuinely need different tech. Premature microservices are the most common architectural mistake. Martin Fowler's guidance: start monolithic, and don't even think about extracting services until the pain of *not* doing it is obvious and real.
 
 **When monolith-first goes wrong.** Two cases where you actually want microservices from day one: (1) you're building a platform where third parties will own parts of the system (API gateway over N external owners), and (2) you have multiple radically different scaling profiles baked into the product (video transcoding + user auth + billing, each with wildly different compute shapes).
+
+*Sources: Newman, Building Microservices; Fowler, "MonolithFirst" (2015); Lewis & Fowler, "Microservices" (2014).*
 
 ## 7. Performance Fundamentals — Latency, Throughput, Percentiles
 
@@ -223,6 +235,8 @@ Practical use: if average latency is 200ms and arrival rate is 500 RPS, you have
 ### Managing latency
 
 CDN for static assets. Read replicas close to users. Async for slow work. Edge compute for time-sensitive logic. Monitor the distribution, not just the mean.
+
+*Sources: Dean & Barroso, "The Tail at Scale" (CACM 2013); Little (Operations Research 1961); Tene, "How NOT to Measure Latency".*
 
 ## 8. High Availability & Fault Tolerance
 
@@ -268,6 +282,8 @@ When consuming cloud services, your achievable uptime is bounded by theirs. A 99
 **Availability** is a measurable outcome — what fraction of time the system was up.
 
 FT implies HA; HA doesn't require full FT. Most real systems target HA via redundancy + graceful degradation, accepting brief availability dips during failover rather than paying for true FT.
+
+*Sources: Beyer et al., Site Reliability Engineering (Google, 2016); Nygard, Release It! (stability patterns).*
 
 ---
 
@@ -322,6 +338,8 @@ Each layer has its own health checks, algorithms, and failure domain.
 ### Tradeoffs
 
 The LB is a single point of failure by default — make it redundant (active-passive with keepalived, active-active behind DNS). It's also a latency hop; budget 1-5ms per pass. And it's where TLS termination happens — secure it accordingly.
+
+*Sources: NGINX documentation — load balancing; HAProxy documentation; AWS Elastic Load Balancing documentation.*
 
 ## 10. Caching — Full Curriculum
 
@@ -666,6 +684,8 @@ Rules:
 
 **Cache without monitoring is a black box.** These metrics are non-negotiable for any production cache.
 
+*Sources: Redis documentation (replication, cluster, eviction); AWS Builders' Library — caching challenges and strategies; Karger et al., consistent hashing (STOC 1997).*
+
 ## 11. Data Storage
 
 Databases are not one category. The landscape fragmented into specialized stores because no single engine handles every workload well. This section covers the shape of that landscape and how to choose.
@@ -970,6 +990,8 @@ A practical decision tree:
 
 When in doubt, SQL. When specifically solving a problem SQL struggles with, pick the specialized store.
 
+*Sources: Kleppmann, DDIA ch. 2–3 (data models, storage engines); Chang et al., "Bigtable" (OSDI 2006); DeCandia et al., "Dynamo" (SOSP 2007).*
+
 ## 12. Database Scaling — Partitioning, Replication, Consistent Hashing, CDC
 
 Most systems don't hit app-server scaling limits — they hit DB limits. This section covers the DB-specific scaling toolkit.
@@ -1252,6 +1274,8 @@ CDC streams forward from a starting offset. To include historical data, run a **
 
 **Reprocessing** applies the same logic — if you change how the downstream processes events, replay from an earlier Kafka offset. Kafka's retention makes this possible; most other queues don't.
 
+*Sources: Kleppmann, DDIA ch. 5–6 (replication, partitioning); Karger et al., consistent hashing (STOC 1997); Kreps, "The Log" (2013).*
+
 ## 13. Message Queues & Async Communication
 
 When one service needs to talk to another, the choice is synchronous (wait for response) or asynchronous (fire-and-forget via a message). Both have a place. The wrong choice cascades failures.
@@ -1454,6 +1478,8 @@ Not a religion. Two decision axes:
 A real system uses both. Order service: sync call to payment (caller needs the result), async emit to fulfillment queue (caller doesn't wait on shipping).
 
 **Rule of thumb:** lean async for anything whose unavailability shouldn't block the user, anything slow, anything fan-out. Keep sync for fast, reliable, caller-blocking operations.
+
+*Sources: Kafka documentation; RabbitMQ documentation; Kreps, "The Log" (2013).*
 
 ## 14. Batch & Stream Processing
 
@@ -1922,6 +1948,8 @@ Query the coarsest resolution that satisfies the question.
 - **ClickHouse** for high-cardinality time-series + analytics (query flexibility).
 - **TimescaleDB** when time-series has to live alongside relational data.
 
+*Sources: Kleppmann, DDIA ch. 10–11 (batch, stream processing); Dean & Ghemawat, "MapReduce" (OSDI 2004); Kafka and Flink documentation.*
+
 ---
 
 # Part IV — API Layer
@@ -1948,6 +1976,8 @@ A single entry point in front of a microservices backend. Clients talk to the ga
 
 **Tradeoffs.** A gateway is a single point of failure you need to make redundant and a latency hop you need to budget for. In very small systems it's overhead. In multi-service systems it's basically mandatory.
 
+*Sources: Newman, Building Microservices (API gateways); AWS API Gateway documentation; Kong documentation.*
+
 ## 16. REST Design
 
 REST is one of many possible API design styles. Its principles:
@@ -1965,6 +1995,8 @@ REST is one of many possible API design styles. Its principles:
 - **Always paginate list endpoints.** Returning all rows in one response is a DoS waiting to happen.
 
 **Twitter timeline example.** `GET /users/{id}/timeline` returns recent tweets (and retweets, and mentions) with pagination. Payload: `{ id, user, content, timestamp, media[], retweetOf?, mentions[] }`.
+
+*Sources: Fielding, Architectural Styles and the Design of Network-based Software Architectures (dissertation, 2000); RFC 9110 (HTTP semantics).*
 
 ## 17. Authentication — API Keys, Sessions, JWT
 
@@ -2009,6 +2041,8 @@ Authentication answers *"who are you?"* — different from authorization (*"what
 | JWT | Auth server | Client (token payload) | Hard (short expiry + refresh) | Excellent |
 
 **Hybrid is common.** GitHub uses all three: API keys for CLI tools, sessions for web login, JWT for internal service-to-service.
+
+*Sources: RFC 7519 (JSON Web Tokens); OWASP Session Management Cheat Sheet.*
 
 ## 18. Authorization — RBAC, ABAC, OAuth
 
@@ -2064,6 +2098,8 @@ Example: "Users with clearance ≥ SECRET can read documents with classification
 
 Production systems often combine: RBAC for coarse app permissions + ABAC for fine-grained data access + OAuth for third-party integrations.
 
+*Sources: RFC 6749 (OAuth 2.0); Sandhu et al., "Role-Based Access Control Models" (IEEE Computer 1996).*
+
 ## 19. Pagination — Offset, Cursor, Time-Series
 
 Never return all rows. Paginate.
@@ -2114,6 +2150,8 @@ Keyset pagination specialized for timestamp-ordered data.
 - **Performance.** Cursor + right index = O(log n). Offset with large offsets = O(n).
 - **Response format.** Include `{ data, nextCursor?, total? }`. Don't make clients guess.
 - **Stable sort.** For cursor pagination, include a tiebreaker (`ORDER BY created_at DESC, id DESC`) so equal timestamps don't cause dupes.
+
+*Sources: Winand, Use The Index, Luke (keyset pagination); PostgreSQL documentation — LIMIT and OFFSET.*
 
 ---
 
@@ -2264,6 +2302,8 @@ Command and query sides have different scaling requirements.
 ### Adapting to changing requirements
 
 Architecture should make priority changes cheap. The sales-alert example: an ecommerce platform that can reshuffle which products get priority placement without a code deploy has built well. The one that needs a migration for every business ask has built brittle.
+
+*Sources: Xu, System Design Interview vol. 1; Abbott & Fisher, The Art of Scalability; AWS Auto Scaling documentation.*
 
 ## 21. Microservice Resilience — Timeouts, Retries, Circuit Breakers, Fallbacks
 
@@ -2447,6 +2487,8 @@ Four patterns, each simple. Layered, they turn a brittle graph of services into 
 
 This is exactly what SIMFID simulates — see Part VIII (SIMFID Runtime) for the runtime implementation notes.
 
+*Sources: Nygard, Release It!; AWS Builders' Library — timeouts, retries and backoff with jitter; Fowler, "CircuitBreaker" (2014).*
+
 ## 22. Rate Limiting
 
 Rate limiting caps how many requests a caller can make in a given window. It protects downstream systems from abuse, enforces fair-use across tenants, and smooths traffic into a predictable shape.
@@ -2559,6 +2601,8 @@ There's no universal right answer. A payment API usually fails-closed (can't ris
 
 See §43 Wire-Level Configuration for `throughputRps` — the same concept applied as a per-wire flow cap, which behaves like a leaky-bucket shape on wire-level traffic.
 
+*Sources: Xu, System Design Interview vol. 1 (rate limiter design); Stripe engineering blog — "Scaling your API with rate limiters".*
+
 ---
 
 # Part VI — Patterns & Templates
@@ -2635,6 +2679,8 @@ The rule: sagas give you **eventual consistency with explicit reversal paths**, 
 - Timeouts on every step. A step that hangs forever halts the saga without even raising a failure.
 - Compensations themselves must be idempotent and retry-safe.
 
+*Sources: Garcia-Molina & Salem, "Sagas" (SIGMOD 1987); Richardson, Microservices Patterns (saga pattern).*
+
 ## 24. Fan-Out / Fan-In — Parallel Processing in Distributed Systems
 
 Fan-out/fan-in splits one request into N parallel sub-tasks, runs them in parallel, and reassembles the results. It's how you turn a sequential 10-step job into a parallel one that finishes in the time of the slowest step.
@@ -2692,6 +2738,8 @@ Google's search and Cassandra-family stores use variants of this (e.g. "speculat
 ### 24.5 Related in SIMFID
 
 The dual to fan-out is **retry storms** (§41) — one failure, N retries, multiplied along a chain. Both are "traffic amplification" patterns; one is intentional (parallelism), the other accidental (saturation). Understanding one helps you diagnose the other.
+
+*Sources: Dean & Barroso, "The Tail at Scale" (CACM 2013) — hedged requests; Amdahl (AFIPS 1967).*
 
 ## 25. CQRS & Read-Write Separation
 
@@ -2784,6 +2832,8 @@ The rule: **measure both costs (write amplification vs read expense) and pick wh
 
 This is the cleanest example of why "just use CQRS" isn't a universal answer — the right read-write split is workload-specific.
 
+*Sources: Fowler, "CQRS" (2011); Young, CQRS Documents (2010); Krikorian, "Timelines at Scale" (QCon 2012).*
+
 ## 26. Pre-Computing — Compute on Write vs Compute on Read
 
 A read returns data derived from raw facts. The core tradeoff is **when** to do the derivation: at write time (pre-compute, cache the result) or at read time (compute on demand).
@@ -2841,6 +2891,8 @@ Acceptable when: user-facing cold-start latency is tolerable (e.g. "your persona
 Pre-computing moves work from the read path to the write path. Since reads usually outnumber writes, and since reads are usually more latency-sensitive than writes, most production systems pre-compute more than feels "clean" at first.
 
 The question isn't "should I pre-compute?" — it's "what's my read:write ratio, and what's my read-latency budget?". Those two numbers tell you where on the spectrum to sit.
+
+*Sources: Kleppmann, DDIA part III (derived data, materialized views); Krikorian, "Timelines at Scale" (QCon 2012).*
 
 ## 27. Unique ID Generators — Snowflake, UUID, ULID
 
@@ -2922,6 +2974,8 @@ For new schemas in 2025+: UUID v7 is the sensible default. It replaces v4 for al
 
 The right choice depends on write scale and storage shape. At 10K QPS on Postgres, UUID v7 is fine. At 1M QPS across 100 shards, Snowflake's 64 bits pay for themselves in index size.
 
+*Sources: Twitter engineering blog — Snowflake announcement (2010); RFC 9562 (UUIDs, incl. v7); ULID specification.*
+
 ---
 
 # Part VII — Extended Patterns & Case Studies
@@ -2965,6 +3019,8 @@ If the cache is authoritative, you have to keep it populated. Options:
 - §10 Caching — patterns (cache-aside, read-through) and failure modes.
 - §26 Pre-Computing — similar idea applied to derivations.
 - §37 Multi-System CDC Sync — the usual mechanism for filling the cache from the authoritative store.
+
+*Sources: practitioner engineering material (adapted); Redis documentation.*
 
 ## 34. Two-Stage Processing Pattern
 
@@ -3010,6 +3066,8 @@ Don't just hope stage 2 works. Explicitly design the "stage 2 gives up" branch.
 - §13 Message Queues — the substrate.
 - §23 Saga — when stage 2 is itself a multi-step distributed operation.
 - §38 Case Study: Kafka + Redis Comments — a concrete two-stage flow.
+
+*Sources: practitioner engineering material (adapted); Kafka documentation.*
 
 ## 35. Database-Per-Microservice
 
@@ -3060,6 +3118,8 @@ The moment you split DBs, "transactional" operations across services have to bec
 - §6 Monolith vs Microservices — the overarching tradeoff.
 - §23 Saga — the transaction answer.
 - §37 Multi-System CDC Sync — how to keep derived copies fresh.
+
+*Sources: Newman, Building Microservices; Richardson, Microservices Patterns (database per service).*
 
 ## 36. Database Optimization Techniques
 
@@ -3128,6 +3188,8 @@ That's when you move to §12 (partitioning, replication, consistent hashing). Bu
 - §12 Database Scaling — when a single DB isn't enough.
 - §19 Pagination — avoiding the OFFSET trap on deep pages.
 
+*Sources: PostgreSQL documentation — indexes and performance; MySQL/InnoDB documentation; Winand, SQL Performance Explained.*
+
 ## 37. Multi-System Data Sync via Change Data Capture
 
 Systems that started as a single DB eventually sprout copies: search indexes, analytics warehouses, caches, per-service read models (§35). Keeping these copies fresh is the multi-system sync problem. The modern answer is **Change Data Capture (CDC)**: stream the DB's replication log into downstream consumers.
@@ -3190,6 +3252,8 @@ CDC is the default for modern systems because it's decoupled from application co
 - §12 Database Scaling — CDC mechanics.
 - §13 Message Queues — the transport.
 - §14 Big Data — downstream stream processing on CDC streams.
+
+*Sources: Debezium documentation; Kreps, "The Log" (2013); Kleppmann, DDIA ch. 11 (change data capture).*
 
 ## 38. Case Study — High-Performance Comment System with Kafka + Redis
 
@@ -3269,6 +3333,8 @@ No one pattern is load-bearing. The architecture works because:
 
 This is the typical shape of a high-QPS real-time feed. Slack, Discord, Reddit, Twitter all sit near this architecture, varying in the specific pieces.
 
+*Sources: practitioner case study (adapted); Kafka documentation; Redis documentation.*
+
 ## 39. Case Study — Scalable Services with Message Queues and Caching
 
 A more general sibling to §38: any service with high read QPS, bursty writes, and expensive derivations composes these same building blocks. This section makes the compose-pattern explicit so you can apply it without the comment-specific details.
@@ -3326,6 +3392,8 @@ For a **high-QPS, read-dominated, latency-sensitive** path — feeds, catalogs, 
 ### 39.6 Related
 
 - Everything. This is the **composition pattern** the rest of the KB assembles.
+
+*Sources: practitioner case study (adapted); Kafka documentation; Redis documentation.*
 
 ---
 
@@ -3765,6 +3833,295 @@ When either triggers, the DB concentrates 78% of load on one shard. `trafficProf
 - §20.1 QPS tier tables — picking realistic `rps` values per phase.
 - Decisions §10 — stressed-mode semantics.
 
+## 45. Queueing Model — Kingman G/G/1
+
+Every server-like component in SIMFID computes its per-tick latency from a closed-form queueing approximation. Since Phase 4.6 that approximation is the Kingman / Whitt two-moment formula for a G/G/1 queue, not the M/M/1 formula the engine started with.
+
+**Source:** [src/engine/QueueingModel.ts](src/engine/QueueingModel.ts) `computeQueueing`; called from [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `processServer`, with `getCurrentArrivalVariance` supplying the arrival-variance prior.
+
+### 45.1 Why M/M/1 was replaced
+
+The original model was M/M/1: `wait = serviceTime × ρ/(1−ρ)`. M/M/1 assumes Poisson (memoryless) arrivals and exponential service times — which makes an instant 10× traffic step look *identical* to steady traffic at the same utilization. The fidelity research debrief ([docs/research/2026-04-22-simfid-fidelity-research.md](docs/research/2026-04-22-simfid-fidelity-research.md)) flagged this as the single highest-ROI refinement available: Whitt's 1993 two-moment approximation ("Approximations for the GI/G/m Queue") is validated in the literature as "usually an excellent approximation" for mean wait, and burstiness — the thing users most need to *see* — is exactly what the correction term carries. This is Decisions §57.
+
+### 45.2 The formula
+
+```
+ρ    = arrivalRateRps / (instanceCount × 1000/processingTimeMs)
+wait ≈ (ρ / (1 − ρ)) × ((Cₐ² + C_s²) / 2) × serviceTime
+```
+
+When `Cₐ² = C_s² = 1.0` the variance factor is exactly 1.0 and the formula collapses to M/M/1 — bit-identical to pre-Phase-4.6 behavior, which is why every existing test survived the upgrade without recalibration. Components and profiles opt into the new behavior by setting `serviceVariance` or by running under a bursty traffic phase.
+
+### 45.3 Cₐ² — arrival variance, a modeled prior
+
+`Cₐ²` is the squared coefficient of variation of interarrival times. Physically: how clumped the arrivals are. Poisson arrivals (independent users clicking at random) have `Cₐ² = 1`. A ramp or a flash-crowd spike clumps arrivals harder; the same average RPS arrives in bursts, and bursts queue.
+
+SIMFID maps the *current traffic phase's* `shape` (§44) to a prior (`getCurrentArrivalVariance`):
+
+| Phase shape | Cₐ² | Reading |
+|---|---|---|
+| `steady` | 1.0 | Poisson-style — the M/M/1 default |
+| `ramp_up`, `ramp_down`, `spike` | 2.0 | mild burstiness |
+| `instant_spike` | 4.0 | hard burstiness — step-function load |
+| (no phase covers `this.time`) | 1.0 | zero arrivals have no burstiness |
+
+This is a **modeled prior, not a measurement**. At a 1-second tick interval there is no per-request interarrival-gap sample to derive `Cₐ²` from — measuring it from tick-level arrivals would measure Poisson noise, not burstiness. Codex flagged this explicitly in the Phase 4.6 review; the mapping is a teaching knob with defensible values (4.0 was chosen over a more dramatic 9.0 as the defensible upper bound for an instant step-load). See Decisions §57.
+
+### 45.4 C_s² — service variance
+
+`C_s²` is the squared coefficient of variation of *service* times, read from the component's optional `config.serviceVariance` (falling back to the fastify calibration anchor, then 1.0 — see §48):
+
+- **1.0 (default):** exponential service distribution — the M/M/1 special case.
+- **< 1.0:** tighter-than-exponential. Deterministic systems, batch workers with consistent completion times. Cuts wait time.
+- **> 1.0:** longer service tail — GC pauses, variable I/O. Extends p99.
+
+Both variance inputs are clamped to `max(0, value)` against negative entries.
+
+### 45.5 Clamps, caps, and drops
+
+Three guards keep the math finite and the runs bounded:
+
+1. **ρ clamp at 0.95.** Effective utilization is `min(ρ, 0.95)`; at the clamp the wait formula evaluates with a fixed `ρ/(1−ρ) = 19` factor. Without this, ρ → 1 sends wait to infinity inside one tick.
+2. **Overflow as drops.** When raw ρ exceeds 1, the surplus becomes `dropRate = 1 − 1/ρ` (capped 0.95) — the requests the queue physically cannot serve. A second drop check applies Little's Law against concurrency: if `arrivalRate × latency` exceeds `maxConcurrentPerInstance × instances`, the excess fraction is dropped too.
+3. **5000ms wait cap.** The wait that feeds the latency percentiles is capped at 5000ms so stressed runs stay bounded. (The raw `waitTimeMs` field in the result is returned uncapped; only the percentile math uses the clamped value.)
+
+### 45.6 Percentile multipliers — modeled priors, not measurements
+
+```
+totalLatency = processingTime + clampedWait
+p50 = totalLatency × 0.7     p95 = totalLatency × 2.0     p99 = totalLatency × 4.0
+```
+
+These spreads are fixed priors chosen to *teach the shape* of a latency distribution, not measurements of one. The engine does not track per-request latency samples (see Decisions §59 on tick-granularity CO-correctness), so it cannot derive real percentiles.
+
+### 45.7 Stressed mode pulls Cₐ² from the peak phase
+
+Stressed mode holds the *peak* RPS across all phases for the whole run (§44.4). The Cₐ² must come from the **same phase as that peak**, not from whatever phase covers `this.time` — otherwise a run that peaks in a later `instant_spike` phase would simulate early ticks at peak RPS with steady-phase Cₐ² = 1, and Kingman would materially underestimate queueing delay in the mode that is supposed to be worst-case. When multiple phases tie on peak RPS, the highest-variance shape wins. This is Decisions §64 (codex round 5 [P2]).
+
+### 45.8 Honesty caveat — closed-form tails under-predict p99+
+
+Kingman is a *mean-wait* approximation with modeled percentile spreads on top. The research debrief's ceiling applies in full: closed-form models can land mean/p50/p95 within roughly 10–30% of reality under moderate load, but p99 and beyond are routinely off by 1–3 orders of magnitude in real systems (Dean & Barroso, "The Tail at Scale", CACM 2013; Leland et al. 1994 on self-similar traffic). Kingman is also conservative for `Cₐ² ≫ 1` — real systems under an instant 10× step spike harder than Whitt 1993 predicts. Treat SIMFID's p99 as directional: it shows *which* component's tail explodes and *when* ρ crosses the knee, not what your production p99 will be.
+
+### 45.9 Related
+
+- §20 — how to scale a system (what to do when ρ approaches 1).
+- §44 — traffic phase shapes, the source of Cₐ².
+- §48 — calibration anchors as the fallback for `processingTimeMs` / `serviceVariance`.
+- Decisions §6 (original M/M/1), §57 (Kingman upgrade), §64 (stressed-mode Cₐ²).
+
+## 46. Database Read/Write Split & Attribution
+
+`processDatabase` models three independent failure modes — read-side saturation, write-side saturation, and connection-pool exhaustion — and attributes inbound load to reads vs writes using the per-endpoint routing context when one exists.
+
+**Source:** [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `processDatabase`, `computeDbReadWriteBreakdown`, `computeDbArrivalFactor`, `routeStaticAmplificationToNode`, `routeReachesDbInLiveGraph`, `resolveShardKeyForDb`.
+
+### 46.1 Capacity model: reads and writes saturate independently
+
+```
+readCapacity  = readThroughputRps × (1 + readReplicas)
+writeCapacity = writeThroughputRps
+errorRate(side) = util > 1 ? min(0.9, (util − 1) × 0.5) : 0
+```
+
+Read replicas multiply *read* capacity only — writes still funnel through the primary. Each side's utilization produces a per-side error rate on the same saturation curve connection-pool exhaustion uses. Divide-by-zero is guarded: a side with zero capacity and nonzero inbound saturates to the ceiling; zero inbound against zero capacity reports 0. Defaults (50 000 read / 20 000 write RPS) come from explicit config, then calibration anchors, then hard-coded values (§48).
+
+### 46.2 Aggregate errorRate = max(read, write, pool)
+
+```
+state.metrics.errorRate = max(readErrorRate, writeErrorRate, poolDropRate)
+```
+
+This preserves the §52 fan-in invariant: breakers, retry amplification, and backpressure read **only the aggregate** `errorRate`; `readErrorRate` / `writeErrorRate` are strictly diagnostic fields (Decisions §54). The control plane trips on whichever failure mode hits first; the diagnostics tell the user *which side* — "reads are fine, writes are 250% over capacity."
+
+### 46.3 Per-endpoint attribution
+
+When `endpointRoutes` exist, each route's contribution to this DB is:
+
+```
+dbShare = entryShare × staticAmplification × dbArrivalFactor
+```
+
+- **`entryShare`** — the endpoint's seeded RPS at its chain head this tick.
+- **`staticAmplification`** (`routeStaticAmplificationToNode`) — walks the route's chain prefix and multiplies each `fanout` component's configured `multiplier` (other component types are 1:1 in static config). Restored in codex round 8 (Decisions §66): without it, a `svc → fanout(10) → db` route delivering 1000 writes would be attributed at its 100-rps entry share, and the aggregate `errorRate` would silently miss real saturation.
+- **`dbArrivalFactor`** (`computeDbArrivalFactor`) — `min(1, totalInboundRps / Σ(entryShare × amp))` over routes that visit this DB. The factor scales routed shares **down** when upstream filters (cache hits, CDN, drops) absorbed traffic, and is **capped at 1** so routed metadata is never projected onto traffic the routes didn't deliver — default-bucket traffic falls into the 70/30 remainder instead (codex round 4 [P1], Decisions §63/§66).
+
+Table operations come from `route.tablesAccessed`, joined to this DB via `schemaMemory.entities[].assignedDbId`. A `read_write` op contributes the route's full share to **both** buckets but is counted **once** in the remainder base (codex [P1a] — summing the two buckets would double-subtract).
+
+### 46.4 The 70/30 fallback
+
+With no routing context, no schema join, or chains that never visit this DB, inbound splits `DB_FALLBACK_READ_SHARE = 0.7` read / 0.3 write — a typical load-generator default. Under *partial* attribution the unclassified remainder folds in at the same 70/30 (Decisions §60). The user-visible `read-saturation` / `write-saturation` callouts fire only when `attributionRatio ≥ 0.5` — when the 70/30 filler dominates, the split is a modeling assumption, and warning about it would send users chasing phantom hot spots (codex [P2b]).
+
+### 46.5 Unindexed-scan latency multiplier
+
+```
+dbLatency ×= 1 + (SCAN_FACTOR − 1) × unindexedShare      // SCAN_FACTOR = 10
+```
+
+`unindexedShare` is the fraction of *routed DB-visiting* share whose `TableAccess.indexed === false` for tables on this DB, using the same `entryShare × amp × arrivalFactor` scaling as the read/write split. `SCAN_FACTOR = 10` is a class constant **locked to preflight's "10× slower" copy** ([src/engine/preflight.ts](src/engine/preflight.ts)) so the simulated penalty and the user-facing warning can't drift (Decisions §55). The denominator is routed share, not total inbound — unindexed-ness is never attributed to fan-out amplification or default-bucket traffic whose `TableAccess` shape is unknown. Per-table one-shot callouts fire above a 5% share threshold with deliberately hedged wording ("may include unindexed access") because the `indexed` flag is coarse — one flag covers every operation that endpoint does on that table.
+
+### 46.6 Shard cardinality resolution ladder
+
+When sharding is enabled, `resolveShardKeyForDb` walks four fallback layers (Decisions §56):
+
+1. **`schemaMemory.entities`** — first entity assigned to this DB with a `partitionKey`; cardinality from the explicit `partitionKeyCardinalityWarning` flag (→ `'low'`) or the partition field's own `cardinality`. A dangling partitionKey ref degrades to `'high'` (under-model rather than gratuitously flag).
+2. **`config.shardKey`** on the DB node — the per-DB inspector override.
+3. **Legacy constructor globals** (`schemaShardKey` / `schemaShardKeyCardinality`).
+4. **`{ null, 'high' }`** — no hot-shard behavior.
+
+The Pareto hot-shard branch (78% of load onto one shard) fires when resolved cardinality is `low`/`medium` **or** the key contains "user" (case-insensitive) — the classic user-id hot-key lesson.
+
+### 46.7 Stale-chain detection
+
+Graphs get edited after routes are generated. Two guards keep attribution honest:
+
+- `routeReachesDbInLiveGraph` verifies the route's `componentChain` is still a connected prefix path to this DB in the live adjacency before the route contributes anything — a route whose `svc → db` edge was deleted would otherwise project its share onto whatever traffic the DB currently receives and fire phantom saturation/scan diagnostics (codex round 3 [P1]).
+- `seedInboundTraffic` validates whole chains at seed time; a stale route's share redistributes to valid endpoints and a one-shot `routing-stale:<endpointId>` callout tells the user their routes and graph have drifted (Decisions §64).
+
+### 46.8 Documented limitation — heterogeneous dynamic filtering
+
+`computeDbArrivalFactor` collapses every route reaching a DB to one scalar. Static amplification differences are handled per-route (§46.3), but **dynamic** filtering is not: with one route through a 90%-hit cache and one direct, both share the same observed-inbound-derived factor, so the cached route's per-side share is over-attributed. Per-side `readErrorRate`/`writeErrorRate` and scan-callout endpoint naming can drift in such topologies. The **aggregate** `errorRate` stays bounded — `totalInboundRps` reflects the DB's actual post-filter load, so breakers/retry/backpressure still react to real saturation. Fixing the residual would need live per-chain cache-hit modeling, deliberately avoided in the round-8 static walk. Decisions §61 (Known limitation) and §66.
+
+### 46.9 Related
+
+- §25 — CQRS & read-write separation (the pattern this models).
+- §36 — database optimization techniques (indexes, the real-world fix).
+- §40–§42 — the control-plane consumers of the aggregate errorRate.
+- Decisions §52, §54, §55, §56, §60, §61, §63, §66.
+
+## 47. Capacity Estimation — From DAU to a Traffic Profile
+
+The BOTE (back-of-the-envelope) panel turns "we have N daily users" into concrete QPS, storage, and connection numbers, and can project them into a runnable two-phase traffic profile. It is pure arithmetic — no engine coupling.
+
+**Source:** [src/util/bote.ts](src/util/bote.ts) `computeBote`, `toTwoPhaseProfile`; rendered by [src/components/panels/BotePanel.tsx](src/components/panels/BotePanel.tsx) in the right inspector dock (opened from the Traffic tab when nothing is selected).
+
+### 47.1 The classic estimation chain
+
+The formulas are the standard interview-whiteboard set, implemented exactly:
+
+| Quantity | Formula |
+|---|---|
+| Average QPS | `DAU × actionsPerUserPerDay / 86 400` |
+| Peak QPS | `avgQps × peakMultiplier` (default **3×** — the industry peak-to-average prior) |
+| Read / write QPS | `avgQps × readRatio` / `avgQps × (1 − readRatio)` |
+| Storage per month | `writeQps × payloadBytes × 86 400 × 30` |
+| Storage at retention | `writeQps × payloadBytes × 86 400 × retentionDays` |
+| Concurrent connections | `QPS × avgResponseTime` (Little's Law, `N = λ × W`), at avg and at peak |
+
+Defaults: 1M DAU, 10 actions/user/day, 80% reads, 1 KB payload, 365-day retention, 100ms response time → ~116 avg QPS, ~347 peak QPS. Inputs are clamped (non-finite/negative → 0; `peakMultiplier` floors at 1; `readRatio` clamps to [0, 1]) so the math never NaNs.
+
+This is the same discipline §5 teaches — write the load numbers down *before* picking tools. The panel mechanizes §5's worked examples: read/write ratio drives replica strategy and cache aggressiveness; concurrent connections drive pool sizing; growth rate drives the storage roadmap.
+
+### 47.2 Worked example — the defaults
+
+Walking the default inputs through the chain:
+
+```
+avgQps   = 1 000 000 × 10 / 86 400            ≈ 116 QPS
+peakQps  = 116 × 3                            ≈ 347 QPS
+writeQps = 116 × (1 − 0.8)                    ≈ 23 QPS
+storage  = 23 × 1 024 B × 86 400 × 365        ≈ 700 GB at retention
+N_avg    = 116 × 0.1 s                        ≈ 12 in-flight requests
+N_peak   = 347 × 0.1 s                        ≈ 35 in-flight requests
+```
+
+The teaching moment is the gap between intuition and arithmetic: "a million users" sounds like Twitter-scale, but at 10 actions/day it is ~116 average QPS — a single modest server, until the spike arrives or the response time balloons under saturation (at which point Little's Law says in-flight requests balloon with it; that feedback loop is §45's territory, not this panel's).
+
+### 47.3 Two-phase profile projection
+
+"Apply to traffic profile" (`toTwoPhaseProfile`) replaces the current profile's `phases` with:
+
+1. **Steady baseline** at rounded avg QPS for the first ~2/3 of the run (`shape: 'steady'`).
+2. **Spike to peak** QPS for the final third (`shape: 'spike'`).
+
+The existing profile's `durationSeconds`, `requestMix`, `userDistribution`, and `jitterPercent` are preserved — only the phases are overwritten, so a user's run length and mix choices survive. Apply is disabled mid-run because the engine snapshots the profile at start (Decisions §68). Note from §44.2/§45.3: the `spike` shape evaluates at constant `rps` (no interpolation) but carries `Cₐ² = 2.0` into the Kingman model, so the projected peak phase queues harder than a `steady` phase at the same RPS — which is the point.
+
+### 47.4 What the numbers are good for — and not
+
+These are estimates of **offered load**, not predictions of system behavior:
+
+- **Good for:** sizing intuition ("1M DAU is only ~116 avg QPS — one server, until the spike"), picking realistic `rps` values for traffic phases instead of guessing, sanity-checking storage growth before choosing a database, ballparking connection-pool sizes via Little's Law.
+- **Not good for:** telling you whether *your* architecture survives that load. The chain says nothing about queueing, saturation, retries, cache behavior, or hot shards — that is what running the simulation is for. Estimate the offered load here; observe the system response in the run.
+
+The peak multiplier in particular is a prior, not a fact: 3× is a common average-service default, but flash-crowd products see far worse (which is what `instant_spike` phases are for).
+
+### 47.5 Related
+
+- §5 — back-of-envelope resource estimation (the manual discipline this mechanizes).
+- §20.1 — QPS tier tables for sanity-checking the output.
+- §44 — what the projected phases mean to the engine.
+- §45 — how the spike phase's burstiness feeds the queueing model.
+- Decisions §68 — Phase 8a placement, apply semantics, and store-resident inputs.
+
+## 48. Calibration — Measured Anchors as Engine Defaults
+
+SIMFID's path to better numbers is **measure once, model many**: an offline harness measures real primitives (Postgres, Redis, Fastify) per hardware class and writes the results into `calibration.json` files; the interactive engine reads those anchors as *defaults* and never runs containers in the request path. This is the Google Omega pattern the fidelity research recommended — offline calibration feeding an online algorithmic model — and the same lineage as Uber's Ballast-style measured load profiles. It is the only shape that survives the "drag a wire, see a result in under 1 second" constraint.
+
+**Source:** [src/engine/calibration.ts](src/engine/calibration.ts) (`parseCalibrationProfile`, `loadCalibrationSet`, `primeCalibration`, `getCalibrationSet`); shipped files at `public/calibration/laptop-m-series-16gb/{postgres-16,redis-7,fastify-5}.json`; consumed in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `processServer` and `processDatabase` default chains.
+
+### 48.1 The schema
+
+One JSON file per `(hardwareClass, primitive, version)`:
+
+```json
+{
+  "primitive": "postgres",
+  "version": "16",
+  "hardwareClass": "laptop-m-series-16gb",
+  "capturedAt": null,
+  "anchors": {
+    "serviceTimeMs": { "p50": null, "p99": null },
+    "serviceVariance": null,
+    "readThroughputRps": null,
+    "writeThroughputRps": null,
+    "connectionPoolExhaustionMs": null
+  },
+  "source": "empty-default"
+}
+```
+
+Files live at `public/calibration/<hardwareClass>/<primitive>-<version>.json` and are fetched like templates. Shipped versions: postgres 16, redis 7, fastify 5 (Kafka deferred until a user names a Kafka-specific failure mode).
+
+### 48.2 Anchor → engine-default mapping
+
+Anchors feed **only config-default sites that exist today**:
+
+| Anchor | Engine default it replaces | Hard-coded fallback |
+|---|---|---|
+| `postgres.readThroughputRps` | database `readThroughputRps` | 50 000 |
+| `postgres.writeThroughputRps` | database `writeThroughputRps` | 20 000 |
+| `fastify.serviceTimeMs.p50` | server `processingTimeMs` | 50 |
+| `fastify.serviceVariance` | server `serviceVariance` (Kingman C_s², §45.4) | 1.0 |
+
+The **redis profile ships schema-only** — the cache model has no calibrated-latency knob yet; inventing one ahead of real measurements would be scope creep. `serviceTimeMs.p99` and `connectionPoolExhaustionMs` are likewise schema-reserved: they ship in the format so Phase 5's harness has somewhere to write, but no engine site consumes them yet.
+
+### 48.3 Precedence: explicit config always wins
+
+Every consuming site is a `??` chain: `config value ?? calibration anchor ?? hard-coded default`. A user who sets `processingTimeMs` on a server sees their number, calibrated or not. Calibration only fills *unset* knobs.
+
+### 48.4 Shipped files are empty defaults — bit-identical behavior
+
+Every shipped anchor is `null` and `source` is `"empty-default"`. All `??` chains therefore fall through to the hard-coded defaults, and the engine behaves **bit-identically** to pre-calibration builds (pinned by test). The scaffold ships ahead of the measurements deliberately: Phase 5's harness emits into this schema, not the other way around (Decisions §68).
+
+### 48.5 Loading and validation
+
+`primeCalibration()` fires an idempotent, fire-and-forget fetch when `useSimulation` mounts; whatever has loaded by the time the user hits Run is what the engine constructor receives (an optional trailing parameter — absent means exact pre-8a behavior). Boundary hardening at parse time:
+
+- Anchors must be **strictly positive** finite numbers — a calibrated `serviceTimeMs.p50: 0` would yield `1000/0 = Infinity` RPS in the queueing model; negative throughput would produce negative utilization. Zero/negative/non-number → `null`.
+- A file whose body declares a different `primitive` than its filename promises is dropped — a `postgres-16.json` claiming `"primitive": "fastify"` would otherwise silently apply service-time anchors as database throughput.
+- Missing files, network failures, and malformed JSON all degrade to "primitive absent" → hard-coded defaults. The loader never throws.
+
+### 48.6 What Phase 5 adds
+
+Phase 5 is the measurement side: an `npx systemsim-daemon` calibration harness that runs real Postgres, Redis, and Fastify on the user's machine, measures throughput/latency/variance per hardware class, and writes real anchors into these files (plus a UI pill showing which anchors are measured vs default). The contract is one-directional — the harness emits into this schema. Even then the claims stay directional: calibrated anchors move the *defaults* closer to one measured hardware class; they do not turn the closed-form model into a production predictor (§45.8 still applies in full).
+
+### 48.7 Related
+
+- §45 — the queueing model the fastify anchors parameterize.
+- §46 — the DB capacity model the postgres anchors parameterize.
+- §47 — BOTE, the other half of Phase 8a.
+- Decisions §68 — mapping, precedence, and boundary-hardening decisions.
+- [docs/research/2026-04-22-simfid-fidelity-research.md](docs/research/2026-04-22-simfid-fidelity-research.md) — the calibration-as-bridge recommendation.
+
 ---
 
-*End of SIMFID Runtime section. The KB is feature-complete for Part I–VIII. Follow-up (Phase A-content) distills topic-by-topic derivatives into `src/wiki/topics.ts` — see the UI plan at [/Users/divyanshkhare/.claude/plans/simfid-ux-streams-a-b-c.md](~/.claude/plans/simfid-ux-streams-a-b-c.md).*
+*End of SIMFID Runtime section. The KB is feature-complete for Part I–VIII through §48. Topic derivatives now live in `src/wiki/content/topics/` (alongside the learn/how-to markdown in `src/wiki/content/`); Reference topics are auto-generated from this file at build time (Decisions §48).*
