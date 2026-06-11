@@ -50,6 +50,14 @@ export default function TrafficEditor() {
     };
   }, []);
 
+  // Design-review F-10: the preflight "Add traffic profile" deep-link used
+  // to land on this editor COLLAPSED — an empty sidebar with a 24px header
+  // row. Auto-expand when the pulse routes here.
+  const pulseTarget = useStore((s) => s.pulseTarget);
+  useEffect(() => {
+    if (pulseTarget === 'sidebar:traffic') setCollapsed(false);
+  }, [pulseTarget]);
+
   // Re-seed the local draft when another surface replaces the live profile
   // (BOTE "Apply to traffic profile", session load). save()/NL generate also
   // land here, but they re-seed with the values just written — a no-op.
@@ -300,6 +308,15 @@ export default function TrafficEditor() {
       </div>
 
       <div className="space-y-1.5">
+        {/* Design-review F-11: the phase grid was naked number boxes — no
+            column names, no units. One header row fixes "what is 1000?". */}
+        <div className="flex gap-1.5 items-center" aria-hidden="true">
+          <span className="w-12" style={{ fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>START s</span>
+          <span style={{ width: 7 }} />
+          <span className="w-12" style={{ fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>END s</span>
+          <span className="w-16" style={{ fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>RPS</span>
+          <span style={{ fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>SHAPE</span>
+        </div>
         {phases.map((phase, i) => (
           <div key={i} className="flex gap-1.5 items-center">
             <input type="number" value={phase.startS} onChange={(e) => updatePhase(i, { startS: Number(e.target.value) })}

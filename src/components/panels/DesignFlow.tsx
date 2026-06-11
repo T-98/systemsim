@@ -94,6 +94,28 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--bg-primary)', color: 'var(--text-secondary)' }}>
+      {/* Design-review F-12: this page was a full-screen takeover with no
+          site identity and no way back — a trunk-test fail. Minimal header. */}
+      <div
+        className="flex items-center"
+        style={{ padding: '14px 24px', gap: 16, borderBottom: '1px solid var(--border-color)' }}
+      >
+        <button
+          type="button"
+          data-testid="designflow-back"
+          onClick={() => useStore.getState().setAppView('canvas')}
+          aria-label="Continue to canvas"
+          className="inline-flex items-center gap-1.5 transition-colors"
+          style={{ fontSize: 13, color: 'var(--text-tertiary)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '6px 4px' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
+        >
+          ← Canvas
+        </button>
+        <div style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.24px', color: 'var(--text-primary)' }}>
+          System<span style={{ color: 'var(--accent)' }}>Sim</span>
+        </div>
+      </div>
       <div className="max-w-2xl mx-auto" style={{ padding: '40px 32px' }}>
         <h2
           className="font-semibold"
@@ -104,7 +126,7 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
             marginBottom: '12px',
           }}
         >
-          Design Flow
+          Plan your design
         </h2>
         <p
           className="leading-relaxed"
@@ -186,6 +208,13 @@ export default function DesignFlow({ onComplete }: { onComplete: () => void }) {
               >
                 Non-Functional Requirements
               </label>
+              {/* Design-review F-11: placeholder-as-label — once rows have
+                  content the columns are anonymous. One visible header row. */}
+              <div className="flex gap-2" style={{ marginBottom: 6 }} aria-hidden="true">
+                <span className="flex-1" style={{ fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>ATTRIBUTE (e.g. latency)</span>
+                <span className="flex-1" style={{ fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>TARGET (e.g. p99 &lt; 5s)</span>
+                <span className="flex-1" style={{ fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>SCOPE (which path)</span>
+              </div>
               {nfrList.map((nfr, i) => (
                 <div key={i} className="flex gap-2 mb-2">
                   <input
