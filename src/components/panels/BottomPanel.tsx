@@ -47,7 +47,16 @@ export default function BottomPanel() {
   if (!bottomPanelOpen) return null;
 
   const hasDebrief = debrief && debriefVisible;
-  const height = logPanelExpanded ? 360 : 180;
+  const height = logPanelExpanded ? 'min(55vh, 460px)' : 180;
+
+  // Design-review F-03: the Live Log auto-scrolls to its bottom, and the
+  // tabs share one scroll container — switching to Debrief used to land
+  // mid-content with the score badges scrolled out of view and the peak
+  // table's header row clipped. Reset to top on every tab switch.
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [bottomPanelTab]);
 
   return (
     <div
@@ -104,7 +113,7 @@ export default function BottomPanel() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" ref={scrollRef}>
         {bottomPanelTab === 'log' && <LogContent />}
         {bottomPanelTab === 'debrief' && hasDebrief && <DebriefContent />}
       </div>
