@@ -405,6 +405,53 @@ export class SimulationEngine {
   }
 
   /**
+   * Chaos injection (Decisions §71): kill a component mid-run. Identical to
+   * an organic crash — metrics freeze at their last processed values (§12c),
+   * the LB/gateway split skips it, backpressure keeps signaling from the
+   * frozen aggregate (§67), breakers react to whatever the cascade does
+   * next. The log entry is queued and emitted with the NEXT tick's batch.
+   */
+  injectCrash(componentId: string): boolean {
+    const state = this.components.get(componentId);
+    if (!state || state.crashed) return false;
+    state.crashed = true;
+    state.health = 'crashed';
+    this.pendingChaosLogs.push({
+      time: this.time,
+      message: `CHAOS — ${componentId} killed manually at t=${Math.round(this.time)}s. Watch the survivors.`,
+      severity: 'critical',
+      componentId,
+    });
+    return true;
+  }
+
+  /**
+   * Chaos revive: bring a crashed component back. Metrics reset so the next
+   * tick computes fresh values; wires with OPEN breakers recover on their
+   * own clock (cooldown → HALF_OPEN probe → CLOSED) — that recovery arc is
+   * the point of the demo.
+   */
+  revive(componentId: string): boolean {
+    const state = this.components.get(componentId);
+    if (!state || !state.crashed) return false;
+    state.crashed = false;
+    state.health = 'healthy';
+    state.metrics = this.emptyMetrics();
+    state.acceptanceRate = 1.0;
+    this.pendingChaosLogs.push({
+      time: this.time,
+      message: `${componentId} revived at t=${Math.round(this.time)}s — breakers will probe before trusting it.`,
+      severity: 'info',
+      componentId,
+    });
+    return true;
+  }
+
+  /** Chaos log entries queued between ticks (injectCrash/revive are called
+   *  from UI event handlers, outside the tick loop). Drained by tick(). */
+  private pendingChaosLogs: LogEntry[] = [];
+
+  /**
    * Per-wire outcomes captured during the most recent tick. Exposed for
    * tests + future UI surfaces (wire-hover rich tooltip). Read-only snapshot —
    * callers should not mutate.
@@ -700,6 +747,15 @@ export class SimulationEngine {
     wireStates: Record<string, WireLiveState>;
   } {
     const newLogs: LogEntry[] = [];
+    // Drain chaos-injection logs queued by UI handlers between ticks. They
+    // bypass the per-tick throttle — a manual kill is always announced.
+    if (this.pendingChaosLogs.length > 0) {
+      for (const entry of this.pendingChaosLogs) {
+        this.calloutEntries.add(entry);
+        newLogs.push(entry);
+      }
+      this.pendingChaosLogs = [];
+    }
     const currentRps = this.getCurrentRps();
     const rpsPerTick = currentRps * this.tickInterval;
 

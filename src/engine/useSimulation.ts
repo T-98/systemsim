@@ -17,6 +17,22 @@ import { useRef, useCallback, useEffect } from 'react';
 import { useStore } from '../store';
 import { SimulationEngine } from './SimulationEngine';
 import { primeCalibration, getCalibrationSet } from './calibration';
+
+/**
+ * Chaos controls (Decisions §71). The live engine instance is private to
+ * whichever useSimulation instance started the run, but the kill/revive
+ * affordances live on canvas nodes — a module-level handle bridges them.
+ * Null when no run is active; node UI hides the affordance accordingly.
+ */
+export const chaosHandle: {
+  kill: ((id: string) => boolean) | null;
+  revive: ((id: string) => boolean) | null;
+} = { kill: null, revive: null };
+// Exposed for Playwright (same pattern as window.__SYSTEMSIM_STORE__) — a
+// page-context dynamic import would get a second module instance.
+if (typeof window !== 'undefined') {
+  (window as unknown as Record<string, unknown>).__SYSTEMSIM_CHAOS__ = chaosHandle;
+}
 import { generateDebrief } from '../ai/debrief';
 import { buildSimulationSummary } from '../ai/buildSimulationSummary';
 import { fetchAIDebrief } from '../ai/anthropicDebrief';
@@ -77,6 +93,8 @@ export function useSimulation() {
         timerRef.current = null;
       }
       engineRef.current = null;
+      chaosHandle.kill = null;
+      chaosHandle.revive = null;
       metricsHistoryRef.current = {};
       graphVersionRef.current = graphVersion;
     }
@@ -143,6 +161,8 @@ export function useSimulation() {
     addSimulationRun(run);
     setSimulationStatus('completed');
     engineRef.current = null;
+    chaosHandle.kill = null;
+    chaosHandle.revive = null;
 
     // Auto-generate deterministic debrief (instant, shows immediately)
     const state = useStore.getState();
@@ -235,6 +255,8 @@ export function useSimulation() {
       getCalibrationSet(),
     );
     engineRef.current = engine;
+    chaosHandle.kill = (id: string) => engine.injectCrash(id);
+    chaosHandle.revive = (id: string) => engine.revive(id);
 
     const runId = uuid();
     setCurrentRunId(runId);

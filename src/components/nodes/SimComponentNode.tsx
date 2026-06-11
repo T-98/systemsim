@@ -16,6 +16,7 @@ import { COMPONENT_DEFS } from '../../types/components';
 import { ComponentIcon } from './icons';
 import { useStore } from '../../store';
 import InfoIcon from '../ui/InfoIcon';
+import { chaosHandle } from '../../engine/useSimulation';
 
 function topicForComponentType(type: string): string {
   const camel = type.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -98,11 +99,22 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>{def.description}</div>
         </div>
         {/* Design-review F-06: a bare "X" in the top-right corner reads as a
-            close button. Status is a labeled pill, not a glyph. */}
+            close button. Status is a labeled pill, not a glyph.
+            Chaos (Decisions §71): during a run the pill becomes the REVIVE
+            affordance on hover; healthy nodes grow a KILL pill instead of
+            the info icon. The cascade is the demo. */}
         {health === 'crashed' && (
-          <div
+          <button
+            type="button"
             className="absolute font-semibold uppercase"
             data-testid="crashed-badge"
+            disabled={!isRunning || !chaosHandle.revive}
+            aria-label={isRunning ? `Revive ${data.label}` : `${data.label} crashed`}
+            onClick={(e) => {
+              e.stopPropagation();
+              chaosHandle.revive?.(id);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
             style={{
               top: '8px',
               right: '8px',
@@ -111,13 +123,15 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
               fontSize: '10px',
               letterSpacing: '0.08em',
               color: '#fff',
-              background: 'var(--destructive)',
+              background: hovered && isRunning && chaosHandle.revive ? 'var(--success, #30d158)' : 'var(--destructive)',
+              border: 'none',
+              cursor: isRunning && chaosHandle.revive ? 'pointer' : 'default',
             }}
           >
-            Crashed
-          </div>
+            {hovered && isRunning && chaosHandle.revive ? 'Revive' : 'Crashed'}
+          </button>
         )}
-        {hovered && health !== 'crashed' && (
+        {hovered && health !== 'crashed' && !isRunning && (
           <div
             className="absolute"
             data-testid="node-info-badge"
@@ -127,6 +141,33 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           >
             <InfoIcon topic={topicForComponentType(data.type)} side="bottom" />
           </div>
+        )}
+        {hovered && health !== 'crashed' && isRunning && chaosHandle.kill && (
+          <button
+            type="button"
+            className="absolute font-semibold uppercase"
+            data-testid="chaos-kill"
+            aria-label={`Kill ${data.label}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              chaosHandle.kill?.(id);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              top: '8px',
+              right: '8px',
+              padding: '2px 8px',
+              borderRadius: 6,
+              fontSize: '10px',
+              letterSpacing: '0.08em',
+              color: 'var(--destructive)',
+              background: 'transparent',
+              border: '1px solid var(--destructive)',
+              cursor: 'pointer',
+            }}
+          >
+            Kill
+          </button>
         )}
       </div>
 
