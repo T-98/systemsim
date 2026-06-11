@@ -45,7 +45,7 @@ export default function BotePanel({ onClose }: { onClose: () => void }) {
   return (
     <div
       data-testid="bote-panel"
-      className="w-80 flex flex-col h-full overflow-y-auto"
+      className="w-80 flex flex-col h-full"
       style={{
         background: 'var(--bg-sidebar)',
         borderLeft: '1px solid var(--border-color)',
@@ -73,7 +73,11 @@ export default function BotePanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <div style={{ padding: '20px' }} className="space-y-5">
+      {/* Design-review F-14: the inputs filled the whole viewport and the
+          estimates lived below the fold — "updates as you type" was
+          invisible. Inputs scroll; a pinned footer keeps the headline
+          numbers and Apply always in view. */}
+      <div style={{ padding: '20px', flex: 1, overflowY: 'auto' }} className="space-y-4">
         <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', lineHeight: 1.5 }}>
           Back-of-the-envelope math: daily users in, QPS / storage / connections out.
           Numbers update as you type.
@@ -121,6 +125,20 @@ export default function BotePanel({ onClose }: { onClose: () => void }) {
           <OutRow testid="bote-out-conns-peak" label="Concurrent requests (peak)" value={formatCount(estimates.peakConcurrentConnections)} />
         </div>
 
+      </div>
+
+      <div
+        className="shrink-0"
+        style={{ padding: '12px 20px 16px', borderTop: '1px solid var(--border-color)', background: 'var(--bg-sidebar)' }}
+      >
+        <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)', letterSpacing: '-0.12px' }}>
+            Avg <strong data-testid="bote-pinned-avg" style={{ color: 'var(--text-primary)', fontFamily: "'Geist Mono', monospace" }}>{formatCount(estimates.avgQps)}</strong> QPS
+          </span>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)', letterSpacing: '-0.12px' }}>
+            Peak <strong data-testid="bote-pinned-peak" style={{ color: 'var(--text-primary)', fontFamily: "'Geist Mono', monospace" }}>{formatCount(estimates.peakQps)}</strong> QPS
+          </span>
+        </div>
         <button
           type="button"
           data-testid="bote-apply"
@@ -139,9 +157,9 @@ export default function BotePanel({ onClose }: { onClose: () => void }) {
         >
           Apply to traffic profile
         </button>
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: -8, lineHeight: 1.5 }}>
-          Replaces the traffic phases with a steady baseline at average QPS and a
-          spike to peak QPS. Duration, request mix, and distribution are kept.
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', letterSpacing: '-0.12px', marginTop: 8, lineHeight: 1.5 }}>
+          Replaces the phases with a steady baseline + spike to peak. Duration,
+          request mix, and distribution are kept.
         </div>
       </div>
     </div>
