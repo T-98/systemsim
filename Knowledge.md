@@ -663,6 +663,8 @@ Decisions [§52](Decisions.md). Knowledge base [§40.6](system-design-knowledgeb
 
 **Internal state per component:** `ComponentState { queueDepth, currentConnections, memoryUsed, cacheEntries, shardLoads, accumulatedErrors, totalRequests, crashed, instanceCount, lastComputedLatencyMs }`
 
+**Chaos injection (Decisions §71, 2026-06-11):** `injectCrash(id)` / `revive(id)` let the user kill and resurrect components mid-run — the spark demo. A manual kill is semantically identical to an organic crash (frozen metrics §12c, LB skip, frozen-aggregate backpressure §67), so every control signal reacts without special-casing. Chaos log entries queue in `pendingChaosLogs` (UI handlers fire between ticks) and drain unthrottled with the next tick. The canvas reaches the hook-private engine through `chaosHandle` (module export of useSimulation, nulled when no run is live); node UI: hover Kill pill during runs, CRASHED→Revive pill on corpses. Demo template: `chaos_drill` (two replicas at 75% — killing one cascades for real).
+
 **Per-tick flow (3-phase scheduler, post 2026-04-22):**
 1. `getCurrentRps()` — reads the current traffic phase (or returns max if stressed)
 2. **Phase A** — `topologicalOrder(edges, entryPoints)` yields `{order, backEdges}`. Merge any back-edge traffic deferred from the previous tick (`pendingInbound`) into `inboundRps` / `inboundLat`, adding one tickInterval of scheduling delay. Seed entry points with `rpsPerEntry`.

@@ -1,5 +1,12 @@
 [
   {
+    "id": "chaos_drill",
+    "name": "Chaos Drill",
+    "source": "Kill a replica mid-run. Watch the cascade.",
+    "tags": ["chaos", "demo", "cascade"],
+    "description": "Two healthy replicas behind an LB. Hover one while the sim runs, hit Kill, watch retry storms and breakers take the rest down — then Revive it."
+  },
+  {
     "id": "discord_fanout",
     "name": "Discord Notification Fanout",
     "source": "Based on Discord's notification pipeline",

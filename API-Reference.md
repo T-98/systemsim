@@ -675,8 +675,14 @@ pass them continue to work unchanged.
 | `getComponentHealth(id)` | `(string) => HealthState` | Current health of a component |
 | `getComponentMetrics(id)` | `(string) => ComponentMetrics` | Current metrics of a component |
 | `getAllMetrics()` | `() => Record<string, ComponentMetrics>` | Snapshot of all components' metrics |
+| `injectCrash(id)` | `(string) => boolean` | Chaos (§71): kill a component mid-run — identical semantics to an organic crash (frozen metrics, LB skip, frozen-aggregate backpressure). Log entry drains with the next tick, unthrottled. |
+| `revive(id)` | `(string) => boolean` | Chaos (§71): bring a crashed component back (cold restart — metrics reset). OPEN breakers recover on their own cooldown→probe clock. |
 
 ### Hook: `useSimulation`
+
+Module export `chaosHandle: { kill, revive }` bridges the hook-private engine
+instance to the canvas node affordances; null when no run is active. Exposed
+as `window.__SYSTEMSIM_CHAOS__` for Playwright (§71).
 
 **File:** [src/engine/useSimulation.ts](src/engine/useSimulation.ts)
 

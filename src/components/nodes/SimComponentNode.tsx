@@ -16,6 +16,7 @@ import { COMPONENT_DEFS } from '../../types/components';
 import { ComponentIcon } from './icons';
 import { useStore } from '../../store';
 import InfoIcon from '../ui/InfoIcon';
+import { chaosHandle } from '../../engine/useSimulation';
 
 function topicForComponentType(type: string): string {
   const camel = type.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
@@ -36,6 +37,10 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
   const def = COMPONENT_DEFS[data.type];
   const health = data.health;
   const isRunning = simulationStatus === 'running' || simulationStatus === 'paused';
+  // Chaos affordances only while ticks are actually flowing — a kill clicked
+  // during pause mutates the engine with zero visual feedback until resume
+  // (health publishes per tick). Review P2.
+  const chaosLive = simulationStatus === 'running';
 
   const metrics = isRunning ? (liveMetrics ?? data.metrics) : null;
   const showShardDist = data.type === 'database' && metrics?.shardDistribution && metrics.shardDistribution.length > 1;
@@ -98,26 +103,46 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>{def.description}</div>
         </div>
         {/* Design-review F-06: a bare "X" in the top-right corner reads as a
-            close button. Status is a labeled pill, not a glyph. */}
-        {health === 'crashed' && (
-          <div
-            className="absolute font-semibold uppercase"
-            data-testid="crashed-badge"
-            style={{
-              top: '8px',
-              right: '8px',
-              padding: '2px 8px',
-              borderRadius: 6,
-              fontSize: '10px',
-              letterSpacing: '0.08em',
-              color: '#fff',
-              background: 'var(--destructive)',
-            }}
-          >
-            Crashed
-          </div>
-        )}
-        {hovered && health !== 'crashed' && (
+            close button. Status is a labeled pill, not a glyph.
+            Chaos (Decisions §71): during a run the pill becomes the REVIVE
+            affordance on hover; healthy nodes grow a KILL pill instead of
+            the info icon. The cascade is the demo. */}
+        {health === 'crashed' && (() => {
+          // Visible text and accessible name move together (WCAG 2.5.3
+          // label-in-name — review P2): "Crashed" announces the status,
+          // "Revive" announces the action, never crossed.
+          const reviveable = chaosLive && !!chaosHandle.revive;
+          const showRevive = hovered && reviveable;
+          return (
+            <button
+              type="button"
+              className="absolute font-semibold uppercase"
+              data-testid="crashed-badge"
+              disabled={!reviveable}
+              aria-label={showRevive ? `Revive ${data.label}` : `${data.label} crashed`}
+              onClick={(e) => {
+                e.stopPropagation();
+                chaosHandle.revive?.(id);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              style={{
+                top: '8px',
+                right: '8px',
+                padding: '2px 8px',
+                borderRadius: 6,
+                fontSize: '10px',
+                letterSpacing: '0.08em',
+                color: '#fff',
+                background: showRevive ? 'var(--success, #30d158)' : 'var(--destructive)',
+                border: 'none',
+                cursor: reviveable ? 'pointer' : 'default',
+              }}
+            >
+              {showRevive ? 'Revive' : 'Crashed'}
+            </button>
+          );
+        })()}
+        {hovered && health !== 'crashed' && !isRunning && (
           <div
             className="absolute"
             data-testid="node-info-badge"
@@ -127,6 +152,33 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           >
             <InfoIcon topic={topicForComponentType(data.type)} side="bottom" />
           </div>
+        )}
+        {hovered && health !== 'crashed' && chaosLive && chaosHandle.kill && (
+          <button
+            type="button"
+            className="absolute font-semibold uppercase"
+            data-testid="chaos-kill"
+            aria-label={`Kill ${data.label}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              chaosHandle.kill?.(id);
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              top: '8px',
+              right: '8px',
+              padding: '2px 8px',
+              borderRadius: 6,
+              fontSize: '10px',
+              letterSpacing: '0.08em',
+              color: 'var(--destructive)',
+              background: 'transparent',
+              border: '1px solid var(--destructive)',
+              cursor: 'pointer',
+            }}
+          >
+            Kill
+          </button>
         )}
       </div>
 

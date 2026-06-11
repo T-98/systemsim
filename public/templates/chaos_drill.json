@@ -1,0 +1,57 @@
+{
+  "systemsimVersion": "1.0",
+  "metadata": {
+    "name": "Chaos Drill",
+    "source": "Kill a replica mid-run. Watch the cascade. Revive it and watch the recovery.",
+    "tags": ["chaos", "demo", "cascade"]
+  },
+  "nodes": [
+    { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true, "retryPolicy": { "maxRetries": 2, "backoffMs": 100 } } },
+    { "type": "server", "label": "Replica A", "config": { "instanceCount": 2, "processingTimeMs": 50, "maxConcurrent": 1000 } },
+    { "type": "server", "label": "Replica B", "config": { "instanceCount": 2, "processingTimeMs": 50, "maxConcurrent": 1000 } },
+    { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 200, "writeThroughputRps": 100, "connectionPoolSize": 100 } }
+  ],
+  "edges": [
+    { "source": "load_balancer-0", "target": "server-1", "config": { "circuitBreaker": { "failureThreshold": 0.5, "failureWindow": 3, "cooldownSeconds": 8, "halfOpenTicks": 2 } } },
+    { "source": "load_balancer-0", "target": "server-2", "config": { "circuitBreaker": { "failureThreshold": 0.5, "failureWindow": 3, "cooldownSeconds": 8, "halfOpenTicks": 2 } } },
+    { "source": "server-1", "target": "database-3" },
+    { "source": "server-2", "target": "database-3" }
+  ],
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Steady load, your finger is the chaos",
+      "durationSeconds": 90,
+      "phases": [
+        { "startS": 0, "endS": 90, "rps": 60, "shape": "steady", "description": "Steady 60 RPS — both replicas at 75% utilization" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "events",
+          "name": "events",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "payload", "type": "jsonb", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "read", "frequency": "high", "pattern": "fetch event by id" },
+            { "operation": "write", "frequency": "medium", "pattern": "append event" }
+          ],
+          "assignedDbId": "database-3"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Single events table; the drill is about the compute tier, not the data model."
+    },
+    "apiContracts": [
+      { "id": "drill-read", "method": "GET", "path": "/events/:id", "description": "Read an event", "authMode": "jwt", "ownerServiceId": "server-1" },
+      { "id": "drill-write", "method": "POST", "path": "/events", "description": "Append an event", "authMode": "jwt", "ownerServiceId": "server-2" }
+    ]
+  }
+}

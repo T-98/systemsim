@@ -137,6 +137,26 @@ On the landing page, the "Describe your system" input accepts **text, image uplo
 - Live log shows warnings and critical events
 - Debrief panel opens with scores (Pass/Warn/Fail) and Socratic questions
 
+## Flow 4a: Chaos Drill (kill a component mid-run)
+
+The fastest way to feel what the simulator actually does.
+
+1. On the landing page, click the **Chaos Drill** template (first card)
+2. Click **Run** — two replicas hum along at ~75% utilization
+3. Hover **Replica B** while the sim runs → a red **Kill** pill appears top-right
+4. Click **Kill**. Watch: the LB shifts all 60 RPS to Replica A → its p99
+   explodes → retries amplify the load → it starts dropping requests →
+   (most runs) it crashes too → total outage, narrated in the live log
+5. Hover the crashed node → the CRASHED pill turns into green **Revive** →
+   click it. Breakers probe, then close; traffic re-splits; the system heals
+
+**What to verify:**
+- Kill pill only appears during a run (pre-run hover shows the info icon)
+- The log announces "CHAOS — <component> killed manually…" immediately
+- The cascade is real: the survivor's RPS doubles and its p99 climbs before
+  any errors appear (queueing first, then drops — same order as production)
+- Revive brings the node back cold; breakers take a few seconds to re-trust it
+
 ## Flow 4b: Capacity Estimator (back-of-the-envelope math)
 
 Freeform mode only. Turns "1M daily users" into traffic numbers before you run.

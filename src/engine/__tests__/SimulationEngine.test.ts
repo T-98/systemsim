@@ -880,6 +880,57 @@ describe('SimulationEngine', () => {
     });
   });
 
+  describe('Chaos injection (Decisions §71)', () => {
+    function chaosSetup() {
+      const nodes = [
+        makeNode('lb', 'load_balancer', { isEntry: true }),
+        makeNode('srv-a', 'server', { instanceCount: 2, processingTimeMs: 50 }),
+        makeNode('srv-b', 'server', { instanceCount: 2, processingTimeMs: 50 }),
+      ];
+      const edges = [makeEdge('e1', 'lb', 'srv-a'), makeEdge('e2', 'lb', 'srv-b')];
+      return new SimulationEngine(nodes, edges, steadyProfile(60, 20), undefined, undefined, 7);
+    }
+
+    it('injectCrash kills the node and the LB shifts full load to the survivor', () => {
+      const engine = chaosSetup();
+      const before = engine.tick();
+      expect(before.metrics['srv-a'].rps).toBeCloseTo(30, 0);
+      expect(before.metrics['srv-b'].rps).toBeCloseTo(30, 0);
+
+      expect(engine.injectCrash('srv-b')).toBe(true);
+      const after = engine.tick();
+      expect(after.healths['srv-b']).toBe('crashed');
+      // Survivor takes the full 60 RPS — 150% of its 40 RPS capacity.
+      expect(after.metrics['srv-a'].rps).toBeCloseTo(60, 0);
+      expect(after.metrics['srv-a'].errorRate).toBeGreaterThan(0.2);
+      // The kill is announced, unthrottled, in the next tick's batch.
+      expect(after.newLogs.find((l) => l.message.includes('CHAOS — srv-b killed'))).toBeDefined();
+    });
+
+    it('revive restores processing and announces the recovery', () => {
+      const engine = chaosSetup();
+      engine.tick();
+      engine.injectCrash('srv-b');
+      engine.tick();
+
+      expect(engine.revive('srv-b')).toBe(true);
+      const r = engine.tick();
+      expect(r.healths['srv-b']).not.toBe('crashed');
+      // Load splits again across both replicas.
+      expect(r.metrics['srv-b'].rps).toBeCloseTo(30, 0);
+      expect(r.newLogs.find((l) => l.message.includes('srv-b revived'))).toBeDefined();
+    });
+
+    it('injectCrash is idempotent-safe and revive rejects healthy targets', () => {
+      const engine = chaosSetup();
+      engine.tick();
+      expect(engine.revive('srv-a')).toBe(false);
+      expect(engine.injectCrash('srv-a')).toBe(true);
+      expect(engine.injectCrash('srv-a')).toBe(false);
+      expect(engine.injectCrash('nope')).toBe(false);
+    });
+  });
+
   describe('Backpressure', () => {
     it('scales forwarded RPS down by target acceptanceRate on the next tick', () => {
       // Server → external(errorRate=0.4, backpressure enabled).
