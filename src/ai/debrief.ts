@@ -248,9 +248,32 @@ function generateSocraticQuestions(ctx: DesignContext): string[] {
     questions.push(DISCORD_SOCRATIC_TEMPLATES.noWriteBatch());
   }
 
-  // General question if no specific issues
+  // Fallback question when no specific pattern matched. Severity-aware
+  // (design-review F-04): a crashed or error-saturated run must never be
+  // told it "held up well" — that one line costs the product its honesty.
   if (questions.length === 0) {
-    questions.push('Your system held up well. What would happen if the traffic spike lasted 10 minutes instead of 3 seconds? Where would the first bottleneck appear?');
+    const crashEntry = log.find((l) => l.message.includes('CRASH'));
+    let worstErr = 0;
+    let worstId = '';
+    for (const [id, series] of Object.entries(metrics)) {
+      for (const m of series) {
+        if (m.errorRate > worstErr) { worstErr = m.errorRate; worstId = id; }
+      }
+    }
+    if (crashEntry) {
+      const who = crashEntry.componentId ?? 'a component';
+      const when = Math.round(crashEntry.time);
+      questions.push(
+        `${who} crashed at t=${when}s and stayed down for the rest of the run. What was the first signal before the crash — utilization, queue depth, error rate? What single config change would have bought it the most headroom?`,
+      );
+    } else if (worstErr >= 0.3) {
+      const label = nodes.find((n) => n.id === worstId)?.data.label ?? worstId;
+      questions.push(
+        `${label} peaked at ${Math.round(worstErr * 100)}% errors. Which upstream decision sent it that much traffic, and where would you shed load first — at the edge, with a cache, or with backpressure?`,
+      );
+    } else {
+      questions.push('Your system held up well. What would happen if the traffic spike lasted 10 minutes instead of 3 seconds? Where would the first bottleneck appear?');
+    }
   }
 
   return questions.slice(0, 5);

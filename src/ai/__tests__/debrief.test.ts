@@ -88,6 +88,26 @@ describe('generateDebrief', () => {
     expect(debrief.aiAvailable).toBe(false);
   });
 
+  it('never says "held up well" after a crash (design-review F-04)', () => {
+    // makeRun()'s log contains a CRASH entry; with no specific pattern
+    // (hot shard / stampede / queue overflow) the fallback question fires —
+    // it must acknowledge the crash, not congratulate the user.
+    const nodes = [makeNode('server-1', 'server')];
+    const debrief = generateDebrief({
+      nodes,
+      edges: [],
+      functionalReqs: [],
+      nonFunctionalReqs: [],
+      apiContracts: [],
+      schemaMemory: null,
+      simulationRun: makeRun(),
+      scenarioId: null,
+    });
+    const joined = debrief.questions.join(' ');
+    expect(joined).not.toContain('held up well');
+    expect(joined).toContain('crashed at t=20s');
+  });
+
   it('should flag API gateway with no auth', () => {
     const nodes = [makeNode('gw', 'api_gateway', { authMiddleware: 'none' })];
     const debrief = generateDebrief({
