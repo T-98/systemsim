@@ -70,6 +70,19 @@ export function useSimulation() {
   const setCurrentRunId = useStore((s) => s.setCurrentRunId);
   const resetSimulationState = useStore((s) => s.resetSimulationState);
 
+  // Unmount cleanup (review P2): without this, an unmounting Toolbar would
+  // leave the interval ticking and the module-level chaosHandle pointing at
+  // an orphaned engine.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+      engineRef.current = null;
+      chaosHandle.kill = null;
+      chaosHandle.revive = null;
+    };
+  }, []);
+
   // Phase 8a.2 — kick off the calibration.json fetch once per session.
   // Idempotent fire-and-forget; the engine reads whatever has loaded by the
   // time the user hits Run (shipped files are empty defaults, so an

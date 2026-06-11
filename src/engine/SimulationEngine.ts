@@ -381,6 +381,13 @@ export class SimulationEngine {
   }
 
   getLog(): LogEntry[] {
+    // Chaos events fired after the final tick (kill/revive clicked as the
+    // run ends) would otherwise vanish from the run artifact and debrief —
+    // drain them into the permanent log here. Review P2.
+    if (this.pendingChaosLogs.length > 0) {
+      this.log.push(...this.pendingChaosLogs);
+      this.pendingChaosLogs = [];
+    }
     return this.log;
   }
 
@@ -438,9 +445,15 @@ export class SimulationEngine {
     state.health = 'healthy';
     state.metrics = this.emptyMetrics();
     state.acceptanceRate = 1.0;
+    // Cold restart (§71): stateful accumulators reset too. A revived queue
+    // keeping its full backlog would re-crash on the next tick from frozen
+    // memoryPercent; a revived DB would inherit phantom connections. Review P2.
+    state.queueDepth = 0;
+    state.currentConnections = 0;
+    state.shardLoads = [];
     this.pendingChaosLogs.push({
       time: this.time,
-      message: `${componentId} revived at t=${Math.round(this.time)}s — breakers will probe before trusting it.`,
+      message: `${componentId} revived at t=${Math.round(this.time)}s — cold restart; traffic re-splits as upstreams re-trust it.`,
       severity: 'info',
       componentId,
     });

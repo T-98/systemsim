@@ -28,9 +28,11 @@ test.describe('Chaos Drill — the spark demo', () => {
     const runButton = page.getByRole('button', { name: 'Run', exact: true });
     await expect(runButton).toBeEnabled();
 
-    // Pre-run hover shows the info icon, not Kill.
+    // Pre-run hover shows the info icon, not Kill (and the icon proves the
+    // hover registered — keeps this from passing if the feature vanishes).
     const replicaB = page.locator('.react-flow__node', { hasText: 'Replica B' });
     await replicaB.hover();
+    await expect(replicaB.getByTestId('node-info-badge')).toBeVisible();
     await expect(page.getByTestId('chaos-kill')).toHaveCount(0);
 
     await page.screenshot({ path: path.join(RESULTS_DIR, '01-run-ready.png'), fullPage: true });
@@ -61,9 +63,10 @@ test.describe('Chaos Drill — the spark demo', () => {
     await page.locator('button:has-text("Live Log")').first().click();
     await expect(page.getByTestId('bottom-panel')).toContainText('CHAOS — ', { timeout: 5000 });
 
-    // The cascade: survivor saturates (its node card shows >20% errors soon).
+    // The cascade: survivor saturates hard — assert a REAL error percentage
+    // (≥20%), not just the presence of an Err row (review P2).
     const replicaA = page.locator('.react-flow__node', { hasText: 'Replica A' });
-    await expect(replicaA).toContainText('Err', { timeout: 10000 });
+    await expect(replicaA).toContainText(/Err\s*([2-9]\d|1\d\d)(\.\d)?%/, { timeout: 10000 });
     await page.waitForTimeout(3000);
     await page.screenshot({ path: path.join(RESULTS_DIR, '03-cascade.png'), fullPage: true });
 

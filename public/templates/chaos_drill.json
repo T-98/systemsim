@@ -6,7 +6,7 @@
     "tags": ["chaos", "demo", "cascade"]
   },
   "nodes": [
-    { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true, "retry": { "maxRetries": 2, "backoffMs": 100 } } },
+    { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true, "retryPolicy": { "maxRetries": 2, "backoffMs": 100 } } },
     { "type": "server", "label": "Replica A", "config": { "instanceCount": 2, "processingTimeMs": 50, "maxConcurrent": 1000 } },
     { "type": "server", "label": "Replica B", "config": { "instanceCount": 2, "processingTimeMs": 50, "maxConcurrent": 1000 } },
     { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 200, "writeThroughputRps": 100, "connectionPoolSize": 100 } }

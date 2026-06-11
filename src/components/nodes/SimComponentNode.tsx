@@ -37,6 +37,10 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
   const def = COMPONENT_DEFS[data.type];
   const health = data.health;
   const isRunning = simulationStatus === 'running' || simulationStatus === 'paused';
+  // Chaos affordances only while ticks are actually flowing — a kill clicked
+  // during pause mutates the engine with zero visual feedback until resume
+  // (health publishes per tick). Review P2.
+  const chaosLive = simulationStatus === 'running';
 
   const metrics = isRunning ? (liveMetrics ?? data.metrics) : null;
   const showShardDist = data.type === 'database' && metrics?.shardDistribution && metrics.shardDistribution.length > 1;
@@ -103,34 +107,41 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
             Chaos (Decisions §71): during a run the pill becomes the REVIVE
             affordance on hover; healthy nodes grow a KILL pill instead of
             the info icon. The cascade is the demo. */}
-        {health === 'crashed' && (
-          <button
-            type="button"
-            className="absolute font-semibold uppercase"
-            data-testid="crashed-badge"
-            disabled={!isRunning || !chaosHandle.revive}
-            aria-label={isRunning ? `Revive ${data.label}` : `${data.label} crashed`}
-            onClick={(e) => {
-              e.stopPropagation();
-              chaosHandle.revive?.(id);
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
-            style={{
-              top: '8px',
-              right: '8px',
-              padding: '2px 8px',
-              borderRadius: 6,
-              fontSize: '10px',
-              letterSpacing: '0.08em',
-              color: '#fff',
-              background: hovered && isRunning && chaosHandle.revive ? 'var(--success, #30d158)' : 'var(--destructive)',
-              border: 'none',
-              cursor: isRunning && chaosHandle.revive ? 'pointer' : 'default',
-            }}
-          >
-            {hovered && isRunning && chaosHandle.revive ? 'Revive' : 'Crashed'}
-          </button>
-        )}
+        {health === 'crashed' && (() => {
+          // Visible text and accessible name move together (WCAG 2.5.3
+          // label-in-name — review P2): "Crashed" announces the status,
+          // "Revive" announces the action, never crossed.
+          const reviveable = chaosLive && !!chaosHandle.revive;
+          const showRevive = hovered && reviveable;
+          return (
+            <button
+              type="button"
+              className="absolute font-semibold uppercase"
+              data-testid="crashed-badge"
+              disabled={!reviveable}
+              aria-label={showRevive ? `Revive ${data.label}` : `${data.label} crashed`}
+              onClick={(e) => {
+                e.stopPropagation();
+                chaosHandle.revive?.(id);
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              style={{
+                top: '8px',
+                right: '8px',
+                padding: '2px 8px',
+                borderRadius: 6,
+                fontSize: '10px',
+                letterSpacing: '0.08em',
+                color: '#fff',
+                background: showRevive ? 'var(--success, #30d158)' : 'var(--destructive)',
+                border: 'none',
+                cursor: reviveable ? 'pointer' : 'default',
+              }}
+            >
+              {showRevive ? 'Revive' : 'Crashed'}
+            </button>
+          );
+        })()}
         {hovered && health !== 'crashed' && !isRunning && (
           <div
             className="absolute"
@@ -142,7 +153,7 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
             <InfoIcon topic={topicForComponentType(data.type)} side="bottom" />
           </div>
         )}
-        {hovered && health !== 'crashed' && isRunning && chaosHandle.kill && (
+        {hovered && health !== 'crashed' && chaosLive && chaosHandle.kill && (
           <button
             type="button"
             className="absolute font-semibold uppercase"
