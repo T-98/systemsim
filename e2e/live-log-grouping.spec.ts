@@ -101,12 +101,12 @@ test.describe('Live log grouping', () => {
     // 2s log throttle × minRun, or grouping can never fire on real runs).
     await gotoCanvasWithNodes(page);
     await seedLogs(page, [
-      { time: 1.0, message: 'a', severity: 'warning', componentId: 'server-1' },
-      { time: 4.0, message: 'b', severity: 'warning', componentId: 'server-1' },
-      { time: 7.0, message: 'c', severity: 'warning', componentId: 'server-1' },
-      { time: 10.0, message: 'd', severity: 'warning', componentId: 'server-1' },
-      { time: 20.0, message: 'e (outside window)', severity: 'warning', componentId: 'server-1' },
-      { time: 21.0, message: 'f', severity: 'warning', componentId: 'server-1' },
+      { time: 1.0, message: 'repeat 1', severity: 'warning', componentId: 'server-1' },
+      { time: 4.0, message: 'repeat 2', severity: 'warning', componentId: 'server-1' },
+      { time: 7.0, message: 'repeat 3', severity: 'warning', componentId: 'server-1' },
+      { time: 10.0, message: 'repeat 4', severity: 'warning', componentId: 'server-1' },
+      { time: 20.0, message: 'repeat 5', severity: 'warning', componentId: 'server-1' },
+      { time: 21.0, message: 'repeat 6', severity: 'warning', componentId: 'server-1' },
     ]);
     // 4 inside a 12s span, 2 after — neither run hits minRun=5.
     await expect(page.getByTestId('log-group')).toHaveCount(0);

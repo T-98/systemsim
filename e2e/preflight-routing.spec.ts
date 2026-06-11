@@ -16,6 +16,15 @@ async function loadBlankCanvas(page: Page) {
   await page.waitForSelector('text=Or start from a template');
   await page.click('button:has-text("Basic CRUD App")');
   await page.waitForSelector('.react-flow__node', { timeout: 5000 });
+  // Templates ship run-ready since design-review F-01 (starter traffic +
+  // schema + contracts). This suite tests preflight ROUTING for incomplete
+  // designs, so strip the starter state to surface the items.
+  await page.evaluate(() => {
+    const store = (window as any).__SYSTEMSIM_STORE__;
+    store.setState({ trafficProfile: null, schemaMemory: null });
+    store.getState().setApiContracts([]);
+  });
+  await page.waitForTimeout(200);
 }
 
 async function getState(page: Page) {
