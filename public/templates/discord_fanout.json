@@ -20,5 +20,73 @@
     { "source": "queue-2", "target": "fanout-3" },
     { "source": "fanout-3", "target": "server-4" },
     { "source": "server-1", "target": "database-5" }
-  ]
+  ],
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Announcement fanout burst",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 40, "rps": 40, "shape": "steady", "description": "Steady server activity and announcements" },
+        { "startS": 40, "endS": 60, "rps": 100, "shape": "spike", "description": "Game launch: every big server posts @everyone" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "pareto",
+      "jitterPercent": 10
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "servers",
+          "name": "servers",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "name", "type": "text", "cardinality": "high" },
+            { "name": "member_count", "type": "int", "cardinality": "medium" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "read", "frequency": "high", "pattern": "look up server before fanout" }
+          ],
+          "assignedDbId": "database-5"
+        },
+        {
+          "id": "messages",
+          "name": "messages",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "server_id", "type": "uuid", "cardinality": "high" },
+            { "name": "body", "type": "text", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "server_id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "write", "frequency": "high", "pattern": "persist announcement message" }
+          ],
+          "assignedDbId": "database-5"
+        },
+        {
+          "id": "notification_preferences",
+          "name": "notification_preferences",
+          "fields": [
+            { "name": "user_id", "type": "uuid", "cardinality": "high" },
+            { "name": "server_id", "type": "uuid", "cardinality": "high" },
+            { "name": "muted", "type": "bool", "cardinality": "low" }
+          ],
+          "indexes": [{ "field": "user_id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "read", "frequency": "very_high", "pattern": "filter recipients by mute settings during fanout" }
+          ],
+          "assignedDbId": "database-5"
+        }
+      ],
+      "relationships": [
+        { "from": "servers", "to": "messages", "type": "one_to_many" }
+      ],
+      "aiNotes": "Single preferences DB backs server metadata, messages, and per-user notification settings; fanout multiplies each announcement to ~500k members."
+    },
+    "apiContracts": [
+      { "id": "discord-event-everyone", "method": "POST", "path": "/event/everyone", "description": "Broadcast an @everyone announcement to all server members", "authMode": "jwt", "ownerServiceId": "server-1" },
+      { "id": "discord-get-prefs", "method": "GET", "path": "/users/:id/preferences", "description": "Fetch a user's notification preferences", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  }
 }

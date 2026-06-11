@@ -60,5 +60,43 @@
     },
     { "source": "api_gateway-1", "target": "server-2" },
     { "source": "server-2", "target": "database-3" }
-  ]
+  ],
+  "starter": {
+    "trafficProfile": {
+      "profileName": "DB overload drill",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 30, "rps": 6, "shape": "steady", "description": "Calm baseline within DB capacity" },
+        { "startS": 30, "endS": 60, "rps": 40, "shape": "spike", "description": "Traffic surge buries the tiny DB: backpressure, retries, breaker trips" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 10
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "records",
+          "name": "records",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "payload", "type": "text", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "read", "frequency": "high", "pattern": "fetch record by id" },
+            { "operation": "write", "frequency": "medium", "pattern": "insert record" }
+          ],
+          "assignedDbId": "database-3"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Minimal single-table schema; the deliberately tiny DB (5 rps read / 5 rps write) is the failure injection point."
+    },
+    "apiContracts": [
+      { "id": "resilience-get", "method": "GET", "path": "/records/:id", "description": "Read a record through the resilient path", "authMode": "jwt", "ownerServiceId": "server-2" },
+      { "id": "resilience-create", "method": "POST", "path": "/records", "description": "Write a record through the resilient path", "authMode": "jwt", "ownerServiceId": "server-2" }
+    ]
+  }
 }
