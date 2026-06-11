@@ -106,13 +106,13 @@ test.describe('Wiki scaffold', () => {
     expect(current).toBeTruthy();
   });
 
-  test('how-to topics show a disabled "Load in canvas" stub', async ({ page }) => {
+  test('how-to topics show a live "Load in canvas" button', async ({ page }) => {
     await gotoLanding(page);
     await openWikiVia(page, 'howto.retryStorm');
 
     const loadBtn = page.getByTestId('wiki-howto-load');
     await expect(loadBtn).toBeVisible();
-    await expect(loadBtn).toBeDisabled();
+    await expect(loadBtn).toBeEnabled();
     await expect(loadBtn).toHaveAttribute('data-howto-template', 'retryStorm');
     await page.screenshot({ path: path.join(RESULTS_DIR, 'wiki-howto.png'), fullPage: true });
   });
