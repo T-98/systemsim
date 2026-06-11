@@ -25,6 +25,7 @@ import SimComponentNode from '../nodes/SimComponentNode';
 import SimWireEdge from './SimWireEdge';
 import ParticleOverlay from './ParticleOverlay';
 import PreflightBanner from './PreflightBanner';
+import CanvasEmptyState from './CanvasEmptyState';
 import type { Node, Edge } from '@xyflow/react';
 import type { ComponentType, SimComponentData, WireConfig } from '../../types';
 import { MVP_VISIBLE_TYPES } from '../../types/components';
@@ -106,6 +107,7 @@ export default function Canvas() {
     <div className="flex-1 relative flex flex-col" style={{ background: 'var(--canvas-bg)' }}>
       <PreflightBanner />
       <div className="flex-1 relative">
+      <CanvasEmptyState />
       <ReactFlow
         key={graphVersion}
         nodes={nodes}
