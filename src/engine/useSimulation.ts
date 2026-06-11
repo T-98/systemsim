@@ -159,6 +159,9 @@ export function useSimulation() {
     useStore.getState().setDebrief(debrief);
     useStore.getState().setDebriefVisible(true);
     useStore.getState().setBottomPanelTab('debrief');
+    // Design-review F-03: the debrief is the payoff — open it at reading
+    // height instead of a 180px strip behind a tiny "Expand" link.
+    useStore.getState().setLogPanelExpanded(true);
 
     // Async AI debrief — merge questions when ready, fallback on failure
     useStore.getState().setDebriefLoading(true);

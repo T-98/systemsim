@@ -20,5 +20,82 @@
     { "source": "cache-2", "target": "fanout-3" },
     { "source": "fanout-3", "target": "database-4" },
     { "source": "server-1", "target": "database-5" }
-  ]
+  ],
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Feed scroll with celebrity post",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 40, "rps": 55, "shape": "steady", "description": "Normal evening feed scrolling" },
+        { "startS": 40, "endS": 60, "rps": 130, "shape": "spike", "description": "Celebrity posts, followers flood in to refresh feeds" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "pareto",
+      "jitterPercent": 10
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "users",
+          "name": "users",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "username", "type": "text", "cardinality": "high" },
+            { "name": "follower_count", "type": "int", "cardinality": "medium" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "read", "frequency": "high", "pattern": "resolve followers for fanout-on-write" }
+          ],
+          "assignedDbId": "database-5"
+        },
+        {
+          "id": "posts",
+          "name": "posts",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "user_id", "type": "uuid", "cardinality": "high" },
+            { "name": "media_url", "type": "text", "cardinality": "high" },
+            { "name": "created_at", "type": "timestamp", "cardinality": "high" }
+          ],
+          "indexes": [
+            { "field": "user_id", "type": "btree" },
+            { "field": "created_at", "type": "btree" }
+          ],
+          "partitionKey": "user_id",
+          "accessPatterns": [
+            { "operation": "read", "frequency": "very_high", "pattern": "fetch recent posts on cache miss" },
+            { "operation": "write", "frequency": "medium", "pattern": "create post, fan out to follower feeds" }
+          ],
+          "assignedDbId": "database-4"
+        },
+        {
+          "id": "feed_entries",
+          "name": "feed_entries",
+          "fields": [
+            { "name": "user_id", "type": "uuid", "cardinality": "high" },
+            { "name": "post_id", "type": "uuid", "cardinality": "high" },
+            { "name": "rank_score", "type": "float", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "user_id", "type": "btree" }],
+          "partitionKey": "user_id",
+          "accessPatterns": [
+            { "operation": "write", "frequency": "very_high", "pattern": "fanout writes one feed entry per follower" },
+            { "operation": "read", "frequency": "very_high", "pattern": "read precomputed feed page" }
+          ],
+          "assignedDbId": "database-4"
+        }
+      ],
+      "relationships": [
+        { "from": "users", "to": "posts", "type": "one_to_many" },
+        { "from": "posts", "to": "feed_entries", "type": "one_to_many" }
+      ],
+      "aiNotes": "Posts and precomputed feed entries live on the sharded Posts DB (shard key user_id); the social graph (users/follows) lives on the replicated Postgres."
+    },
+    "apiContracts": [
+      { "id": "ig-get-feed", "method": "GET", "path": "/feed", "description": "Fetch the viewer's ranked home feed", "authMode": "jwt", "ownerServiceId": "server-1" },
+      { "id": "ig-create-post", "method": "POST", "path": "/posts", "description": "Create a post and fan out to follower feeds", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  }
 }

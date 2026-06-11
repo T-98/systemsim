@@ -21,5 +21,82 @@
     { "source": "server-3", "target": "cache-4" },
     { "source": "server-3", "target": "database-5" },
     { "source": "server-1", "target": "database-5" }
-  ]
+  ],
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Friday night surge",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 40, "rps": 14, "shape": "steady", "description": "Normal evening ride requests" },
+        { "startS": 40, "endS": 60, "rps": 30, "shape": "spike", "description": "Concert lets out, ride requests double" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 10
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "drivers",
+          "name": "drivers",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "city_id", "type": "uuid", "cardinality": "medium" },
+            { "name": "status", "type": "text", "cardinality": "low" }
+          ],
+          "indexes": [{ "field": "city_id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "read", "frequency": "very_high", "pattern": "find available drivers near rider" }
+          ],
+          "assignedDbId": "database-5"
+        },
+        {
+          "id": "trips",
+          "name": "trips",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "city_id", "type": "uuid", "cardinality": "medium" },
+            { "name": "rider_id", "type": "uuid", "cardinality": "high" },
+            { "name": "driver_id", "type": "uuid", "cardinality": "high" },
+            { "name": "state", "type": "text", "cardinality": "low" }
+          ],
+          "indexes": [
+            { "field": "id", "type": "btree" },
+            { "field": "city_id", "type": "btree" }
+          ],
+          "partitionKey": "city_id",
+          "accessPatterns": [
+            { "operation": "write", "frequency": "high", "pattern": "create trip on match, update state transitions" },
+            { "operation": "read", "frequency": "high", "pattern": "rider polls trip status" }
+          ],
+          "assignedDbId": "database-5"
+        },
+        {
+          "id": "driver_locations",
+          "name": "driver_locations",
+          "fields": [
+            { "name": "driver_id", "type": "uuid", "cardinality": "high" },
+            { "name": "lat", "type": "float", "cardinality": "high" },
+            { "name": "lng", "type": "float", "cardinality": "high" },
+            { "name": "updated_at", "type": "timestamp", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "driver_id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "write", "frequency": "very_high", "pattern": "driver location ping every few seconds (served from cache, persisted async)" }
+          ],
+          "assignedDbId": "database-5"
+        }
+      ],
+      "relationships": [
+        { "from": "drivers", "to": "trips", "type": "one_to_many" }
+      ],
+      "aiNotes": "Trips DB is sharded by city_id; hot driver locations are served from the 5s-TTL cache with async persistence."
+    },
+    "apiContracts": [
+      { "id": "uber-request-ride", "method": "POST", "path": "/rides", "description": "Request a ride; enqueues a match job", "authMode": "jwt", "ownerServiceId": "server-1" },
+      { "id": "uber-trip-status", "method": "GET", "path": "/rides/:id", "description": "Poll trip status while waiting for pickup", "authMode": "jwt", "ownerServiceId": "server-1" },
+      { "id": "uber-driver-ping", "method": "POST", "path": "/drivers/location", "description": "Driver location heartbeat", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  }
 }

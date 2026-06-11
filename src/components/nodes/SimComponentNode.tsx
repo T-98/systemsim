@@ -97,8 +97,25 @@ function SimComponentNode({ id, data, selected }: NodeProps & { data: SimCompone
           <div className="font-semibold truncate" style={{ fontSize: '14px', color: 'var(--text-primary)', letterSpacing: '-0.224px' }}>{data.label}</div>
           <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', letterSpacing: '-0.12px' }}>{def.description}</div>
         </div>
+        {/* Design-review F-06: a bare "X" in the top-right corner reads as a
+            close button. Status is a labeled pill, not a glyph. */}
         {health === 'crashed' && (
-          <div className="absolute font-bold" style={{ top: '6px', right: '8px', color: 'var(--destructive)', fontSize: '18px' }}>X</div>
+          <div
+            className="absolute font-semibold uppercase"
+            data-testid="crashed-badge"
+            style={{
+              top: '8px',
+              right: '8px',
+              padding: '2px 8px',
+              borderRadius: 6,
+              fontSize: '10px',
+              letterSpacing: '0.08em',
+              color: '#fff',
+              background: 'var(--destructive)',
+            }}
+          >
+            Crashed
+          </div>
         )}
         {hovered && health !== 'crashed' && (
           <div

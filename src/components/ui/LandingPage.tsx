@@ -271,9 +271,12 @@ export default function LandingPage() {
 
         {/* Templates (Phase 1 primary) */}
         <div className="mb-10 animate-fade-in-1">
+          {/* Design-review F-17: was a 14px/400 h2 sitting visually BELOW the
+              15px/600 card h3s. Styled as the page's established eyebrow
+              label instead, which removes the hierarchy inversion. */}
           <h2
-            className="mb-4 font-normal"
-            style={{ fontSize: '14px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
+            className="mb-4 font-medium uppercase"
+            style={{ fontSize: '11px', color: 'var(--text-tertiary)', letterSpacing: '0.18em' }}
           >
             Or start from a template
           </h2>
@@ -321,7 +324,7 @@ export default function LandingPage() {
         <div className="flex items-center justify-center gap-6 animate-fade-in-2">
           <button
             onClick={startFreeform}
-            className="inline-flex items-center gap-1.5 transition-colors"
+            className="inline-flex items-center gap-1.5 transition-colors py-2.5 px-1"
             style={{ fontSize: '13px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
             onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
@@ -331,7 +334,7 @@ export default function LandingPage() {
           <span style={{ color: 'var(--border-color)' }}>|</span>
           <button
             onClick={loadSession}
-            className="inline-flex items-center gap-1.5 transition-colors"
+            className="inline-flex items-center gap-1.5 transition-colors py-2.5 px-1"
             style={{ fontSize: '13px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
             onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}
@@ -342,7 +345,7 @@ export default function LandingPage() {
           <button
             data-testid="landing-learn"
             onClick={() => useStore.getState().openWiki('userGuide.welcome')}
-            className="inline-flex items-center gap-1.5 transition-colors"
+            className="inline-flex items-center gap-1.5 transition-colors py-2.5 px-1"
             style={{ fontSize: '13px', color: 'var(--text-tertiary)', letterSpacing: '-0.224px' }}
             onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--accent-link)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-tertiary)'; }}

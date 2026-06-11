@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../store';
-import type { CanonicalGraph } from '../../types';
+import type { CanonicalGraph, TrafficProfile, SchemaMemoryBlock, ApiContract } from '../../types';
 
 interface TemplateIndex {
   id: string;
@@ -23,6 +23,18 @@ interface TemplateFile {
   metadata: { name: string; source: string; sourceUrl?: string; tags: string[] };
   nodes: CanonicalGraph['nodes'];
   edges: CanonicalGraph['edges'];
+  /**
+   * Design-review F-01: optional run-ready starter state. When present the
+   * template lands with traffic + schema + contracts applied, so Run is
+   * enabled immediately — preflight homework is the path for user-authored
+   * designs, not for the "fast path to a running sim" the docs promise.
+   * Node references use replaceGraph's deterministic `${type}-${index}` ids.
+   */
+  starter?: {
+    trafficProfile?: TrafficProfile;
+    schemaMemory?: SchemaMemoryBlock;
+    apiContracts?: ApiContract[];
+  };
 }
 
 export default function TemplatePicker() {
@@ -60,6 +72,14 @@ export default function TemplatePicker() {
       setAppMode('freeform');
       setScenarioId(null);
       setIntent(null);
+      // Apply run-ready starter state AFTER replaceGraph so setApiContracts'
+      // BFS route-builder walks the new graph. Each piece is optional.
+      if (tpl.starter) {
+        const s = useStore.getState();
+        if (tpl.starter.trafficProfile) s.setTrafficProfile(tpl.starter.trafficProfile);
+        if (tpl.starter.schemaMemory) s.setSchemaMemory(tpl.starter.schemaMemory);
+        if (tpl.starter.apiContracts) s.setApiContracts(tpl.starter.apiContracts);
+      }
       setAppView('canvas');
     } catch {
       setError(`Couldn't load this template. Try another.`);

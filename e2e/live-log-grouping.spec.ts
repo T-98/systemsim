@@ -96,17 +96,19 @@ test.describe('Live log grouping', () => {
     await expect(page.getByTestId('log-row')).toHaveCount(6);
   });
 
-  test('entries outside the 2s window break the group', async ({ page }) => {
+  test('entries outside the 12s window break the group', async ({ page }) => {
+    // Window default is 12s (design-review F-07 — must exceed the engine's
+    // 2s log throttle × minRun, or grouping can never fire on real runs).
     await gotoCanvasWithNodes(page);
     await seedLogs(page, [
-      { time: 1.0, message: 'a', severity: 'warning', componentId: 'server-1' },
-      { time: 1.3, message: 'b', severity: 'warning', componentId: 'server-1' },
-      { time: 1.6, message: 'c', severity: 'warning', componentId: 'server-1' },
-      { time: 1.9, message: 'd', severity: 'warning', componentId: 'server-1' },
-      { time: 4.0, message: 'e (outside window)', severity: 'warning', componentId: 'server-1' },
-      { time: 4.3, message: 'f', severity: 'warning', componentId: 'server-1' },
+      { time: 1.0, message: 'repeat 1', severity: 'warning', componentId: 'server-1' },
+      { time: 4.0, message: 'repeat 2', severity: 'warning', componentId: 'server-1' },
+      { time: 7.0, message: 'repeat 3', severity: 'warning', componentId: 'server-1' },
+      { time: 10.0, message: 'repeat 4', severity: 'warning', componentId: 'server-1' },
+      { time: 20.0, message: 'repeat 5', severity: 'warning', componentId: 'server-1' },
+      { time: 21.0, message: 'repeat 6', severity: 'warning', componentId: 'server-1' },
     ]);
-    // 4 in window, 2 after — neither run hits minRun=5.
+    // 4 inside a 12s span, 2 after — neither run hits minRun=5.
     await expect(page.getByTestId('log-group')).toHaveCount(0);
     await expect(page.getByTestId('log-row')).toHaveCount(6);
   });

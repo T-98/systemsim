@@ -13,5 +13,44 @@
   "edges": [
     { "source": "load_balancer-0", "target": "server-1" },
     { "source": "server-1", "target": "database-2" }
-  ]
+  ],
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Steady CRUD traffic",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 40, "rps": 400, "shape": "steady", "description": "Steady weekday traffic" },
+        { "startS": 40, "endS": 60, "rps": 1200, "shape": "spike", "description": "Lunchtime spike" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 10
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "items",
+          "name": "items",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "owner_id", "type": "uuid", "cardinality": "high" },
+            { "name": "body", "type": "text", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "read", "frequency": "high", "pattern": "fetch item by id" },
+            { "operation": "write", "frequency": "medium", "pattern": "create/update item" }
+          ],
+          "assignedDbId": "database-2"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Single-table CRUD starter schema."
+    },
+    "apiContracts": [
+      { "id": "crud-list", "method": "GET", "path": "/items", "description": "List items", "authMode": "jwt", "ownerServiceId": "server-1" },
+      { "id": "crud-create", "method": "POST", "path": "/items", "description": "Create item", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  }
 }

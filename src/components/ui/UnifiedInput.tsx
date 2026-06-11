@@ -176,6 +176,9 @@ export default function UnifiedInput() {
       setScenarioId(null);
       setAppView('review');
     } else if (result.kind !== 'aborted') {
+      // Design-review F-09: the old fallback blamed every unknown failure on
+      // a timeout and told text-only users to "paste a smaller image". Name
+      // the actual failure kind and offer a path that always works.
       const msg =
         result.kind === 'rate_limit'
           ? 'Rate limited. Wait a moment and try again.'
@@ -183,7 +186,7 @@ export default function UnifiedInput() {
             ? "Can't reach the service. Check your connection."
             : result.kind === 'validation'
               ? result.message
-              : 'AI took too long to respond. Try again, or paste a smaller/simpler image.';
+              : `The AI service didn't respond${image ? ' — large images can time out; try a smaller one' : ''}. Try again, or start from a template below — no AI needed.`;
       setError(msg);
     }
 

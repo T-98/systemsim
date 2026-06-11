@@ -128,3 +128,17 @@ These are the next moves, in order, that build on top of what shipped.
 Deferred (real but not on the critical path): section deep-link URLs in the
 docs hash grammar, proper tab-widget keyboard semantics, CommandPalette batch
 flake stabilization, GitHub URL placeholder in `src/components/ui/LandingPage.tsx:20`.
+
+## [DESIGN-REVIEW 2026-06-10] Deferred findings (Decisions §70)
+
+- **F-18 (engine bug):** debrief flags "Database has no indexes defined" even
+  when schemaMemory defines indexes — the deterministic check reads node
+  config, not the schema. Fix in `src/ai/debrief.ts` pattern checks.
+- Speed control (1x/2x/5x/10x) renders before any run — noise pre-first-run.
+- "Particle" view-toggle label is cryptic before the user has seen particles.
+- The Debrief toolbar button turns green (success tone) even after a
+  catastrophic run — consider neutral accent.
+- Polish: scenario-mode Design tab empty states ("+ Add endpoint" with no
+  helper copy); guided-scenario Design Flow prefills are lost unless each
+  tab is saved before Continue (dual-CTA ambiguity — partially mitigated by
+  F-12's header, full fix is autosave-on-continue).

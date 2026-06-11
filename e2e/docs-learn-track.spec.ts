@@ -27,7 +27,9 @@ test.describe('Docs Learn track', () => {
     expect(await items.count()).toBeGreaterThanOrEqual(18);
     const body = page.getByTestId('docs-markdown');
     await expect(body).toBeVisible();
-    await expect(body).toContainText('Welcome to SystemSim');
+    await expect(body).toContainText('distributed-systems design simulator');
+    // Title lives in the page header (single h1 — design-review F-13), not the markdown.
+    await expect(page.locator('[data-testid="wiki-body"] h1')).toHaveText('Welcome to SystemSim');
   });
 
   test('deep-link to a Learn topic sets hash and focuses body', async ({ page }) => {
@@ -45,6 +47,8 @@ test.describe('Docs Learn track', () => {
     await page.getByTestId('landing-learn').click();
     await page.waitForSelector('[data-testid="docs-markdown"]');
     const body = page.getByTestId('docs-markdown');
-    await expect(body).toContainText('Welcome to SystemSim');
+    await expect(body).toContainText('distributed-systems design simulator');
+    // Title lives in the page header (single h1 — design-review F-13), not the markdown.
+    await expect(page.locator('[data-testid="wiki-body"] h1')).toHaveText('Welcome to SystemSim');
   });
 });

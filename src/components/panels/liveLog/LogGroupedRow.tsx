@@ -24,6 +24,26 @@ const SEVERITY_STYLE: Record<LogEntry['severity'], React.CSSProperties> = {
   critical: { color: 'var(--destructive)' },
 };
 
+/** Design-review F-07: a glyph that differs by severity — the ⓘ InfoIcon
+ *  alone made a CRITICAL line carry the same neutral mark as info chatter. */
+const SEVERITY_GLYPH: Record<LogEntry['severity'], { char: string; color: string }> = {
+  info: { char: '·', color: 'var(--text-tertiary)' },
+  warning: { char: '▲', color: 'var(--warning)' },
+  critical: { char: '●', color: 'var(--destructive)' },
+};
+
+function SeverityDot({ severity }: { severity: LogEntry['severity'] }) {
+  const g = SEVERITY_GLYPH[severity];
+  return (
+    <span
+      aria-hidden="true"
+      style={{ color: g.color, width: 10, display: 'inline-block', textAlign: 'center', fontSize: severity === 'warning' ? 8 : 12 }}
+    >
+      {g.char}
+    </span>
+  );
+}
+
 const SEVERITY_TOPIC: Record<LogEntry['severity'], string> = {
   info: 'severity.info',
   warning: 'severity.warning',
@@ -78,6 +98,7 @@ export default function LogGroupedRow({
         <span className="select-none" style={{ color: 'var(--text-tertiary)', opacity: 0.5 }}>
           [{formatTime(first.time)}]
         </span>
+        <SeverityDot severity={row.severity} />
         <InfoIcon topic={SEVERITY_TOPIC[row.severity]} side="top" ariaLabel={`${row.severity} severity`} />
         <span>{countLabel}</span>
       </div>
@@ -136,6 +157,7 @@ function SingleRow({ entry, onClick }: { entry: LogEntry; onClick: () => void })
         style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
       >
         <span style={{ color: 'var(--text-tertiary)', opacity: 0.5 }}>[{formatTime(entry.time)}]</span>
+        <SeverityDot severity={entry.severity} />
         <InfoIcon topic={SEVERITY_TOPIC[entry.severity]} side="top" ariaLabel={`${entry.severity} severity`} />
       </span>
       <span>

@@ -836,7 +836,7 @@ Post Phase 4.6 (§57), Kingman G/G/1 two-moment (Whitt 1993) replaces M/M/1:
 | Add a keyboard shortcut | [src/components/canvas/Canvas.tsx](src/components/canvas/Canvas.tsx) `useEffect` keydown handler |
 | Add a store field | [src/store/index.ts](src/store/index.ts) + type in [src/types/index.ts](src/types/index.ts) |
 | Add a new LLM endpoint | New file under `api/` + [api/_shared/handler.ts](api/_shared/handler.ts) pattern |
-| Add a new template | New JSON in `/public/templates/` matching `CanonicalGraph` shape |
+| Add a new template | New JSON in `/public/templates/` matching `CanonicalGraph` shape, PLUS a `starter` block (trafficProfile + schemaMemory + apiContracts) so the template lands run-ready — Decisions §70. Node refs use replaceGraph's `${type}-${index}` ids; size traffic so the bottleneck sits at ~50–80% baseline and >100% at spike. Add to `index.json`. |
 | Add a new resilience pattern (e.g. rate limiter, bulkhead) | Same shape as [src/engine/CircuitBreaker.ts](src/engine/CircuitBreaker.ts): types + evaluate fn + opt-in via `WireConfig` + hook into `forwardOverWire` |
 | Author a new system-design concept for the wiki | Add a section in [system-design-knowledgebase.md](system-design-knowledgebase.md) (authorial memory, prose-first, cross-referenced). Wiki copy in `src/wiki/topics.ts` derives from it — never the other way. See Decisions §35. |
 | Add an InfoIcon next to a new field | `<InfoIcon topic="config.xxx" />` next to the label. Declare the key in [src/wiki/topics.ts](src/wiki/topics.ts) AND write its content in the matching module under [src/wiki/content/topics/](src/wiki/content/topics/) (Decisions §69). Check `/wiki/coverage` shows zero unresolved. |

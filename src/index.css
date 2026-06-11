@@ -46,6 +46,7 @@
 
   --node-bg: #ffffff;
   --node-border: rgba(0, 0, 0, 0.08);
+  --minimap-mask: rgba(0, 0, 0, 0.18);
   --node-border-warning: #ff9f0a;
   --node-border-critical: #ff3b30;
   --node-border-crashed: #ff3b30;
@@ -91,6 +92,7 @@
 
   --node-bg: #1c1c1e;
   --node-border: #333336;
+  --minimap-mask: rgba(255, 255, 255, 0.08);
   --node-border-warning: #ff9f0a;
   --node-border-critical: #ff453a;
   --node-border-crashed: #ff453a;
@@ -138,12 +140,20 @@ html, body, #app {
 }
 .react-flow__controls-button svg { fill: currentColor !important; }
 
+/* Design-review F-05/F-08: the minimap shipped as a 200×150 hard-white slab
+   that ignored dark mode and overlapped node metric cards. Theme it, shrink
+   it, and let the canvas read through it. */
 .react-flow__minimap {
   border-radius: 8px !important;
-  border: none !important;
+  border: 1px solid var(--border-color) !important;
   overflow: hidden;
   box-shadow: var(--shadow-card) !important;
+  background: var(--bg-card) !important;
+  opacity: 0.85;
+  transition: opacity 150ms ease-out;
 }
+.react-flow__minimap:hover { opacity: 1; }
+.react-flow__minimap svg { width: 140px !important; height: 96px !important; }
 
 /* ─── Scrollbar ─── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

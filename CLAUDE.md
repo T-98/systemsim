@@ -61,3 +61,8 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+
+## For Claude Cowork in "Act" mode
+- gtsack skills above might prompt user input each time to make certain decisons. Limit prompting the user to continue or not only for the folowing skills: office-hours, design-shotgun
+- for every other skill, choose the recommended choice.
+- Always use codex for engineering plan reviews as an adversarial reviewer, always use codex for outside opinion. Use claude subagents only if codex is unavaialble or erroring out beyond repair.

@@ -32,7 +32,17 @@ export type GroupedRow =
   | { kind: 'group'; id: string; entries: LogEntry[]; componentId: string; severity: LogEntry['severity']; firstIndex: number; lastIndex: number };
 
 const DEFAULT_MIN_RUN = 5;
-const DEFAULT_WINDOW = 2;
+// Design-review F-07: the engine log throttle emits at most one repeat per
+// (component, severity) every 2 sim-seconds, so a 2s total-span window could
+// never see a 5-entry run — grouping was mathematically unreachable for the
+// exact wall-of-identical-lines it was built for. 12s holds five throttled
+// repeats comfortably.
+const DEFAULT_WINDOW = 12;
+
+/** "p99 4003ms at t=12s" and "p99 3987ms at t=14s" are the same shape. */
+function messageShape(message: string): string {
+  return message.replace(/\d+(\.\d+)?/g, '#');
+}
 
 export function groupLogs(entries: LogEntry[], opts: GroupOptions = {}): GroupedRow[] {
   const minRun = opts.minRun ?? DEFAULT_MIN_RUN;
@@ -51,11 +61,18 @@ export function groupLogs(entries: LogEntry[], opts: GroupOptions = {}): Grouped
     }
 
     // Scan forward for a run of matching entries inside the time window.
+    // Design-review follow-up to F-07: the key includes the message SHAPE
+    // (digits normalized away), not just component + severity. With the
+    // wider window, severity-only keys swallowed momentous one-shot lines
+    // ("Circuit breaker open") into generic "N× criticals" headers. Only
+    // true repeats — same message modulo numbers — collapse.
+    const headShape = messageShape(head.message);
     let j = i + 1;
     while (
       j < entries.length &&
       entries[j].componentId === head.componentId &&
       entries[j].severity === head.severity &&
+      messageShape(entries[j].message) === headShape &&
       entries[j].time - head.time <= windowSeconds
     ) {
       j++;
