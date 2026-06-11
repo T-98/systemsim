@@ -32,7 +32,12 @@ export type GroupedRow =
   | { kind: 'group'; id: string; entries: LogEntry[]; componentId: string; severity: LogEntry['severity']; firstIndex: number; lastIndex: number };
 
 const DEFAULT_MIN_RUN = 5;
-const DEFAULT_WINDOW = 2;
+// Design-review F-07: the engine log throttle emits at most one repeat per
+// (component, severity) every 2 sim-seconds, so a 2s total-span window could
+// never see a 5-entry run — grouping was mathematically unreachable for the
+// exact wall-of-identical-lines it was built for. 12s holds five throttled
+// repeats comfortably.
+const DEFAULT_WINDOW = 12;
 
 export function groupLogs(entries: LogEntry[], opts: GroupOptions = {}): GroupedRow[] {
   const minRun = opts.minRun ?? DEFAULT_MIN_RUN;
