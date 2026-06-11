@@ -139,8 +139,9 @@ export default function Canvas() {
         />
         <Controls showInteractive={false} />
         <MiniMap
-          nodeColor="var(--node-border)"
-          maskColor="rgba(0,0,0,0.25)"
+          nodeColor="var(--accent)"
+          maskColor="var(--minimap-mask)"
+          pannable
         />
         <ParticleOverlay />
       </ReactFlow>
