@@ -335,6 +335,25 @@ export default function Toolbar() {
         )}
         {isCompleted && (
           <>
+            {/* Drill loop ergonomics (§72): edit → re-run is the core fix
+                cycle; hiding Run behind Reset added a dead click. startSimulation
+                resets state itself, so this is safe from any completed run. */}
+            <button
+              onClick={handleRun}
+              disabled={!hasNodes || !preflightClean}
+              className="rounded-lg font-medium transition-all"
+              style={{
+                padding: '6px 16px',
+                fontSize: '14px',
+                letterSpacing: '-0.224px',
+                background: hasNodes && preflightClean ? 'var(--accent)' : 'var(--bg-card)',
+                color: hasNodes && preflightClean ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
+                border: hasNodes && preflightClean ? 'none' : '1px solid var(--border-color)',
+                cursor: hasNodes && preflightClean ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Run again
+            </button>
             <button
               onClick={handleStop}
               className="rounded-lg font-medium transition-all"

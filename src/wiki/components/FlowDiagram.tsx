@@ -6,9 +6,9 @@
  * splices this component in (same mechanism as CanvasEmbed).
  *
  * DSL — one attribute, human-writable:
- *   chain="lb:Load Balancer -> server:API ×3 -> db:Postgres"
+ *   chain="load_balancer:LB -> server:API ×3 -> database:Postgres"
  * Multiple rows separated by `|`:
- *   chain="client:Users -> lb:LB -> server:API | server:API -> queue:Jobs -> server:Worker"
+ *   chain="client:Users -> load_balancer:LB -> server:API | server:API -> queue:Jobs -> server:Worker"| server:API -> queue:Jobs -> server:Worker"
  * Node syntax: `type:Label` where type is a canvas ComponentType (renders
  * the canvas icon + category color, tying docs visuals to the product) or
  * one of the extras: client, generic. Bare labels default to generic.
