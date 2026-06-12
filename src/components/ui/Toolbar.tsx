@@ -104,6 +104,9 @@ export default function Toolbar() {
     if (simulationStatus !== 'idle') return;
     const profile = useStore.getState().trafficProfile;
     setAutoRunRequested(false);
+    // Same gate as manual Run (review P2): a drill that trips preflight
+    // must show the checklist, not auto-run once and then softlock.
+    if (!preflightClean) return;
     if (profile) startSimulation(profile, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRunRequested, simulationStatus]);

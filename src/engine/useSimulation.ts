@@ -216,6 +216,21 @@ export function useSimulation() {
   }, [schemaMemory, addSimulationRun, setSimulationStatus]);
 
   const startSimulation = useCallback((trafficProfile: TrafficProfile, stressedMode = false) => {
+    // Drills (§72 review P1): users FIX challenges by rewiring the canvas,
+    // but endpointRoutes are only built by setApiContracts — a rewired graph
+    // would run its verification with STALE chains (routing-stale fallback,
+    // even-split seeding, wrong DB attribution), diverging from the
+    // harness-verified conditions. Rebuild routes from the live graph at
+    // every drill run start. (Clear first: setApiContracts reuses routes
+    // by endpointId.)
+    {
+      const st = useStore.getState();
+      if (st.activeChallenge && st.apiContracts.length > 0) {
+        const contracts = st.apiContracts;
+        st.setEndpointRoutes([]);
+        st.setApiContracts(contracts);
+      }
+    }
     resetSimulationState();
     clearLiveLog();
     metricsHistoryRef.current = {};

@@ -30,15 +30,27 @@ export default function ChallengeBanner() {
   const setResults = useStore((s) => s.setChallengeResults);
   const simulationStatus = useStore((s) => s.simulationStatus);
   const simulationRuns = useStore((s) => s.simulationRuns);
-  const nodes = useStore((s) => s.nodes);
   const openWiki = useStore((s) => s.openWiki);
   const [hintsShown, setHintsShown] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
 
-  // Score every completed run while a drill is active.
+  // Local panel state belongs to ONE drill — the banner never unmounts
+  // between drills (it renders null), so reset on drill change. Review P2.
+  useEffect(() => {
+    setHintsShown(0);
+    setCollapsed(false);
+  }, [challenge?.id]);
+
+  // Score every completed run while a drill is active; clear stale verdicts
+  // the moment a new run starts so last run's ✓/✕ never pose as live.
   const latestRunId = simulationRuns.length > 0 ? simulationRuns[simulationRuns.length - 1].runId : null;
   useEffect(() => {
-    if (!challenge || simulationStatus !== 'completed' || !latestRunId) return;
+    if (!challenge) return;
+    if (simulationStatus === 'running') {
+      setResults(null);
+      return;
+    }
+    if (simulationStatus !== 'completed' || !latestRunId) return;
     const run = useStore.getState().simulationRuns.slice(-1)[0];
     const { passed, results: r } = evaluateChallenge(challenge, run, useStore.getState().nodes);
     setResults(r);

@@ -78,6 +78,9 @@ export default function TemplatePicker() {
         const s = useStore.getState();
         if (tpl.starter.trafficProfile) s.setTrafficProfile(tpl.starter.trafficProfile);
         if (tpl.starter.schemaMemory) s.setSchemaMemory(tpl.starter.schemaMemory);
+        // Same stale-route trap as drills (§72 review P1): setApiContracts
+        // reuses routes by endpointId across loads — clear first.
+        s.setEndpointRoutes([]);
         if (tpl.starter.apiContracts) s.setApiContracts(tpl.starter.apiContracts);
       }
       setAppView('canvas');

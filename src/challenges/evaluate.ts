@@ -53,7 +53,16 @@ function evaluateMetric(c: MetricCriterion, run: EvaluatableRun, nodes: Node<Sim
 }
 
 function evaluateNoCrash(c: Extract<Criterion, { kind: 'noCrash' }>, run: EvaluatableRun, nodes: Node<SimComponentData>[]): CriterionResult {
+  // Selector-less noCrash means "NOTHING crashed" — scan every crash log,
+  // including from components the user has since deleted. A selector that
+  // matches zero nodes fails loudly (same no-data rule as metrics): a
+  // criterion over a deleted component must never pass vacuously. Review P1.
+  if (!c.selector) {
+    const crashes = run.log.filter((l) => l.message.includes('CRASH')).length;
+    return { criterion: c, passed: crashes === 0, observed: crashes };
+  }
   const ids = new Set(matchIds(nodes, c.selector));
+  if (ids.size === 0) return { criterion: c, passed: false, observed: NaN };
   const crashes = run.log.filter(
     (l) => l.message.includes('CRASH') && l.componentId && ids.has(l.componentId),
   ).length;

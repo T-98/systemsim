@@ -34,6 +34,12 @@ export async function loadChallenge(id: string): Promise<boolean> {
   s.setIntent(null);
   s.setTrafficProfile(challenge.starter.trafficProfile);
   if (challenge.starter.schemaMemory) s.setSchemaMemory(challenge.starter.schemaMemory);
+  // Clear stale routes BEFORE setApiContracts: it reuses existing routes by
+  // endpointId, and drills share contract ids — loading drill B after drill A
+  // would otherwise inherit A's component chains (stale → even-split
+  // fallback → wrong attribution → drill behavior diverges from the
+  // harness-verified numbers). Review P1.
+  s.setEndpointRoutes([]);
   if (challenge.starter.apiContracts) s.setApiContracts(challenge.starter.apiContracts);
   s.setActiveChallenge(challenge);
   s.setAppView('canvas');

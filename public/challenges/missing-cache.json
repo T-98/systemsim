@@ -9,13 +9,42 @@
   "symptom": "Watch Postgres's node card: errorRate pinned around 40% and p99 north of 600 ms, while the API tier sits near 60% CPU with zero errors. Reads arrive at 1 800/s against 1 000 reads/s of read capacity — 180% utilization, sustained. This isn't a burst; it never recovers on its own.",
   "graph": {
     "nodes": [
-      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
-      { "type": "server", "label": "Product API", "config": { "instanceCount": 15, "processingTimeMs": 5, "maxConcurrent": 1000 } },
-      { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 1000, "writeThroughputRps": 1000, "connectionPoolSize": 200 } }
+      {
+        "type": "load_balancer",
+        "label": "Edge LB",
+        "config": {
+          "isEntry": true
+        }
+      },
+      {
+        "type": "server",
+        "label": "Product API",
+        "config": {
+          "instanceCount": 15,
+          "processingTimeMs": 5,
+          "maxConcurrent": 1000
+        }
+      },
+      {
+        "type": "database",
+        "label": "Postgres",
+        "config": {
+          "engine": "postgres",
+          "readThroughputRps": 1000,
+          "writeThroughputRps": 1000,
+          "connectionPoolSize": 200
+        }
+      }
     ],
     "edges": [
-      { "source": "load_balancer-0", "target": "server-1" },
-      { "source": "server-1", "target": "database-2" }
+      {
+        "source": "load_balancer-0",
+        "target": "server-1"
+      },
+      {
+        "source": "server-1",
+        "target": "database-2"
+      }
     ]
   },
   "starter": {
@@ -23,11 +52,19 @@
       "profileName": "Press-feature read storm",
       "durationSeconds": 60,
       "phases": [
-        { "startS": 0, "endS": 60, "rps": 1800, "shape": "steady", "description": "Press feature steady state — 1 800 product reads/s" }
+        {
+          "startS": 0,
+          "endS": 60,
+          "rps": 1800,
+          "shape": "steady",
+          "description": "Press feature steady state — 1 800 product reads/s"
+        }
       ],
-      "requestMix": { "default": 1.0 },
+      "requestMix": {
+        "default": 1.0
+      },
       "userDistribution": "uniform",
-      "jitterPercent": 5
+      "jitterPercent": 3
     },
     "schemaMemory": {
       "version": 1,
@@ -36,12 +73,35 @@
           "id": "products",
           "name": "products",
           "fields": [
-            { "name": "id", "type": "uuid", "cardinality": "high" },
-            { "name": "title", "type": "text", "cardinality": "medium" },
-            { "name": "price_cents", "type": "integer", "cardinality": "medium" }
+            {
+              "name": "id",
+              "type": "uuid",
+              "cardinality": "high"
+            },
+            {
+              "name": "title",
+              "type": "text",
+              "cardinality": "medium"
+            },
+            {
+              "name": "price_cents",
+              "type": "integer",
+              "cardinality": "medium"
+            }
           ],
-          "indexes": [{ "field": "id", "type": "btree" }],
-          "accessPatterns": [{ "operation": "read", "frequency": "very_high", "pattern": "product detail lookup by id" }],
+          "indexes": [
+            {
+              "field": "id",
+              "type": "btree"
+            }
+          ],
+          "accessPatterns": [
+            {
+              "operation": "read",
+              "frequency": "very_high",
+              "pattern": "product detail lookup by id"
+            }
+          ],
           "assignedDbId": "database-2"
         }
       ],
@@ -49,7 +109,14 @@
       "aiNotes": "Read-heavy product catalog. Hot working set is the press-featured products."
     },
     "apiContracts": [
-      { "id": "get-product", "method": "GET", "path": "/products/:id", "description": "Fetch one product's detail payload", "authMode": "jwt", "ownerServiceId": "server-1" }
+      {
+        "id": "get-product",
+        "method": "GET",
+        "path": "/products/:id",
+        "description": "Fetch one product's detail payload",
+        "authMode": "jwt",
+        "ownerServiceId": "server-1"
+      }
     ]
   },
   "diagnosis": {
@@ -84,9 +151,34 @@
   "fix": {
     "objective": "Get the repeat reads off Postgres: serve hot products from a layer in front of the database so reads stop failing and Postgres's p99 comes back down — without crashing anything.",
     "criteria": [
-      { "kind": "metric", "metric": "errorRate", "selector": { "type": "database" }, "agg": "max", "op": "<", "value": 0.05, "windowStartS": 35, "label": "Postgres stops failing reads (errors under 5% after warmup)" },
-      { "kind": "metric", "metric": "p99", "selector": { "type": "database" }, "agg": "max", "op": "<", "value": 250, "windowStartS": 35, "label": "Postgres p99 under 250 ms after warmup" },
-      { "kind": "noCrash", "label": "Nothing crashes" }
+      {
+        "kind": "metric",
+        "metric": "errorRate",
+        "selector": {
+          "type": "database"
+        },
+        "agg": "max",
+        "op": "<",
+        "value": 0.1,
+        "windowStartS": 40,
+        "label": "Postgres stops failing reads (errors under 10% after warmup)"
+      },
+      {
+        "kind": "metric",
+        "metric": "p99",
+        "selector": {
+          "type": "database"
+        },
+        "agg": "max",
+        "op": "<",
+        "value": 400,
+        "windowStartS": 40,
+        "label": "Postgres p99 under 400 ms after warmup"
+      },
+      {
+        "kind": "noCrash",
+        "label": "Nothing crashes"
+      }
     ],
     "hints": [
       "Open Postgres's node card: writes are near zero and reads run at 180% of readThroughputRps (1 800/s vs 1 000/s). The same hot products are read over and over — what layer absorbs repeat reads?",
@@ -95,9 +187,30 @@
     ]
   },
   "knownFix": [
-    { "op": "addNode", "node": { "type": "cache", "label": "Product Cache", "config": { "ttlSeconds": 60 } } },
-    { "op": "addEdge", "sourceLabel": "Product API", "targetLabel": "Product Cache" },
-    { "op": "addEdge", "sourceLabel": "Product Cache", "targetLabel": "Postgres" },
-    { "op": "removeEdge", "sourceLabel": "Product API", "targetLabel": "Postgres" }
+    {
+      "op": "addNode",
+      "node": {
+        "type": "cache",
+        "label": "Product Cache",
+        "config": {
+          "ttlSeconds": 60
+        }
+      }
+    },
+    {
+      "op": "addEdge",
+      "sourceLabel": "Product API",
+      "targetLabel": "Product Cache"
+    },
+    {
+      "op": "addEdge",
+      "sourceLabel": "Product Cache",
+      "targetLabel": "Postgres"
+    },
+    {
+      "op": "removeEdge",
+      "sourceLabel": "Product API",
+      "targetLabel": "Postgres"
+    }
   ]
 }

@@ -13,8 +13,9 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { runChallenge, buildGraph } from '../harness';
+import { runChallenge, buildGraph, buildRoutes } from '../harness';
 import { evaluateChallenge } from '../evaluate';
+import { runPreflight } from '../../engine/preflight';
 import type { Challenge, ChallengeIndexEntry } from '../types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -62,6 +63,20 @@ for (const file of files) {
       for (const c of challenge.starter.apiContracts ?? []) {
         if (c.ownerServiceId) expect(ids.has(c.ownerServiceId), `ownerServiceId ${c.ownerServiceId}`).toBe(true);
       }
+    });
+
+    it('stages preflight-clean (the auto-run must fire, not softlock)', () => {
+      const { nodes, edges } = buildGraph(challenge.graph);
+      const routes = buildRoutes(nodes, edges, challenge);
+      const result = runPreflight({
+        nodes: nodes.map((n) => ({ id: n.id, data: { type: n.data.type, label: n.data.label, config: n.data.config } })),
+        edges: edges.map((e) => ({ source: e.source, target: e.target })),
+        trafficProfile: challenge.starter.trafficProfile,
+        schemaMemory: challenge.starter.schemaMemory ?? null,
+        apiContracts: challenge.starter.apiContracts ?? [],
+        endpointRoutes: routes,
+      });
+      expect(result.errors.map((e) => e.message), 'preflight errors would block the drill auto-run').toEqual([]);
     });
 
     it('fails its criteria when run broken (seeds 7 and 42)', () => {

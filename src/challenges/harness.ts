@@ -12,6 +12,7 @@
 
 import type { Node, Edge } from '@xyflow/react';
 import { SimulationEngine } from '../engine/SimulationEngine';
+import { getCalibrationSet } from '../engine/calibration';
 import { COMPONENT_DEFS } from '../types/components';
 import { buildAdjacency, bfs, findEntryPoints } from '../engine/graphTraversal';
 import type { SimComponentData, WireConfig, CanonicalGraph, ComponentMetrics, EndpointRoute, TableAccess, HealthState } from '../types';
@@ -123,6 +124,10 @@ export function buildRoutes(
     .map((c) => {
       let chain: string[] = [];
       const entry = entries[0];
+      if (!entry && c.ownerServiceId) {
+        // Store parity: entry-less graphs fall back to seeding at the owner.
+        chain = [c.ownerServiceId];
+      }
       if (entry && c.ownerServiceId) {
         const toOwner = bfs(adj, entry, c.ownerServiceId);
         if (toOwner) {
@@ -174,6 +179,9 @@ export function runChallenge(
       requestMix: challenge.starter.trafficProfile.requestMix,
       apiContracts: challenge.starter.apiContracts ?? [],
     },
+    // App parity: pass whatever calibration is loaded (empty in tests, so
+    // determinism holds; real anchors would flow through like in-app).
+    getCalibrationSet(),
   );
 
   const metricsTimeSeries: Record<string, ComponentMetrics[]> = {};

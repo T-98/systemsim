@@ -2282,12 +2282,19 @@ export class SimulationEngine {
         } else if (state.type === 'database') {
           fix = ' Check connection pool size, add read replicas, or reduce upstream traffic.';
         }
-        logs.push({
+        // A crash is a one-shot momentous event — register it as a callout
+        // so the per-(component, severity) throttle can NEVER swallow it.
+        // Found by the drill content harness (§72): a same-tick critical from
+        // the same component (e.g. pool exhaustion) used to eat the CRASH
+        // line, blinding the noCrash criterion and the user's log.
+        const crashEntry: LogEntry = {
           time: this.time,
           message: `${state.id} CRASH. ${resource} exhausted.${fix}`,
           severity: 'critical',
           componentId: state.id,
-        });
+        };
+        this.calloutEntries.add(crashEntry);
+        logs.push(crashEntry);
         return;
       }
       state.health = 'critical';
