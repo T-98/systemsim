@@ -10,7 +10,7 @@
  * hover reads "Resolve preflight items first."
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useStore } from '../../store';
 import { useSimulation } from '../../engine/useSimulation';
 import { DISCORD_TRAFFIC_PROFILE, DISCORD_BRIEF } from '../../scenarios/discord';
@@ -94,6 +94,19 @@ export default function Toolbar() {
   const handleToastDismiss = useCallback(() => {
     setToastMsg(null);
   }, []);
+
+  // Drills (§72): the challenge loader can't reach this hook instance's
+  // startSimulation, so it raises a flag in the store and we fire here.
+  const autoRunRequested = useStore((s) => s.autoRunRequested);
+  const setAutoRunRequested = useStore((s) => s.setAutoRunRequested);
+  useEffect(() => {
+    if (!autoRunRequested) return;
+    if (simulationStatus !== 'idle') return;
+    const profile = useStore.getState().trafficProfile;
+    setAutoRunRequested(false);
+    if (profile) startSimulation(profile, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRunRequested, simulationStatus]);
 
   const handleRun = () => {
     const hints = checkForHints(nodes, edges, scenarioId);

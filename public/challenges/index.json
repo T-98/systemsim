@@ -1,0 +1,9 @@
+[
+  {
+    "id": "queue-backlog",
+    "title": "The backlog that ate the broker",
+    "kbRef": "§13",
+    "difficulty": "intro",
+    "tagline": "Your log-based queue's depth graph is a straight line going up. The pager is next."
+  }
+]

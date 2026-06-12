@@ -20,6 +20,7 @@
 import { Fragment, useMemo } from 'react';
 import { marked, Marked, Lexer, type Tokens } from 'marked';
 import CanvasEmbed from './CanvasEmbed';
+import FlowDiagram from './FlowDiagram';
 
 marked.use({ gfm: true, breaks: false });
 
@@ -210,14 +211,19 @@ function sanitizeNode(node: Node): void {
 
 // Case-insensitive + matches self-closing / paired forms + tolerant of whitespace.
 const EMBED_RE = /<CanvasEmbed\s+template\s*=\s*"([^"]+)"\s*\/?>(?:<\/CanvasEmbed>)?/gi;
+// FlowDiagram (§72) — same splice mechanism, chain DSL in the attribute.
+const FLOW_RE = /<FlowDiagram\s+chain\s*=\s*"([^"]+)"\s*\/?>(?:<\/FlowDiagram>)?/gi;
 // Slug allowlist for the embed template fetch (matches the filesystem naming).
 const SAFE_SLUG_RE = /^[a-zA-Z0-9_-]+$/;
+// Chain allowlist: node labels + the arrow/type DSL. No angle brackets, no
+// quotes — the attribute value is rendered as React text, never as HTML.
+const SAFE_CHAIN_RE = /^[a-zA-Z0-9 _\-:.,()/+×?>|]+$/;
 // Fenced + indented code blocks. We blank these out before scanning for embeds
 // so `<CanvasEmbed />` inside a code example doesn't get spliced as a live embed.
 const FENCED_CODE_RE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
 
 interface Segment {
-  kind: 'markdown' | 'embed';
+  kind: 'markdown' | 'embed' | 'flow';
   content: string;
 }
 
@@ -233,17 +239,32 @@ function blankRanges(md: string, re: RegExp): string {
  * the output preserves verbatim markdown.
  */
 function splitOnEmbeds(md: string): Segment[] {
-  const segs: Segment[] = [];
   const scannable = blankRanges(md, FENCED_CODE_RE);
-  let last = 0;
+
+  // Collect both tag kinds with their positions, then splice in order.
+  interface Hit { index: number; length: number; kind: 'embed' | 'flow'; content: string }
+  const hits: Hit[] = [];
   let m: RegExpExecArray | null;
   EMBED_RE.lastIndex = 0;
   while ((m = EMBED_RE.exec(scannable))) {
     const slug = m[1].trim();
     if (!SAFE_SLUG_RE.test(slug)) continue; // Silently drop — never fetch arbitrary paths.
-    if (m.index > last) segs.push({ kind: 'markdown', content: md.slice(last, m.index) });
-    segs.push({ kind: 'embed', content: slug });
-    last = m.index + m[0].length;
+    hits.push({ index: m.index, length: m[0].length, kind: 'embed', content: slug });
+  }
+  FLOW_RE.lastIndex = 0;
+  while ((m = FLOW_RE.exec(scannable))) {
+    const chain = m[1].trim();
+    if (!SAFE_CHAIN_RE.test(chain)) continue;
+    hits.push({ index: m.index, length: m[0].length, kind: 'flow', content: chain });
+  }
+  hits.sort((a, b) => a.index - b.index);
+
+  const segs: Segment[] = [];
+  let last = 0;
+  for (const h of hits) {
+    if (h.index > last) segs.push({ kind: 'markdown', content: md.slice(last, h.index) });
+    segs.push({ kind: h.kind, content: h.content });
+    last = h.index + h.length;
   }
   if (last < md.length) segs.push({ kind: 'markdown', content: md.slice(last) });
   return segs;
@@ -277,6 +298,9 @@ export default function MarkdownBody({ markdown }: { markdown: string }) {
       {rendered.map((seg, i) => {
         if (seg.kind === 'embed') {
           return <CanvasEmbed key={`embed-${i}`} template={seg.html} />;
+        }
+        if (seg.kind === 'flow') {
+          return <FlowDiagram key={`flow-${i}`} chain={seg.html} />;
         }
         return (
           <Fragment key={`md-${i}`}>
