@@ -1,0 +1,103 @@
+{
+  "id": "queue-backlog",
+  "title": "The backlog that ate the broker",
+  "kbRef": "§13",
+  "topicKey": "reference.13-message-queues-async-communication",
+  "difficulty": "intro",
+  "tagline": "Your log-based queue's depth graph is a straight line going up. The pager is next.",
+  "brief": "You run an event pipeline: an API tier appends events to a log-based message queue, a worker pool consumes them, results land in Postgres. Marketing just doubled traffic with a campaign. The producers are fine. The consumers say they're fine. The queue disagrees.",
+  "symptom": "Watch the queue's depth counter in its node card and the memory% climbing in lock-step. Producers enqueue at 800 events/s; nothing errors — yet. Linear growth with no plateau means this never recovers on its own.",
+  "graph": {
+    "nodes": [
+      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+      { "type": "server", "label": "API Producers", "config": { "instanceCount": 10, "processingTimeMs": 10, "maxConcurrent": 1000 } },
+      { "type": "queue", "label": "Event Log", "config": { "consumerGroupCount": 1, "consumersPerGroup": 5, "processingTimeMs": 10, "maxDepth": 20000, "dlqEnabled": false } },
+      { "type": "server", "label": "Workers", "config": { "instanceCount": 10, "processingTimeMs": 10, "maxConcurrent": 1000 } },
+      { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 5000, "writeThroughputRps": 3000, "connectionPoolSize": 200 } }
+    ],
+    "edges": [
+      { "source": "load_balancer-0", "target": "server-1" },
+      { "source": "server-1", "target": "queue-2" },
+      { "source": "queue-2", "target": "server-3" },
+      { "source": "server-3", "target": "database-4" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Campaign traffic",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 60, "rps": 800, "shape": "steady", "description": "Campaign steady state — 800 events/s" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "events",
+          "name": "events",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "payload", "type": "jsonb", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [{ "operation": "write", "frequency": "very_high", "pattern": "append event" }],
+          "assignedDbId": "database-4"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Append-heavy event store."
+    },
+    "apiContracts": [
+      { "id": "ingest", "method": "POST", "path": "/events", "description": "Ingest an event", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "The queue's depth grows linearly for the whole run and never plateaus. What's the root cause?",
+    "options": [
+      {
+        "id": "drain-rate",
+        "text": "Consumers drain slower than producers enqueue — total consumer throughput is below the 800 events/s arrival rate.",
+        "correct": true,
+        "explain": "Right. 1 consumer group × 5 consumers ÷ 10 ms = 500 events/s of drain against 800/s arriving. The 300/s difference accumulates forever — backlog is a rate mismatch, not a burst."
+      },
+      {
+        "id": "db-backpressure",
+        "text": "Postgres downstream is saturated and backpressuring the workers, which stalls consumption.",
+        "correct": false,
+        "explain": "Check Postgres's card: utilization is low and error rate is zero. The workers never receive more than the queue drains (500/s), well within DB capacity. The bottleneck is upstream of the workers."
+      },
+      {
+        "id": "max-depth",
+        "text": "maxDepth is too small — a bigger buffer would absorb the load.",
+        "correct": false,
+        "explain": "A bigger buffer buys minutes, not a fix. Arrival exceeds drain at steady state, so ANY finite buffer eventually fills. Buffers absorb bursts; they cannot fix a sustained rate mismatch."
+      },
+      {
+        "id": "wire-latency",
+        "text": "Network latency between the producers and the queue is delaying enqueues.",
+        "correct": false,
+        "explain": "Wire latency delays individual events; it doesn't change throughput. The queue is RECEIVING the full 800/s just fine — that's exactly why its depth grows."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Make the pipeline drain at least as fast as it fills: keep the backlog flat at 800 events/s without crashing anything.",
+    "criteria": [
+      { "kind": "metric", "metric": "queueDepth", "selector": { "type": "queue" }, "agg": "max", "op": "<", "value": 3000, "windowStartS": 5, "label": "Queue depth stays under 3 000" },
+      { "kind": "noCrash", "label": "Nothing crashes" },
+      { "kind": "metric", "metric": "errorRate", "selector": { "type": "queue" }, "agg": "max", "op": "<", "value": 0.01, "label": "The queue drops nothing" }
+    ],
+    "hints": [
+      "Drain throughput = (consumer groups × consumers per group ÷ processing ms) × 1000. What does that come to right now, against 800/s arriving?",
+      "Click the Event Log node: more consumers per group, more groups, or faster per-event processing all raise drain. You need ≥ 800/s with headroom.",
+      "Doubling consumersPerGroup from 5 to 10 lifts drain to 1 000/s — enough, with 25% headroom."
+    ]
+  },
+  "knownFix": [
+    { "op": "updateConfig", "label": "Event Log", "patch": { "consumersPerGroup": 10 } }
+  ]
+}

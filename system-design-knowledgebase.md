@@ -293,6 +293,8 @@ FT implies HA; HA doesn't require full FT. Most real systems target HA via redun
 
 A load balancer sits in front of a pool of servers and spreads incoming requests across them. It's the first scaling move most apps make.
 
+<FlowDiagram chain="client:Clients -> load_balancer:Load Balancer (health checks, TLS) -> server:Backend 1 | load_balancer:Load Balancer (health checks, TLS) -> server:Backend 2 | load_balancer:Load Balancer (health checks, TLS) -x-> server:Backend 3 (unhealthy, out of rotation)" />
+
 ### Why it exists
 
 Any single server has capacity limits. When load exceeds what one box can handle, you have two choices: buy a bigger box (vertical scaling — bounded) or add more boxes (horizontal scaling — boundless until the database cracks). Horizontal scaling needs something in front to pick which box handles each request. That's the load balancer.
@@ -401,6 +403,8 @@ The cache manages the DB fetch. App code just asks the cache; the cache has a "l
 | Visibility into DB hits | Easy (in app logs) | Harder (cache internals) |
 | Language support | Any KV cache | Needs loader support |
 
+<FlowDiagram chain="server:App (cache-aside) -> cache:1. check cache -?-> database:2. on miss, app queries DB + fills cache | server:App (read-through) -> cache:Cache with loader -> database:DB (cache fetches transparently on miss)" />
+
 ### 10.3 Write Patterns — Write-Through, Write-Behind, Write-Around
 
 **Write-Through** — synchronous dual-write.
@@ -439,6 +443,8 @@ App writes → DB only → cache populated lazily on next read
 | Write-Through | Slow (DB-bound) | Durable | Strong | Read-heavy, critical data |
 | Write-Behind | Fast (cache-bound) | Risk of loss | Eventual | Write-heavy, metrics |
 | Write-Around | Normal (DB-bound) | Durable | Strong (with lazy read) | Write-once-read-never |
+
+<FlowDiagram chain="server:App (write-through) -> cache:Cache -> database:DB (synchronous, both before return) | server:App (write-behind) -> cache:Cache (ack immediately) -?-> database:DB (async batch flush) | server:App (write-around) -> database:DB only -?-> cache:Cache (lazy fill on next read)" />
 
 ### 10.4 Failure Modes — Penetration, Avalanche, Stampede
 
@@ -827,6 +833,8 @@ The honest answer: **either works for most cases.** "Just use Postgres" is a val
 
 Six stores, each chosen for one job. Operational cost is real, but the alternative — forcing all this into one DB — is worse.
 
+<FlowDiagram chain="server:App -> database:Postgres (orders, payments, ACID) | server:App -> database:MongoDB (product catalog) | server:App -> cache:Redis (sessions, cart) | server:App -> Elasticsearch (search) | server:App -> external:S3 (product images) | server:App -> database:Snowflake (analytics)" />
+
 ### 11.5 OLTP vs OLAP
 
 Two fundamentally different workloads that the same word "database" describes.
@@ -887,6 +895,8 @@ For files that don't fit relational or document models — images, videos, backu
 - Lifecycle policies (auto-archive to cheaper tier after 90 days; delete after 7 years).
 
 Storage classes: hot (frequent access) → warm → cold → archive (Glacier). Each step cheaper storage but slower/more expensive retrieval.
+
+<FlowDiagram chain="external:Hot (frequent access) -> external:Warm -> external:Cold -> external:Archive (Glacier)" />
 
 ### 11.7 Full-Text Search
 
@@ -1141,6 +1151,8 @@ Reads ──> Leader or any Follower
 ```
 Most common. Simple mental model. Failover moderate complexity.
 
+<FlowDiagram chain="client:Writes -> database:Leader | database:Leader -?-> database:Follower 1 (async replication) | database:Leader -?-> database:Follower 2 (async replication) | client:Reads -> database:Leader or any Follower" />
+
 - **Synchronous replication.** Leader waits for follower acks before confirming write. Strong consistency, slower writes.
 - **Asynchronous replication.** Leader confirms immediately; followers catch up. Fast writes, replication lag — reads from followers may be stale.
 - **Semi-sync.** Leader waits for at least one follower (any, or specific). Balance of above.
@@ -1354,6 +1366,8 @@ Service A ──request (corr_id=42)──> Service B
 Service A <──response (corr_id=42)── Service B
 ```
 Use: when sync feels right but you want producer to survive consumer downtime.
+
+<FlowDiagram chain="server:Service A (producer) -> queue:Queue -> server:Service B (consumer) | server:Service B (consumer) -?-> queue:Response queue (feedback channel) -?-> server:Service A (producer)" />
 
 ### 13.5 Two Broker Architectures — AMQP vs Log-Based
 
@@ -1757,6 +1771,8 @@ Before unified engines, teams ran batch for correctness and streaming for freshn
 - **Speed layer** handles only recent events (since the last batch run). Fast (seconds) but **incomplete** — it has only the tail of the data, not the whole history. The results over its covered window can be fully accurate; the limitation is scope (a thin slice), not approximation.
 - **Serving layer** merges both: for old data, use batch view; for recent data, use speed view.
 
+<FlowDiagram chain="queue:Events -> server:Batch layer (reprocess all history) -> database:Batch view -> server:Serving layer | queue:Events -> server:Speed layer (recent tail only) -> database:Real-time view -> server:Serving layer | server:Serving layer -> client:Queries" />
+
 **Pros:** batch correctness + streaming freshness. Bug in streaming? Batch will overwrite it next run.
 
 **Cons:**
@@ -1799,6 +1815,8 @@ Production real-time analytics (dashboards, fraud detection, operational metrics
 ```
 Kafka ─▶ Flink ─▶ (Pinot / Druid / ClickHouse) ─▶ Dashboard
 ```
+
+<FlowDiagram chain="queue:Kafka (ingestion log) -> server:Flink (windowed aggregates, joins) -> database:Pinot / Druid / ClickHouse (real-time OLAP) -> client:Dashboard (sub-second queries)" />
 
 **Tradeoff axes for real-time analytics:**
 
@@ -1959,6 +1977,8 @@ Query the coarsest resolution that satisfies the question.
 A single entry point in front of a microservices backend. Clients talk to the gateway; the gateway fans out to services.
 
 **Why have one.** Without a gateway, clients need to know about every service, handle authentication for each, deal with heterogeneous protocols, and re-implement cross-cutting concerns. A gateway centralizes all of that.
+
+<FlowDiagram chain="client:Clients -> api_gateway:API Gateway (auth, rate limit, route) -> server:Service A | api_gateway:API Gateway -> server:Service B | api_gateway:API Gateway -> server:Service C (gRPC internally)" />
 
 **Key features.**
 - **Request routing.** Path-based dispatch to the right service.
@@ -2188,6 +2208,8 @@ Add identical instances behind a load balancer. Requires stateless services (or 
 4. **DB becomes bottleneck.** Next move: read replicas, then sharding.
 
 The step from single-box to horizontal usually forces **externalizing session state** (otherwise users get logged out when their sticky box dies). That's why statelessness comes before horizontal scale — see next subsection.
+
+<FlowDiagram chain="client:Users -> load_balancer:LB -> server:Stateless app x N -> database:Primary DB | server:Stateless app x N -> cache:Redis (externalized sessions) | database:Primary DB -?-> database:Read replicas (when the DB becomes the bottleneck)" />
 
 ### Stateless vs Stateful Services
 
@@ -2427,6 +2449,8 @@ It's physically analogous to an electrical breaker: when current spikes, it trip
 
 **Implementation gotcha:** the breaker needs per-dependency instance state. If Service A calls Services B, C, D — three breakers, not one. B's failures shouldn't close C's circuit.
 
+<FlowDiagram chain="server:Service A -> generic:Breaker B (CLOSED) -> server:Service B | server:Service A -> generic:Breaker C (OPEN) -x-> server:Service C (failing) | generic:Breaker C (OPEN) -?-> cache:Fallback (cached response) | server:Service A -> generic:Breaker D (CLOSED) -> server:Service D" />
+
 ### 21.5 Fallbacks
 
 When a downstream is down, return *something useful* instead of an error.
@@ -2517,6 +2541,8 @@ refill rate: r tokens/sec
 - **Pros:** allows bursts up to capacity (user can spend all `N` at once), then smooths to the refill rate. Maps cleanly to "100 requests per minute, burst up to 20".
 - **Cons:** state per caller (bucket level, last-refill timestamp). In a distributed setup, the bucket lives in Redis or a dedicated limiter — now you've added a network hop per request.
 - **Real-world:** AWS API throttling, Stripe's rate limiter, most public APIs. Classic default when "bursty but bounded" matches the workload.
+
+<FlowDiagram chain="client:Requests -> generic:Token bucket (capacity N, refill r/sec) -> server:Handler (token spent) | generic:Token bucket (capacity N, refill r/sec) -x-> client:429 rejected (no token)" />
 
 ### 22.2 Leaky Bucket
 
@@ -2691,6 +2717,8 @@ request ─▶ [split]  worker 2   [merge] ─▶ response
             └──▶ worker N ──┘
 ```
 
+<FlowDiagram chain="client:Request -> fanout:Split -> server:Worker 1 -> generic:Merge (fan-in) | fanout:Split -> server:Worker 2 -> generic:Merge (fan-in) | fanout:Split -> server:Worker N -> generic:Merge (fan-in) -> client:Response (slowest branch sets latency)" />
+
 ### 24.1 When it pays off
 
 The speedup is bounded by Amdahl's Law: if 20% of the work is sequential (split + merge + whatever can't parallelize), the max speedup is 5x no matter how many workers you add.
@@ -2780,6 +2808,8 @@ The write side stores data in the shape that matches the business logic (normali
 
 An async event stream (usually a message queue, or Change Data Capture) keeps the read side eventually consistent with the write side.
 
+<FlowDiagram chain="client:Commands -> server:Write service -> database:Write DB (normalized, ACID) | database:Write DB (normalized, ACID) -?-> queue:Events / CDC -> server:Read service -> database:Read DB (denormalized) | client:Queries -> database:Read DB (denormalized)" />
+
 **When CQRS makes sense:**
 - Read and write models diverge significantly (e.g., write as events, read as aggregated dashboards)
 - Very different scaling profiles (write-heavy audit log, read-heavy timeline)
@@ -2853,6 +2883,8 @@ This isn't caching in the TTL sense — it's about where the computation lives. 
 - Pros: blazing-fast reads. Read path is a key lookup, not a compute.
 - Cons: write latency grows (have to derive on every write), write amplification (one write updates many read views), recomputation if derivation logic changes.
 - Example: maintain a `user_stats` table with `order_count`, `lifetime_value`, `last_order_at`. Every order write updates the row. Reads become a single-row lookup.
+
+<FlowDiagram chain="client:Read (compute on read) -> server:Run derivation per query -> database:Raw facts | client:Write (compute on write) -> server:Derive in write path -> database:Pre-computed view | client:Read (compute on write) -> database:Pre-computed view (key lookup)" />
 
 ### 26.2 When each wins
 
@@ -2986,6 +3018,8 @@ Cache-first means: on the read path, **the cache is the source of truth** during
 
 This is more aggressive than cache-aside (§10.2). Cache-aside is "check cache, then DB." Cache-first is "serve from cache; if not there, either reject, redirect, or queue the request, but do **not** let every miss hit the DB."
 
+<FlowDiagram chain="client:Reads -> cache:Cache (source of truth) | cache:Cache miss -x-> database:DB (no fall-through: default, queue, or 503) | database:DB -?-> cache:Cache (write-through / CDC keeps it warm)" />
+
 ### 33.1 When cache-first pays off
 
 - Read QPS is 10–1000× higher than the DB can sustain. Cache-aside still sends every miss to the DB — a burst of 10K misses can collapse the DB.
@@ -3074,6 +3108,8 @@ Don't just hope stage 2 works. Explicitly design the "stage 2 gives up" branch.
 Each microservice owns its own database. No other service reads or writes that DB directly. Integration happens via the service's API, not via SQL.
 
 This is a defining constraint of microservice architecture — and the single most disruptive one when teams try to adopt microservices while keeping a shared database. A shared DB turns microservices into a **distributed monolith**: services appear independent but are deeply coupled through schema, transactions, and performance contention.
+
+<FlowDiagram chain="server:Order service -> database:Orders DB (owned) | server:Customer service -> database:Customers DB (owned) | server:Order service -?-> queue:order-placed events -> server:Customer service (materialized copy) | server:Customer service -x-> database:Orders DB (no direct SQL across services)" />
 
 ### 35.1 Why this matters
 
@@ -3425,6 +3461,8 @@ Three states, identical to the academic breaker but with SIMFID-specific transit
                                             OPEN
 ```
 
+<FlowDiagram chain="CLOSED -> OPEN (N consecutive failed ticks) -> HALF_OPEN (after cooldownSeconds) -> CLOSED (M healthy probe ticks) | HALF_OPEN (after cooldownSeconds) -x-> OPEN (any probe failure)" />
+
 A tick counts as **failed** for a given breaker when `target.metrics.errorRate` exceeds `failureThreshold` at end of tick. The breaker reads a single per-target value — *not* a per-wire error rate. Under fan-in (multiple upstream wires feeding one target), each inbound wire triggers a `processComponent` call that **overwrites** `state.metrics.errorRate` rather than aggregating. The breaker reads whatever the last-invoking wire's processor wrote. Important caveat; fan-in topologies exhibit order-dependent breaker behavior. Single-inbound or LB fan-out (which is a one-to-many from the LB's side) is unaffected.
 
 ### 40.2 Configuration
@@ -3497,6 +3535,8 @@ amplifiedRps = rps × (1 + e + e² + e³ + … + e^k)
 
 This is the geometric sum. In the limit (`k → ∞`), it converges to `1 / (1 − e)` — a slightly unhealthy downstream (`e = 0.2`) is hit with 1.25× its nominal load; a badly unhealthy one (`e = 0.5`) is hit with 2.0×; at `e = 0.8`, 5.0×. Retries don't help when the downstream is already overloaded — they accelerate its collapse.
 
+<FlowDiagram chain="client:Nominal rps -> server:Upstream (retry policy, k retries) -x-> server:Downstream (prev-tick error rate e, load amplified toward rps x 1/(1-e))" />
+
 **Source:** `src/engine/RetryPolicy.ts` (78 lines); integration at `SimulationEngine.ts:471–492`.
 
 ### 41.1 Configuration
@@ -3564,6 +3604,8 @@ When the amplification factor crosses 1.5× on any wire, `forwardOverWire` fires
 ## 42. Backpressure Propagation
 
 SIMFID models backpressure as a one-tick-delayed feedback signal. Each component with `backpressure.enabled = true` computes an `acceptanceRate ∈ [0, 1]` at end of tick from its observed error rate. Upstream callers read the *previous* tick's `acceptanceRate` and scale forwarded RPS proportionally.
+
+<FlowDiagram chain="server:Upstream -> server:Downstream (errorRate e) | server:Downstream (errorRate e) -?-> server:Upstream (prev-tick acceptanceRate: 1 - e) | server:Upstream -> server:Downstream (next tick: rps x acceptanceRate)" />
 
 **Source:** `src/engine/Backpressure.ts` (48 lines); integration at `SimulationEngine.ts:494–508` (enforcement), `397–402` (update).
 
@@ -3756,6 +3798,8 @@ Keeping this path in one function means adding a new resilience pattern (rate li
 
 A traffic profile describes how load into the system varies over time. SIMFID evaluates it once per tick to derive the current RPS, which is then distributed across entry points.
 
+<FlowDiagram chain="client:Users (offered load) -> generic:Traffic profile phase (shape evaluation per tick) -> generic:rps / entryPoints.length -> server:Entry components" />
+
 **Source:** `src/types/index.ts:83–99` (type); `SimulationEngine.ts:276–304` (`getCurrentRps`), `327–338` (per-tick evaluation).
 
 ### 44.1 Type
@@ -3852,6 +3896,8 @@ wait ≈ (ρ / (1 − ρ)) × ((Cₐ² + C_s²) / 2) × serviceTime
 
 When `Cₐ² = C_s² = 1.0` the variance factor is exactly 1.0 and the formula collapses to M/M/1 — bit-identical to pre-Phase-4.6 behavior, which is why every existing test survived the upgrade without recalibration. Components and profiles opt into the new behavior by setting `serviceVariance` or by running under a bursty traffic phase.
 
+<FlowDiagram chain="client:Arrivals (Ca2 prior from phase shape) -> queue:Queue (wait grows with p/(1-p)) -> server:Service (Cs2 from serviceVariance) -> generic:p50/p95/p99 (modeled spreads)" />
+
 ### 45.3 Cₐ² — arrival variance, a modeled prior
 
 `Cₐ²` is the squared coefficient of variation of interarrival times. Physically: how clumped the arrivals are. Poisson arrivals (independent users clicking at random) have `Cₐ² = 1`. A ramp or a flash-crowd spike clumps arrivals harder; the same average RPS arrives in bursts, and bursts queue.
@@ -3933,6 +3979,8 @@ state.metrics.errorRate = max(readErrorRate, writeErrorRate, poolDropRate)
 
 This preserves the §52 fan-in invariant: breakers, retry amplification, and backpressure read **only the aggregate** `errorRate`; `readErrorRate` / `writeErrorRate` are strictly diagnostic fields (Decisions §54). The control plane trips on whichever failure mode hits first; the diagnostics tell the user *which side* — "reads are fine, writes are 250% over capacity."
 
+<FlowDiagram chain="client:Inbound RPS -> generic:Read/write attribution (routes, else 70/30) -> database:Read path (readThroughputRps x (1 + readReplicas)) | generic:Read/write attribution (routes, else 70/30) -> database:Write path (writeThroughputRps, primary only) | database:Aggregate errorRate: max(read, write, pool) -> server:Breakers, retries, backpressure" />
+
 ### 46.3 Per-endpoint attribution
 
 When `endpointRoutes` exist, each route's contribution to this DB is:
@@ -4011,6 +4059,8 @@ Defaults: 1M DAU, 10 actions/user/day, 80% reads, 1 KB payload, 365-day retentio
 
 This is the same discipline §5 teaches — write the load numbers down *before* picking tools. The panel mechanizes §5's worked examples: read/write ratio drives replica strategy and cache aggressiveness; concurrent connections drive pool sizing; growth rate drives the storage roadmap.
 
+<FlowDiagram chain="client:DAU x actions/day -> generic:avgQps (/ 86400) -> generic:peakQps (x3 prior) -> generic:read/write QPS, storage, concurrent connections -?-> external:Two-phase traffic profile (steady baseline, then spike)" />
+
 ### 47.2 Worked example — the defaults
 
 Walking the default inputs through the chain:
@@ -4055,6 +4105,8 @@ The peak multiplier in particular is a prior, not a fact: 3× is a common averag
 ## 48. Calibration — Measured Anchors as Engine Defaults
 
 SIMFID's path to better numbers is **measure once, model many**: an offline harness measures real primitives (Postgres, Redis, Fastify) per hardware class and writes the results into `calibration.json` files; the interactive engine reads those anchors as *defaults* and never runs containers in the request path. This is the Google Omega pattern the fidelity research recommended — offline calibration feeding an online algorithmic model — and the same lineage as Uber's Ballast-style measured load profiles. It is the only shape that survives the "drag a wire, see a result in under 1 second" constraint.
+
+<FlowDiagram chain="external:Offline harness (real Postgres / Redis / Fastify) -> generic:calibration.json (per hardware class) -> generic:Default chain: config ?? anchor ?? hard-coded -> server:Engine (processServer, processDatabase)" />
 
 **Source:** [src/engine/calibration.ts](src/engine/calibration.ts) (`parseCalibrationProfile`, `loadCalibrationSet`, `primeCalibration`, `getCalibrationSet`); shipped files at `public/calibration/laptop-m-series-16gb/{postgres-16,redis-7,fastify-5}.json`; consumed in [src/engine/SimulationEngine.ts](src/engine/SimulationEngine.ts) `processServer` and `processDatabase` default chains.
 

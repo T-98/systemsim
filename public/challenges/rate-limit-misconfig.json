@@ -1,0 +1,100 @@
+{
+  "id": "rate-limit-misconfig",
+  "title": "The rate limit that rejected the launch",
+  "kbRef": "§22",
+  "topicKey": "reference.22-rate-limiting",
+  "difficulty": "intro",
+  "tagline": "Support is drowning in 429 screenshots while your checkout fleet naps at 13% CPU.",
+  "brief": "You front the storefront with an API gateway: rate limiting, auth, then straight to the Checkout API fleet and Postgres. During last month's load test someone capped the gateway at 400 req/s 'temporarily' to protect a half-built backend — and never reverted it. This morning marketing launched the spring drop. Legitimate traffic is 2 000 req/s. The gateway is doing exactly what it was told.",
+  "symptom": "Watch the Edge Gateway's error rate pin at 80% and the log warning 'Rate limiting active. 80% requests rejected.' Meanwhile the Checkout API behind it idles around 13% CPU — a 30-instance fleet built for 3 000 req/s, receiving 400. Every one of those rejections is a paying customer seeing a 429.",
+  "graph": {
+    "nodes": [
+      { "type": "api_gateway", "label": "Edge Gateway", "config": { "isEntry": true, "rateLimitRps": 400 } },
+      { "type": "server", "label": "Checkout API", "config": { "instanceCount": 30, "processingTimeMs": 10, "maxConcurrent": 1000 } },
+      { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 5000, "writeThroughputRps": 3000, "connectionPoolSize": 200 } }
+    ],
+    "edges": [
+      { "source": "api_gateway-0", "target": "server-1" },
+      { "source": "server-1", "target": "database-2" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Spring drop launch",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 60, "rps": 2000, "shape": "steady", "description": "Launch steady state — 2 000 req/s of legitimate checkout traffic" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "orders",
+          "name": "orders",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "user_id", "type": "uuid", "cardinality": "high" },
+            { "name": "cart", "type": "jsonb", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [{ "operation": "write", "frequency": "very_high", "pattern": "insert order on checkout" }],
+          "assignedDbId": "database-2"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Write-heavy order store behind the checkout path."
+    },
+    "apiContracts": [
+      { "id": "checkout", "method": "POST", "path": "/checkout", "description": "Place an order", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "The gateway rejects 80% of requests from the first second of the run, while everything behind it is idle. What's the root cause?",
+    "options": [
+      {
+        "id": "limit-below-peak",
+        "text": "rateLimitRps (400) is set far below the legitimate peak of 2 000 req/s — the gateway itself is shedding real customers.",
+        "correct": true,
+        "explain": "Right. The gateway passes the first 400 req/s and rejects the rest: (2 000 − 400) ÷ 2 000 = 80%, exactly the error rate on its card. A rate limit is meant to cap callers ABOVE your legitimate peak; set below it, the limiter becomes the outage."
+      },
+      {
+        "id": "shedding-to-protect",
+        "text": "The Checkout API is saturated and the gateway is shedding load to protect it — adaptive backpressure working as designed.",
+        "correct": false,
+        "explain": "Open the Checkout API card: ~13% CPU, zero errors — there is nothing to protect. This limiter is a static cap, not adaptive backpressure; it rejects everything above the configured 400 req/s regardless of how healthy the fleet behind it is."
+      },
+      {
+        "id": "bot-flood",
+        "text": "It's a bot flood — the limiter is correctly filtering illegitimate traffic from the launch hype.",
+        "correct": false,
+        "explain": "The traffic profile is a flat 2 000 req/s of authenticated checkout requests with no step change or spike that would mark an attack. A correctly sized limiter trims the excess above your legitimate peak; this one turns away four of every five paying customers from t=0."
+      },
+      {
+        "id": "db-pool",
+        "text": "Postgres's connection pool is exhausted and the failures are bubbling up to the edge as 429s.",
+        "correct": false,
+        "explain": "Pool exhaustion would show as database error rate, 'Connection pool exhaustion' log lines, and climbing latency — Postgres here sits near 25% utilization with zero errors. Besides, the rejected requests never reach the database at all: the rejection count exactly matches arrivals minus the 400 req/s cap, so the decision is made at the gateway."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Let the legitimate 2 000 req/s through: the gateway should reject (almost) nothing, and the Checkout API has to absorb the full launch load without melting.",
+    "criteria": [
+      { "kind": "metric", "metric": "errorRate", "selector": { "type": "api_gateway" }, "agg": "max", "op": "<", "value": 0.02, "windowStartS": 5, "label": "Gateway rejects under 2% of requests" },
+      { "kind": "noCrash", "selector": { "type": "server" }, "label": "The Checkout API stays up" },
+      { "kind": "metric", "metric": "cpuPercent", "selector": { "type": "server" }, "agg": "max", "op": "<", "value": 90, "windowStartS": 5, "label": "Checkout API CPU stays under 90%" }
+    ],
+    "hints": [
+      "The gateway rejects everything above rateLimitRps, full stop. Compare the configured limit against the 2 000 req/s arriving — what fraction has to be rejected?",
+      "Click the Edge Gateway node: rateLimitRps is the cap. Size it for legitimate peak with headroom — but first check what the fleet can absorb: 30 instances ÷ 10 ms = 3 000 req/s of capacity.",
+      "Set rateLimitRps to about 3 000 — the full 2 000 req/s peak plus 50% headroom, and exactly what the 30-instance Checkout fleet can serve."
+    ]
+  },
+  "knownFix": [
+    { "op": "updateConfig", "label": "Edge Gateway", "patch": { "rateLimitRps": 3000 } }
+  ]
+}

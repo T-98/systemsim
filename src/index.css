@@ -296,3 +296,6 @@ input:focus, select:focus, textarea:focus {
    scroll to them via IntersectionObserver + scrollIntoView. Keep scroll-
    margin so the sticky header doesn't occlude the target heading. */
 .docs-prose h2, .docs-prose h3 { scroll-margin-top: 72px; }
+
+/* FlowDiagram (§72): canvas component icons rendered inline at docs scale. */
+.flow-icon svg { width: 14px; height: 14px; }

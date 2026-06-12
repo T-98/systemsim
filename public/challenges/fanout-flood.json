@@ -1,0 +1,108 @@
+{
+  "id": "fanout-flood",
+  "title": "The post that drowned delivery",
+  "kbRef": "§24",
+  "topicKey": "reference.24-fan-out-fan-in-parallel-processing-in-distributed-systems",
+  "difficulty": "hard",
+  "tagline": "Ingress peaked at 140 rps. Your delivery workers died at 5,600. Someone forgot the ×40.",
+  "brief": "You own notification delivery at a social app. Posts hit the Notify API, a fanout service expands each post into one delivery job per follower — 40 on average — and delivery workers write the notifications to Postgres. At t=20s a celebrity posts and ingress steps from 40 to 140 posts/s for fifteen seconds. The front door barely notices. The delivery tier detonates.",
+  "symptom": "Watch the fanout's card when the spike lands: 140 rps in, 5,600 msgs/s out. The Delivery Workers pin at 100% CPU, log 'Dropping 57% of requests', and crash mid-spike — while the Notify API coasts at 18% utilization. Ingress never exceeded 140 rps; the flood is manufactured downstream.",
+  "graph": {
+    "nodes": [
+      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+      { "type": "server", "label": "Notify API", "config": { "instanceCount": 4, "processingTimeMs": 5, "maxConcurrent": 1000 } },
+      { "type": "fanout", "label": "Follower Fanout", "config": { "multiplier": 40, "deliveryMode": "parallel" } },
+      { "type": "server", "label": "Delivery Workers", "config": { "instanceCount": 12, "processingTimeMs": 5, "maxConcurrent": 1000 } },
+      { "type": "database", "label": "Notif Store", "config": { "engine": "postgres", "readThroughputRps": 5000, "writeThroughputRps": 3000, "connectionPoolSize": 200 } }
+    ],
+    "edges": [
+      { "source": "load_balancer-0", "target": "server-1" },
+      { "source": "server-1", "target": "fanout-2" },
+      { "source": "fanout-2", "target": "server-3" },
+      { "source": "server-3", "target": "database-4" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Celebrity spike",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 20, "rps": 40, "shape": "steady", "description": "Quiet baseline — 40 posts/s" },
+        { "startS": 20, "endS": 35, "rps": 140, "shape": "instant_spike", "description": "Celebrity posts — ingress steps to 140 posts/s" },
+        { "startS": 35, "endS": 60, "rps": 40, "shape": "steady", "description": "Back to baseline — the damage is done" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "notifications",
+          "name": "notifications",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "recipient_id", "type": "uuid", "cardinality": "high" },
+            { "name": "post_id", "type": "uuid", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [{ "operation": "write", "frequency": "very_high", "pattern": "insert one row per follower per post" }],
+          "assignedDbId": "database-4"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Write-amplified notification store: rows written = posts × followers."
+    },
+    "apiContracts": [
+      { "id": "notify", "method": "POST", "path": "/posts", "description": "Create a post (triggers follower notification fanout)", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "During the spike the Delivery Workers pin at 100% CPU, log 'Dropping 57% of requests', and crash — while the Notify API sits at 18% utilization. What's the root cause?",
+    "options": [
+      {
+        "id": "amplification",
+        "text": "Fan-out amplification: the delivery tier was sized for ingress, but every post becomes ~40 delivery jobs — 140 × 40 = 5,600 jobs/s against 2,400/s of worker capacity.",
+        "correct": true,
+        "explain": "Right. 12 workers × (1000 ÷ 5 ms) = 2,400 jobs/s of capacity, and the spike manufactures 5,600 jobs/s — 2.3× over, so the workers shed 57% and pin at 100% CPU until one crashes. Every number downstream of a fanout must be budgeted at ingress × multiplier, never at ingress."
+      },
+      {
+        "id": "api-too-small",
+        "text": "The Notify API tier is under-provisioned and queues up posts during the spike, which back up into the rest of the pipeline.",
+        "correct": false,
+        "explain": "Its card disagrees: 4 instances × 200 rps = 800 rps of capacity against a 140 rps peak is 18% utilization, with zero errors and a flat p99 for the whole run. The number that explodes lives downstream of the fanout, not in front of it."
+      },
+      {
+        "id": "db-write-saturation",
+        "text": "Postgres is write-saturated by the amplified inserts and backpressures the workers, which stalls delivery.",
+        "correct": false,
+        "explain": "Postgres never sees the flood: the workers forward only what they don't drop (~2,400/s) against 8,000 rps of combined DB throughput — about 30% utilization and zero errors all run. And the 'Dropping 57% of requests' line is logged BY the workers about their own saturation; drops originate at the worker tier, not below it."
+      },
+      {
+        "id": "spike-too-big",
+        "text": "A 3.5× traffic step is simply too violent — you need rate limiting at the edge to shed the spike before it enters the system.",
+        "correct": false,
+        "explain": "140 rps is a trivial front-door load — the API tier absorbs it at 18% utilization, so edge rate limiting would throw away legitimate posts to protect a tier that isn't struggling. The violence is manufactured by the ×40 multiplier you control; the amplified burst should be absorbed downstream, not refused at ingress."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Survive the celebrity spike: notifications may land a few seconds late, but nothing crashes and the delivery workers drop nothing at any point in the run.",
+    "criteria": [
+      { "kind": "noCrash", "label": "Nothing crashes" },
+      { "kind": "metric", "metric": "errorRate", "selector": { "type": "server", "label": "Delivery Workers" }, "agg": "max", "op": "<", "value": 0.01, "label": "Delivery workers drop nothing" }
+    ],
+    "hints": [
+      "Read the fanout's card during the spike: 140 rps in, 5,600 msgs/s out. The workers' capacity is 12 × (1000 ÷ 5 ms) = 2,400/s. The overload lasts 15 seconds — do you need 2.3× the fleet forever, or a place for 15 seconds of jobs to wait?",
+      "A queue between the fanout and the workers turns the spike into a backlog. Its drain is (groups × consumers ÷ processing ms) × 1000. Keep drain UNDER the workers' 2,400/s so they never drown, and ABOVE the 1,600/s baseline so the backlog shrinks once the spike passes.",
+      "Delete the Follower Fanout → Delivery Workers wire, add a Message Queue (1 group × 10 consumers × 5 ms ⇒ 2,000/s drain), and wire Fanout → Queue → Workers. Peak backlog ≈ (5,600 − 2,000) × 15 ≈ 54,000 messages, so give maxDepth comfortable headroom — 250,000."
+    ]
+  },
+  "knownFix": [
+    { "op": "removeEdge", "sourceLabel": "Follower Fanout", "targetLabel": "Delivery Workers" },
+    { "op": "addNode", "node": { "type": "queue", "label": "Delivery Buffer", "config": { "consumerGroupCount": 1, "consumersPerGroup": 10, "processingTimeMs": 5, "maxDepth": 250000, "dlqEnabled": false } } },
+    { "op": "addEdge", "sourceLabel": "Follower Fanout", "targetLabel": "Delivery Buffer" },
+    { "op": "addEdge", "sourceLabel": "Delivery Buffer", "targetLabel": "Delivery Workers" }
+  ]
+}

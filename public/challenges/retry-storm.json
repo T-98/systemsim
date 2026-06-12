@@ -1,0 +1,103 @@
+{
+  "id": "retry-storm",
+  "title": "Three retries to a dead payments service",
+  "kbRef": "§21/§41",
+  "topicKey": "reference.41-retry-storm-amplification",
+  "difficulty": "hard",
+  "tagline": "The flash sale browned Payments out at 24% errors. Your retry policy burned it down.",
+  "brief": "Checkout charges cards through a Payments Service that wraps the provider's synchronous SDK — one connection per in-flight charge, capped at 4 per pod, 8 pods, 80 ms a call. It was sized to brown out gracefully: past ~32 concurrent charges it sheds the overflow and keeps serving. Tonight's flash sale lifts checkout from 60 to 84 RPS — inside its 100 RPS capacity. But the Checkout API's HTTP client carries retryPolicy: maxRetries 3, and there is no circuit breaker anywhere on the path.",
+  "symptom": "First second of the sale: Payments at 84% CPU, ~24% of charges timing out on the in-flight cap — degraded but alive. One second later the log prints 'retry storm amplifying load 1.3×': the retries of those failures stack onto live traffic, 110 effective RPS against 100 RPS of capacity. CPU pins at 100%, deeper errors feed a bigger multiplier (it peaks near 2.4×, ~200 RPS), and within seconds the node card flips to CRASH and never comes back. Nominal traffic never exceeded 84 RPS.",
+  "graph": {
+    "nodes": [
+      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+      { "type": "server", "label": "Checkout API", "config": { "instanceCount": 8, "processingTimeMs": 10, "maxConcurrent": 1000, "retryPolicy": { "maxRetries": 3, "backoffMs": 50, "backoffMultiplier": 2 } } },
+      { "type": "server", "label": "Payments Service", "config": { "instanceCount": 8, "processingTimeMs": 80, "maxConcurrent": 4 } },
+      { "type": "database", "label": "Ledger DB", "config": { "engine": "postgres", "readThroughputRps": 5000, "writeThroughputRps": 3000, "connectionPoolSize": 200 } }
+    ],
+    "edges": [
+      { "source": "load_balancer-0", "target": "server-1" },
+      { "source": "server-1", "target": "server-2" },
+      { "source": "server-2", "target": "database-3" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Flash sale",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 25, "rps": 60, "shape": "steady", "description": "Normal evening checkout — 60 RPS, Payments at 60% utilization" },
+        { "startS": 25, "endS": 60, "rps": 84, "shape": "steady", "description": "Flash sale goes live — 84 RPS sustained against 100 RPS of Payments capacity" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "charges",
+          "name": "charges",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "order_id", "type": "uuid", "cardinality": "high" },
+            { "name": "amount_cents", "type": "integer", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [{ "operation": "write", "frequency": "very_high", "pattern": "insert charge attempt per checkout" }],
+          "assignedDbId": "database-3"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Write-heavy charge ledger; ~84 RPS against thousands of RPS of Postgres throughput — the database is never the constraint in this design."
+    },
+    "apiContracts": [
+      { "id": "charge", "method": "POST", "path": "/checkout/charge", "description": "Charge a card for an order", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "Nominal traffic never exceeded 84 RPS against 100 RPS of Payments capacity, yet Payments hit 100% CPU and crashed seconds into the sale. What's the root cause?",
+    "options": [
+      {
+        "id": "retry-amplification",
+        "text": "Checkout's maxRetries: 3 with no circuit breaker turns the 24% brown-out into geometrically amplified load — retries stack onto live traffic, the overload deepens the errors, and the errors deepen the multiplier until Payments dies.",
+        "correct": true,
+        "explain": "Right. With e = last second's error rate, retries multiply forwarded load by 1 + e + e² + e³: at e = 0.24 that's 1.31×, so 84 nominal RPS becomes ~110 effective against 100 RPS of capacity. Now the service is past saturation, errors climb, and the multiplier climbs with them — it peaks near 2.4× (~200 RPS) on its way to the 4× ceiling. With no breaker to fail fast, nothing interrupts the loop before CPU pins above 98% and the node crashes for good."
+      },
+      {
+        "id": "undersized-for-sale",
+        "text": "Payments is simply undersized for the sale — 84 RPS is more than it can really take, and it would have died retries or not.",
+        "correct": false,
+        "explain": "Capacity is 8 instances × (1000 ÷ 80 ms) = 100 RPS, so 84 RPS is ρ = 0.84 — watch the very first second of the sale: CPU 84%, a 24% in-flight-cap brown-out, and no crash. That is a degraded-but-stable operating point; it only spirals after the log prints 'retry storm amplifying load'. If raw capacity were the root cause, the first sale tick would already have pinned CPU at 100%."
+      },
+      {
+        "id": "db-bottleneck",
+        "text": "The Ledger DB saturated under the sale's write burst and backpressured Payments into the ground.",
+        "correct": false,
+        "explain": "The Ledger DB card never leaves ~1% utilization — at most ~84 RPS of charge inserts against 3 000 write / 5 000 read RPS of throughput — and its error rate is zero for the entire run. Payments died of inbound overload from its caller, not of anything below it: this cascade flows top-down from the retrying client, not bottom-up from storage."
+      },
+      {
+        "id": "checkout-capacity",
+        "text": "The Checkout API itself saturated during the sale, and its overflow spilled onto Payments.",
+        "correct": false,
+        "explain": "Checkout has 8 × (1000 ÷ 10 ms) = 800 RPS of capacity and never sees more than 84 RPS — its CPU sits near 10% all run with zero errors. Retries don't load the caller in this model; they multiply the caller's OUTBOUND traffic. Checkout stays green the entire time it is machine-gunning its dependency to death — and that healthy-looking caller is exactly why retry storms are hard to spot from the caller's own dashboard."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Break the feedback loop at the wire: keep the Payments Service alive through the whole flash sale — no crash, no 100%-CPU death spiral, and no multi-second p99 from amplified retry waves.",
+    "criteria": [
+      { "kind": "noCrash", "label": "Nothing crashes — Payments survives the sale" },
+      { "kind": "metric", "metric": "cpuPercent", "selector": { "label": "Payments Service" }, "agg": "avg", "op": "<", "value": 45, "windowStartS": 26, "label": "The storm never lands: Payments averages under 45% CPU once the sale is on" },
+      { "kind": "metric", "metric": "p99", "selector": { "label": "Payments Service" }, "agg": "max", "op": "<", "value": 3000, "label": "Payments p99 stays under 3 000 ms" }
+    ],
+    "hints": [
+      "Payments capacity = 8 × (1000 ÷ 80 ms) = 100 RPS, and the sale is only 84 RPS — yet two seconds in, it's absorbing 110+ RPS. Where did the extra third come from? Find the 'retry storm amplifying load' line in the log.",
+      "Every failed charge is retried up to 3 times, so forwarded load multiplies by 1 + e + e² + e³ on the previous second's error rate e. At 24% errors that is 1.31× — already past capacity — and the errors that overload causes push the multiplier toward 4×. The cure is failing FAST when the dependency is sick: click the Checkout API → Payments Service wire and add a circuit breaker.",
+      "A breaker with failureThreshold 0.1, failureWindow 1, cooldownSeconds 10, halfOpenTicks 2 trips after the first bad second — before the first retry wave ever lands — then probes roughly every 11 s. Tempering retryPolicy.maxRetries to 1 is good hygiene too, but only the breaker keeps an already-saturated dependency standing."
+    ]
+  },
+  "knownFix": [
+    { "op": "updateWireConfig", "sourceLabel": "Checkout API", "targetLabel": "Payments Service", "patch": { "circuitBreaker": { "failureThreshold": 0.1, "failureWindow": 1, "cooldownSeconds": 10, "halfOpenTicks": 2 } } }
+  ]
+}

@@ -12,6 +12,7 @@
 import { useStore } from '../../store';
 import { DISCORD_BRIEF, DISCORD_TRAFFIC_PROFILE, DISCORD_DEFAULT_FUNCTIONAL_REQS, DISCORD_DEFAULT_NFRS, DISCORD_SCENARIO_ID } from '../../scenarios/discord';
 import TemplatePicker from './TemplatePicker';
+import LearnSection from './LearnSection';
 import UnifiedInput from './UnifiedInput';
 import type { ComponentType, CanonicalGraph } from '../../types';
 
@@ -282,6 +283,8 @@ export default function LandingPage() {
           </h2>
           <TemplatePicker />
         </div>
+
+        <LearnSection />
 
         {/* Scenario card (existing) */}
         <div className="mb-6 animate-fade-in-2">

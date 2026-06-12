@@ -10,7 +10,7 @@
  * hover reads "Resolve preflight items first."
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useStore } from '../../store';
 import { useSimulation } from '../../engine/useSimulation';
 import { DISCORD_TRAFFIC_PROFILE, DISCORD_BRIEF } from '../../scenarios/discord';
@@ -94,6 +94,22 @@ export default function Toolbar() {
   const handleToastDismiss = useCallback(() => {
     setToastMsg(null);
   }, []);
+
+  // Drills (§72): the challenge loader can't reach this hook instance's
+  // startSimulation, so it raises a flag in the store and we fire here.
+  const autoRunRequested = useStore((s) => s.autoRunRequested);
+  const setAutoRunRequested = useStore((s) => s.setAutoRunRequested);
+  useEffect(() => {
+    if (!autoRunRequested) return;
+    if (simulationStatus !== 'idle') return;
+    const profile = useStore.getState().trafficProfile;
+    setAutoRunRequested(false);
+    // Same gate as manual Run (review P2): a drill that trips preflight
+    // must show the checklist, not auto-run once and then softlock.
+    if (!preflightClean) return;
+    if (profile) startSimulation(profile, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRunRequested, simulationStatus]);
 
   const handleRun = () => {
     const hints = checkForHints(nodes, edges, scenarioId);
@@ -322,6 +338,25 @@ export default function Toolbar() {
         )}
         {isCompleted && (
           <>
+            {/* Drill loop ergonomics (§72): edit → re-run is the core fix
+                cycle; hiding Run behind Reset added a dead click. startSimulation
+                resets state itself, so this is safe from any completed run. */}
+            <button
+              onClick={handleRun}
+              disabled={!hasNodes || !preflightClean}
+              className="rounded-lg font-medium transition-all"
+              style={{
+                padding: '6px 16px',
+                fontSize: '14px',
+                letterSpacing: '-0.224px',
+                background: hasNodes && preflightClean ? 'var(--accent)' : 'var(--bg-card)',
+                color: hasNodes && preflightClean ? 'var(--text-on-accent)' : 'var(--text-tertiary)',
+                border: hasNodes && preflightClean ? 'none' : '1px solid var(--border-color)',
+                cursor: hasNodes && preflightClean ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Run again
+            </button>
             <button
               onClick={handleStop}
               className="rounded-lg font-medium transition-all"

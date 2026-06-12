@@ -1,0 +1,72 @@
+[
+  {
+    "id": "spof-replica",
+    "title": "The replica that didn't exist",
+    "kbRef": "§9/§20",
+    "difficulty": "intro",
+    "tagline": "One checkout box at 85% CPU. The push notification fires at t=25s."
+  },
+  {
+    "id": "rate-limit-misconfig",
+    "title": "The rate limit that rejected the launch",
+    "kbRef": "§22",
+    "difficulty": "intro",
+    "tagline": "Support is drowning in 429 screenshots while your checkout fleet naps at 13% CPU."
+  },
+  {
+    "id": "cache-stampede",
+    "title": "The herd that arrives every 20 seconds",
+    "kbRef": "§10",
+    "difficulty": "intro",
+    "tagline": "Postgres throws 70% errors every 20 seconds, on the dot. Between spikes it's asleep."
+  },
+  {
+    "id": "queue-backlog",
+    "title": "The backlog that ate the broker",
+    "kbRef": "§13",
+    "difficulty": "intro",
+    "tagline": "Your log-based queue's depth graph is a straight line going up. The pager is next."
+  },
+  {
+    "id": "queue-overflow",
+    "title": "The 9am digest that vanished",
+    "kbRef": "§13.7",
+    "difficulty": "intermediate",
+    "tagline": "Every morning at 9:00 the push queue hits its cap for 15 seconds and silently drops 10,000 notifications."
+  },
+  {
+    "id": "missing-cache",
+    "title": "Postgres is not your read cache",
+    "kbRef": "§10",
+    "difficulty": "intermediate",
+    "tagline": "1 800 product reads a second, every one hitting Postgres. The read side is shedding 40% of them."
+  },
+  {
+    "id": "pool-exhaustion",
+    "title": "Fifty connections against the flood",
+    "kbRef": "§11",
+    "difficulty": "intermediate",
+    "tagline": "Reads doubled and 90% of queries are dying — the connection backlog is burying a 50-connection pool."
+  },
+  {
+    "id": "hot-shard",
+    "title": "The shard your biggest customer melted",
+    "kbRef": "§12",
+    "difficulty": "intermediate",
+    "tagline": "Three shards loaf at 15%. The fourth just OOM-killed Postgres. Your largest partner says hi."
+  },
+  {
+    "id": "retry-storm",
+    "title": "Three retries to a dead payments service",
+    "kbRef": "§21/§41",
+    "difficulty": "hard",
+    "tagline": "The flash sale browned Payments out at 24% errors. Your retry policy burned it down."
+  },
+  {
+    "id": "fanout-flood",
+    "title": "The post that drowned delivery",
+    "kbRef": "§24",
+    "difficulty": "hard",
+    "tagline": "Ingress peaked at 140 rps. Your delivery workers died at 5,600. Someone forgot the ×40."
+  }
+]

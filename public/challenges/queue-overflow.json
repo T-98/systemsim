@@ -1,0 +1,106 @@
+{
+  "id": "queue-overflow",
+  "title": "The 9am digest that vanished",
+  "kbRef": "§13.7",
+  "topicKey": "reference.13-message-queues-async-communication",
+  "difficulty": "intermediate",
+  "tagline": "Every morning at 9:00 the push queue hits its cap for 15 seconds and silently drops 10,000 notifications.",
+  "brief": "You run a push-notification pipeline: an ingest API enqueues jobs onto a bounded broker, a worker fleet delivers them, receipts land in Postgres. Someone capped the queue at maxDepth 2,000 'to keep broker memory tight'. Steady state is healthy — 300 jobs/s in, 400/s of drain. Then the 9am daily digest fires: 1,200 jobs/s for 15 seconds. Unlike the queue-backlog drill (a SUSTAINED producer/consumer rate mismatch that grows forever), this system is fine on average — it only dies during the burst, because the buffer is smaller than the burst's excess.",
+  "symptom": "Watch the queue's card when the burst phase starts at t=20s: depth rockets from 0 to the 2,000 cap in ~3 seconds, memory% pins at 100, and the log fills with 'Queue overflow ... DROPPED' — error rate 67% at the peak. Of the 18,000 burst messages, only ~8,000 survive; the broker is also one bad tick from an OOM crash while pinned at the cap. By t=55 everything looks healthy again, which is exactly why nobody caught it for a week.",
+  "graph": {
+    "nodes": [
+      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+      { "type": "server", "label": "Ingest API", "config": { "instanceCount": 10, "processingTimeMs": 5, "maxConcurrent": 1000 } },
+      { "type": "queue", "label": "Push Queue", "config": { "consumerGroupCount": 1, "consumersPerGroup": 4, "processingTimeMs": 10, "maxDepth": 2000, "dlqEnabled": false } },
+      { "type": "server", "label": "Delivery Workers", "config": { "instanceCount": 20, "processingTimeMs": 10, "maxConcurrent": 1000 } },
+      { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 5000, "writeThroughputRps": 3000, "connectionPoolSize": 200 } }
+    ],
+    "edges": [
+      { "source": "load_balancer-0", "target": "server-1" },
+      { "source": "server-1", "target": "queue-2" },
+      { "source": "queue-2", "target": "server-3" },
+      { "source": "server-3", "target": "database-4" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Daily digest burst",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 20, "rps": 300, "shape": "steady", "description": "Morning baseline — 300 jobs/s" },
+        { "startS": 20, "endS": 35, "rps": 1200, "shape": "instant_spike", "description": "9:00 digest push — 1,200 jobs/s for 15s" },
+        { "startS": 35, "endS": 60, "rps": 300, "shape": "steady", "description": "Burst over — back to 300 jobs/s" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "delivery_receipts",
+          "name": "delivery_receipts",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "device_token", "type": "text", "cardinality": "high" },
+            { "name": "delivered_at", "type": "timestamp", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [{ "operation": "write", "frequency": "very_high", "pattern": "record delivery receipt" }],
+          "assignedDbId": "database-4"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Write-heavy receipt store; one row per delivered push."
+    },
+    "apiContracts": [
+      { "id": "enqueue-push", "method": "POST", "path": "/push", "description": "Enqueue a push notification job", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "During the 15-second digest burst the queue's error rate spikes to 67% and the broker logs 'Queue overflow ... DROPPED'. Before and after the burst, every graph is flat and green. What's the root cause?",
+    "options": [
+      {
+        "id": "burst-exceeds-buffer",
+        "text": "The bounded buffer is smaller than the burst's excess: (1,200 − 400) × 15s = 12,000 messages need buffering, but maxDepth is 2,000 — the other 10,000 overflow and drop.",
+        "correct": true,
+        "explain": "Right. A bounded queue must absorb the burst INTEGRAL, not the burst rate: excess = (burst rps − drain rps) × burst seconds. Here that's 12,000 against a 2,000-slot buffer, so the cap is hit ~3s into the burst and everything above it is dropped for the remaining 12 seconds. Steady state being healthy is exactly the signature — the system is sized for the average, not the burst."
+      },
+      {
+        "id": "sustained-mismatch",
+        "text": "Consumers are too slow for the workload — a sustained producer/consumer rate mismatch, the classic ever-growing backlog.",
+        "correct": false,
+        "explain": "A sustained mismatch shows depth growing linearly forever with no plateau — that's the queue-backlog scenario. Here drain (400/s) exceeds baseline arrivals (300/s), so depth sits at zero for the first 20 seconds and fully recovers by t=55. The failure window is exactly the 15-second burst, which means it's a buffer-sizing problem, not a steady-state throughput problem."
+      },
+      {
+        "id": "db-backpressure",
+        "text": "Postgres saturates during the burst and backpressures the delivery workers, stalling consumption until the queue overflows.",
+        "correct": false,
+        "explain": "Check the downstream cards during the burst: the workers and Postgres never receive more than the queue's drain rate of 400/s — the broker meters the flow regardless of how fast producers enqueue. Postgres sits around 5% utilization with zero errors the whole run, and the 'overflow ... DROPPED' log is emitted by the broker at enqueue time, upstream of the workers entirely."
+      },
+      {
+        "id": "ingest-retries",
+        "text": "The Ingest API tier saturates at 1,200 rps and its retries amplify the burst into the queue.",
+        "correct": false,
+        "explain": "Ten instances at 5 ms/request handle 2,000 rps, so 1,200 rps is only 60% utilization — the ingest card shows zero errors throughout the burst. There is also no retryPolicy configured on any wire, so nothing can amplify. The queue really is receiving exactly 1,200/s; the problem is what it does with the 800/s it can't drain."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Survive the 9am burst without dropping a single job: absorb the 15-second spike in the buffer AND drain the backlog within seconds of the burst ending.",
+    "criteria": [
+      { "kind": "metric", "metric": "errorRate", "selector": { "type": "queue" }, "agg": "max", "op": "<", "value": 0.01, "label": "The queue drops nothing — even mid-burst" },
+      { "kind": "metric", "metric": "queueDepth", "selector": { "type": "queue" }, "agg": "max", "op": "<", "value": 600, "windowStartS": 40, "label": "Backlog is drained within 5s of the burst ending" },
+      { "kind": "noCrash", "label": "Nothing crashes — the broker stays up" }
+    ],
+    "hints": [
+      "Size a bounded queue for the burst integral: excess = (burst rps − drain rps) × burst seconds. Right now that's (1,200 − 400) × 15 = 12,000 messages against a 2,000-slot buffer.",
+      "Click the Push Queue node — you have two knobs. maxDepth alone absorbs the burst but leaves a 12,000-deep backlog draining at only 100/s net, failing the drain criterion. More consumersPerGroup alone lifts drain to 1,000/s but the peak backlog (200/s × 15s = 3,000) still overflows the 2,000 cap.",
+      "Combine them: consumersPerGroup 10 makes drain 1,000/s, capping the peak backlog at (1,200 − 1,000) × 15 = 3,000 — and maxDepth 20,000 holds that at 15% memory. After the burst, 1,000/s drain against 300/s arrivals clears the backlog in ~4 seconds."
+    ]
+  },
+  "knownFix": [
+    { "op": "updateConfig", "label": "Push Queue", "patch": { "maxDepth": 20000, "consumersPerGroup": 10 } }
+  ]
+}

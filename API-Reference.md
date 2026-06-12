@@ -564,8 +564,25 @@ Zustand store. Single source of truth for all state.
   // BOTE capacity estimator (Phase 8a.1 §68)
   boteInputs: BoteInputs            // store-resident so panel unmount doesn't lose edits
   botePanelOpen: boolean            // explicit open flag; cleared on node/wire selection
+
+  // Drills (§72)
+  activeChallenge: Challenge | null // armed by loadChallenge(); cleared by replaceGraph
+  challengeStep: 'observe' | 'diagnose' | 'fix' | 'passed'
+  diagnosisPicked: string | null
+  challengeResults: CriterionResult[] | null
+  autoRunRequested: boolean         // loader raises; Toolbar's useSimulation effect fires
 }
 ```
+
+### Drill modules (§72)
+
+| Module | Surface |
+|---|---|
+| [src/challenges/types.ts](src/challenges/types.ts) | `Challenge`, `Criterion` (metric/noCrash), `FixOp`, `ChallengeIndexEntry` |
+| [src/challenges/evaluate.ts](src/challenges/evaluate.ts) | `evaluateChallenge(challenge, run, nodes)` → per-criterion pass/fail; pure |
+| [src/challenges/harness.ts](src/challenges/harness.ts) | `runChallenge(challenge, {fix?, seed?})` headless engine run; `buildGraph`/`applyFix`/`buildRoutes` |
+| [src/challenges/loadChallenge.ts](src/challenges/loadChallenge.ts) | `loadChallenge(id)` — fetch `/challenges/<id>.json`, stage graph+starter, arm HUD, request auto-run |
+| `public/challenges/` | 10 drill JSONs + `index.json`; content-gated by `challengeContent.test.ts` |
 
 ### Key actions
 

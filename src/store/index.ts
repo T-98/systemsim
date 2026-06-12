@@ -75,6 +75,7 @@ import { COMPONENT_DEFS } from '../types/components';
 import type { ComponentType } from '../types';
 import { layoutGraph } from '../layout/dagre';
 import { DEFAULT_BOTE_INPUTS, type BoteInputs } from '../util/bote';
+import type { Challenge, ChallengeStep, CriterionResult } from '../challenges/types';
 
 const emptyMetrics: ComponentMetrics = {
   rps: 0,
@@ -198,6 +199,22 @@ export interface AppState {
    */
   botePanelOpen: boolean;
   setBotePanelOpen: (open: boolean) => void;
+
+  // Drills (Decisions §72). activeChallenge drives the ChallengeBanner HUD;
+  // replaceGraph clears it (loading a template mid-drill exits the drill —
+  // the challenge loader re-sets it after its own replaceGraph call).
+  activeChallenge: Challenge | null;
+  challengeStep: ChallengeStep;
+  diagnosisPicked: string | null;
+  challengeResults: CriterionResult[] | null;
+  /** Set by the challenge loader; Toolbar's useSimulation instance watches
+   *  it and fires startSimulation (the engine lives in that hook). */
+  autoRunRequested: boolean;
+  setActiveChallenge: (c: Challenge | null) => void;
+  setChallengeStep: (s: ChallengeStep) => void;
+  setDiagnosisPicked: (id: string | null) => void;
+  setChallengeResults: (r: CriterionResult[] | null) => void;
+  setAutoRunRequested: (v: boolean) => void;
 
   // Runs
   simulationRuns: SimulationRun[];
@@ -550,6 +567,23 @@ export const useStore = create<AppState>((set, get) => ({
   botePanelOpen: false,
   setBotePanelOpen: (open) => set({ botePanelOpen: open }),
 
+  // Drills (Decisions §72)
+  activeChallenge: null,
+  challengeStep: 'observe',
+  diagnosisPicked: null,
+  challengeResults: null,
+  autoRunRequested: false,
+  setActiveChallenge: (c) => set({
+    activeChallenge: c,
+    challengeStep: 'observe',
+    diagnosisPicked: null,
+    challengeResults: null,
+  }),
+  setChallengeStep: (s) => set({ challengeStep: s }),
+  setDiagnosisPicked: (id) => set({ diagnosisPicked: id }),
+  setChallengeResults: (r) => set({ challengeResults: r }),
+  setAutoRunRequested: (v) => set({ autoRunRequested: v }),
+
   // Runs
   simulationRuns: [],
   currentRunId: null,
@@ -604,6 +638,12 @@ export const useStore = create<AppState>((set, get) => ({
     // R3.1: halt simulation if running
     if (state.simulationStatus !== 'idle') {
       state.resetSimulationState();
+    }
+
+    // Drills (§72): swapping the graph exits any active drill — the loader
+    // that starts a drill re-sets activeChallenge AFTER its replaceGraph.
+    if (state.activeChallenge) {
+      set({ activeChallenge: null, challengeStep: 'observe', diagnosisPicked: null, challengeResults: null });
     }
 
     // R3.5: push ONE undo snapshot (force push even during sim, since we just reset)

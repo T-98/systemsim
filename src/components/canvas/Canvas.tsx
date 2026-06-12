@@ -26,6 +26,7 @@ import SimWireEdge from './SimWireEdge';
 import ParticleOverlay from './ParticleOverlay';
 import PreflightBanner from './PreflightBanner';
 import CanvasEmptyState from './CanvasEmptyState';
+import ChallengeBanner from './ChallengeBanner';
 import type { Node, Edge } from '@xyflow/react';
 import type { ComponentType, SimComponentData, WireConfig } from '../../types';
 import { MVP_VISIBLE_TYPES } from '../../types/components';
@@ -105,6 +106,7 @@ export default function Canvas() {
 
   return (
     <div className="flex-1 relative flex flex-col" style={{ background: 'var(--canvas-bg)' }}>
+      <ChallengeBanner />
       <PreflightBanner />
       <div className="flex-1 relative">
       <CanvasEmptyState />

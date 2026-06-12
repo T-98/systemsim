@@ -1,0 +1,102 @@
+{
+  "id": "cache-stampede",
+  "title": "The herd that arrives every 20 seconds",
+  "kbRef": "§10",
+  "topicKey": "reference.10-caching-full-curriculum",
+  "difficulty": "intro",
+  "tagline": "Postgres throws 70% errors every 20 seconds, on the dot. Between spikes it's asleep.",
+  "brief": "You run the product-catalog API: an edge LB, an API tier, a Redis cache fronting Postgres. Last sprint someone dropped the cache TTL to 20 seconds 'for freshness'. Since the catalog launch pushed traffic past 1,400 reads/s, monitoring shows a perfect 20-second heartbeat of database errors. Nobody deployed anything at :00, :20, or :40.",
+  "symptom": "Watch the cache's hit-rate in its node card: 100%, 100%, then a collapse to 30% for about 2 seconds — every 20 seconds exactly. Each collapse dumps ~980 misses/s onto a Postgres read path rated for 400 reads/s: error rate jumps to ~70% and p99 blows past 130 ms, then everything goes quiet until the next TTL boundary.",
+  "graph": {
+    "nodes": [
+      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+      { "type": "server", "label": "Product API", "config": { "instanceCount": 12, "processingTimeMs": 5, "maxConcurrent": 1000 } },
+      { "type": "cache", "label": "Product Cache", "config": { "evictionPolicy": "lru", "ttlSeconds": 20, "maxMemoryMb": 1024, "writeStrategy": "write-through" } },
+      { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 400, "writeThroughputRps": 1400, "readReplicas": 0, "connectionPoolSize": 200 } }
+    ],
+    "edges": [
+      { "source": "load_balancer-0", "target": "server-1" },
+      { "source": "server-1", "target": "cache-2" },
+      { "source": "cache-2", "target": "database-3" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Catalog launch traffic",
+      "durationSeconds": 120,
+      "phases": [
+        { "startS": 0, "endS": 120, "rps": 1400, "shape": "steady", "description": "Post-launch steady state — 1,400 reads/s" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "products",
+          "name": "products",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "title", "type": "text", "cardinality": "high" },
+            { "name": "price_cents", "type": "integer", "cardinality": "medium" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [{ "operation": "read", "frequency": "very_high", "pattern": "fetch product by id" }],
+          "assignedDbId": "database-3"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Read-heavy product catalog. Cache fronts virtually all reads."
+    },
+    "apiContracts": [
+      { "id": "get-product", "method": "GET", "path": "/products/:id", "description": "Fetch one product", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "Postgres errors spike to ~70% every 20 seconds exactly, and the cache hit rate collapses from 100% to 30% in the same 2-second windows. What's the root cause?",
+    "options": [
+      {
+        "id": "ttl-mass-expiry",
+        "text": "Every key cached in the same window expires at the same TTL boundary — the whole working set dies together and the miss flood stampedes the database.",
+        "correct": true,
+        "explain": "Right. At 1,400 rps with a 20 s TTL, keys written together expire together, so every boundary turns ~70% of traffic into misses for ~2 s: ~980 reads/s against a 400 reads/s read path is 2.4× over capacity → ~70% errors. The giveaway is the period: the spikes land at exactly ttlSeconds intervals, and the log calls out the stampede on the cache node."
+      },
+      {
+        "id": "db-undersized",
+        "text": "Postgres is simply under-provisioned for this traffic — add read replicas and the spikes go away.",
+        "correct": false,
+        "explain": "Look at Postgres between spikes: 0% utilization, zero errors — it's asleep 90% of the run, which is not what an under-provisioned database looks like. Replicas would mask the burst, but you'd be sizing the database for a 2-second herd the cache is supposed to absorb, and every TTL boundary would still stampede it."
+      },
+      {
+        "id": "cache-too-small",
+        "text": "The cache is out of memory — evictions are throwing the working set out and causing the misses.",
+        "correct": false,
+        "explain": "The cache card's memory sits around 1%: 1,024 MB holds ~2 million entries and the 20 s working set is only ~28,000 keys. Eviction pressure shows up as a constantly depressed hit rate that never recovers, not a clean sawtooth that snaps back to 100% two seconds after each collapse."
+      },
+      {
+        "id": "app-pauses",
+        "text": "The API tier is pausing every 20 seconds — GC cycles or a flapping deploy are stalling requests in bursts.",
+        "correct": false,
+        "explain": "The Product API holds a flat ~58% CPU with zero errors straight through every spike — an app-tier stall would show its own latency and error signature first. The period also matches the cache's ttlSeconds config exactly, and the engine's stampede warning fires on the cache node, not the servers."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Get the TTL out of the stampede band so expiries stop synchronizing: once the cache is warm (from t=75s on), Postgres must stay quiet — no error spikes, no p99 blowups.",
+    "criteria": [
+      { "kind": "metric", "metric": "errorRate", "selector": { "type": "database" }, "agg": "max", "op": "<", "value": 0.05, "windowStartS": 75, "label": "Postgres errors stay under 5% once warm" },
+      { "kind": "metric", "metric": "p99", "selector": { "type": "database" }, "agg": "max", "op": "<", "value": 60, "windowStartS": 75, "label": "Postgres p99 stays under 60 ms once warm" },
+      { "kind": "noCrash", "label": "Nothing crashes" }
+    ],
+    "hints": [
+      "The error spikes land at t=20, 40, 60, 80, 100 — exactly the cache's ttlSeconds. What happens to every key written in the same second, 20 seconds later?",
+      "A cache stampedes when it sees over 1,000 rps with a TTL under 60 s and a hot hit rate: each boundary mass-expires the working set and ~70% of traffic falls through for ~2 s. Get ttlSeconds out of that band — more memory won't help, the working set already fits in ~1% of it.",
+      "Click the Product Cache node and raise ttlSeconds to 120. Expiries stop synchronizing, the hit rate holds at 100% after warm-up, and Postgres only ever sees the initial fill."
+    ]
+  },
+  "knownFix": [
+    { "op": "updateConfig", "label": "Product Cache", "patch": { "ttlSeconds": 120 } }
+  ]
+}

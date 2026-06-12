@@ -1,0 +1,103 @@
+{
+  "id": "hot-shard",
+  "title": "The shard your biggest customer melted",
+  "kbRef": "§12",
+  "topicKey": "reference.12-database-scaling-partitioning-replication-consistent-hashing-cdc",
+  "difficulty": "intermediate",
+  "tagline": "Three shards loaf at 15%. The fourth just OOM-killed Postgres. Your largest partner says hi.",
+  "brief": "You run partner telemetry ingest: an edge LB fronts an ingest API that writes every event to a 4-shard Postgres, hash-partitioned on user_id. Yesterday your biggest partner went live — 40,000 devices, all authenticating as ONE service account. Total traffic is 6,000 events/s against 12,000 writes/s of aggregate capacity. The cluster should be coasting at 50%. Shard-2 has other plans.",
+  "symptom": "Open the Postgres node card and watch the shard distribution: ~78% of writes hash to shard-2 — 4,680/s into a shard that can write 3,000/s — while the other three idle near 440/s. Shard-2's memory pegs at 100% within seconds and the whole database CRASHes with memory exhausted, even though aggregate utilization never left 50%.",
+  "graph": {
+    "nodes": [
+      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+      { "type": "server", "label": "Ingest API", "config": { "instanceCount": 20, "processingTimeMs": 2, "maxConcurrent": 1000 } },
+      { "type": "database", "label": "Events Postgres", "config": { "engine": "postgres", "shardingEnabled": true, "shardCount": 4, "shardKey": "user_id", "readThroughputRps": 38000, "writeThroughputRps": 12000, "readReplicas": 0, "connectionPoolSize": 200 } }
+    ],
+    "edges": [
+      { "source": "load_balancer-0", "target": "server-1" },
+      { "source": "server-1", "target": "database-2" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Partner launch",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 60, "rps": 6000, "shape": "steady", "description": "Partner fleet steady-state — 6,000 events/s" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "pareto",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "events",
+          "name": "events",
+          "fields": [
+            { "name": "event_id", "type": "uuid", "cardinality": "high" },
+            { "name": "user_id", "type": "uuid", "cardinality": "high" },
+            { "name": "payload", "type": "jsonb", "cardinality": "high" },
+            { "name": "recorded_at", "type": "timestamptz", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "event_id", "type": "btree" }],
+          "accessPatterns": [
+            { "operation": "write", "frequency": "very_high", "pattern": "append device event" },
+            { "operation": "read", "frequency": "low", "pattern": "partner dashboard rollups" }
+          ],
+          "assignedDbId": "database-2"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Append-heavy telemetry store on a 4-shard Postgres. No partitionKey declared in the schema — the effective shard key comes from the database node's own config.shardKey."
+    },
+    "apiContracts": [
+      { "id": "ingest-event", "method": "POST", "path": "/v1/events", "description": "Ingest one device event", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "Aggregate write load is 6,000/s against 12,000/s of write capacity — 50% — yet the database OOMs within seconds, every run. What's the root cause?",
+    "options": [
+      {
+        "id": "shard-key",
+        "text": "The shard key is user_id — every event from the dominant service account hashes to the same shard, so one shard carries most of the load.",
+        "correct": true,
+        "explain": "Right. A hash shard key spreads KEYS evenly, not LOAD — 40,000 devices behind one user_id all hash to shard-2. 78% of 6,000/s is 4,680/s into a shard whose write capacity is 12,000 ÷ 4 = 3,000/s: 156% utilization, memory pressure, OOM. The three idle siblings prove capacity was never the problem; placement was."
+      },
+      {
+        "id": "undersized",
+        "text": "The cluster is undersized — four shards can't absorb 6,000 writes/s, so add shards or a bigger box.",
+        "correct": false,
+        "explain": "The run's own numbers rule this out: 6,000/s against 12,000/s aggregate write throughput is 50% utilization, and three of the four shards sit near 440/s — about 15% of their slice. Re-sharding to 8 while keeping user_id just re-hashes the dominant account onto ONE of the new shards: the hot spot moves, it doesn't shrink."
+      },
+      {
+        "id": "pool",
+        "text": "The connection pool is exhausted — queries queue behind the 200-connection limit and back up into memory.",
+        "correct": false,
+        "explain": "Pool exhaustion has a signature this run never shows: activeConnections climbing toward the pool limit and a 'connection pool exhaustion' log with failing queries. Here activeConnections stays near zero because the database drains its inbound every tick — and the failure is shard-2 memory, which a bigger pool wouldn't touch."
+      },
+      {
+        "id": "index",
+        "text": "Inserts are slow because the events table is unindexed, so every write triggers a full-table scan that bloats memory.",
+        "correct": false,
+        "explain": "A scan problem surfaces as latency, not as memory on exactly one shard — and p99 stays in the tens of milliseconds right up to the crash. The events table also carries a btree on event_id. A missing index can't explain why one of four identical shards dies while its siblings idle: that asymmetry is a placement problem."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Pick a shard key that spreads LOAD, not just keys: survive the full 6,000 events/s partner launch with every shard cool, nothing crashing, and zero failed writes.",
+    "criteria": [
+      { "kind": "noCrash", "selector": { "type": "database" }, "label": "Postgres survives the run" },
+      { "kind": "metric", "metric": "errorRate", "selector": { "type": "database" }, "agg": "max", "op": "<", "value": 0.01, "label": "Zero failed writes at the database" }
+    ],
+    "hints": [
+      "The Postgres node card shows the split: shard-2 takes ~78% of writes while the other three idle. Which config field decides which shard a row lands on?",
+      "shardKey is user_id, and your launch partner's 40,000 devices all share one user_id — every event hashes to the same shard: 0.78 × 6,000/s = 4,680/s into a shard that can write 12,000 ÷ 4 = 3,000/s.",
+      "Re-key on something unique per ROW, not per customer: set shardKey to event_id. The same 6,000/s then spreads to 1,500/s per shard — 50% of each shard's write capacity, with 2× headroom."
+    ]
+  },
+  "knownFix": [
+    { "op": "updateConfig", "label": "Events Postgres", "patch": { "shardKey": "event_id" } }
+  ]
+}
