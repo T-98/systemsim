@@ -1,0 +1,103 @@
+{
+  "id": "missing-cache",
+  "title": "Postgres is not your read cache",
+  "kbRef": "§10",
+  "topicKey": "reference.10-caching-full-curriculum",
+  "difficulty": "intermediate",
+  "tagline": "1 800 product reads a second, every one hitting Postgres. The read side is shedding 40% of them.",
+  "brief": "You run a product catalog API: an edge LB fronts an API tier that queries Postgres for every GET /products/:id. A morning press feature tripled read traffic to 1 800 req/s — writes are still a trickle. The API tier is coasting. Postgres is not: the same hot products are being read over and over, and every single read goes to the database.",
+  "symptom": "Watch Postgres's node card: errorRate pinned around 40% and p99 north of 600 ms, while the API tier sits near 60% CPU with zero errors. Reads arrive at 1 800/s against 1 000 reads/s of read capacity — 180% utilization, sustained. This isn't a burst; it never recovers on its own.",
+  "graph": {
+    "nodes": [
+      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+      { "type": "server", "label": "Product API", "config": { "instanceCount": 15, "processingTimeMs": 5, "maxConcurrent": 1000 } },
+      { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 1000, "writeThroughputRps": 1000, "connectionPoolSize": 200 } }
+    ],
+    "edges": [
+      { "source": "load_balancer-0", "target": "server-1" },
+      { "source": "server-1", "target": "database-2" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Press-feature read storm",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 60, "rps": 1800, "shape": "steady", "description": "Press feature steady state — 1 800 product reads/s" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "products",
+          "name": "products",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "title", "type": "text", "cardinality": "medium" },
+            { "name": "price_cents", "type": "integer", "cardinality": "medium" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [{ "operation": "read", "frequency": "very_high", "pattern": "product detail lookup by id" }],
+          "assignedDbId": "database-2"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Read-heavy product catalog. Hot working set is the press-featured products."
+    },
+    "apiContracts": [
+      { "id": "get-product", "method": "GET", "path": "/products/:id", "description": "Fetch one product's detail payload", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "Postgres's error rate is pinned around 40% and its p99 is over 600 ms, but the API tier shows 0% errors and the write side is idle. What's the root cause?",
+    "options": [
+      {
+        "id": "read-capacity",
+        "text": "Every product read goes straight to Postgres — 1 800 reads/s against 1 000 reads/s of read capacity, with no layer absorbing the repeat reads.",
+        "correct": true,
+        "explain": "Right. Read utilization = 1 800 ÷ 1 000 = 180%, and the database sheds the excess — that's the ~40% errorRate on the card. The same hot products are read over and over, which is precisely the workload a cache-aside layer absorbs: serve repeats from memory so only misses touch Postgres."
+      },
+      {
+        "id": "pool-size",
+        "text": "The connection pool (200) is exhausted — queries are queuing for connections and timing out. Raise connectionPoolSize.",
+        "correct": false,
+        "explain": "The card disagrees: activeConnections hovers near zero and the log never prints 'Connection pool exhaustion'. Postgres admits everything it receives within each second — it fails queries because the read side is past throughput capacity, and a bigger pool adds waiting room, not read throughput."
+      },
+      {
+        "id": "server-saturated",
+        "text": "The API tier is saturated and dropping requests before they reach Postgres — add API instances.",
+        "correct": false,
+        "explain": "The API tier's card shows ~60% CPU and a 0% error rate: 15 instances at 5 ms/request is 3 000 rps of capacity against 1 800 arriving. The errors live on Postgres's card, downstream of the servers — adding API instances would only push the same doomed reads harder."
+      },
+      {
+        "id": "missing-index",
+        "text": "Product lookups are doing full table scans — add an index to products and the latency and errors disappear.",
+        "correct": false,
+        "explain": "The schema already has a btree on products.id, and the log never fires the 'unindexed access' callout that scan traffic triggers. The latency here tracks utilization, not scan factor — and an index cannot add read throughput once arrivals exceed capacity."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Get the repeat reads off Postgres: serve hot products from a layer in front of the database so reads stop failing and Postgres's p99 comes back down — without crashing anything.",
+    "criteria": [
+      { "kind": "metric", "metric": "errorRate", "selector": { "type": "database" }, "agg": "max", "op": "<", "value": 0.05, "windowStartS": 35, "label": "Postgres stops failing reads (errors under 5% after warmup)" },
+      { "kind": "metric", "metric": "p99", "selector": { "type": "database" }, "agg": "max", "op": "<", "value": 250, "windowStartS": 35, "label": "Postgres p99 under 250 ms after warmup" },
+      { "kind": "noCrash", "label": "Nothing crashes" }
+    ],
+    "hints": [
+      "Open Postgres's node card: writes are near zero and reads run at 180% of readThroughputRps (1 800/s vs 1 000/s). The same hot products are read over and over — what layer absorbs repeat reads?",
+      "Draw a cache between the API tier and the database: wire Product API → cache and cache → Postgres, then delete the direct Product API → Postgres wire so only misses touch the database.",
+      "Caches start cold and warm up over ~ttl/2 seconds. Set ttlSeconds to 60 so it's fully warm by t=30s — the default 1 GB easily holds the hot working set, and the read errors go to zero as the hit rate climbs."
+    ]
+  },
+  "knownFix": [
+    { "op": "addNode", "node": { "type": "cache", "label": "Product Cache", "config": { "ttlSeconds": 60 } } },
+    { "op": "addEdge", "sourceLabel": "Product API", "targetLabel": "Product Cache" },
+    { "op": "addEdge", "sourceLabel": "Product Cache", "targetLabel": "Postgres" },
+    { "op": "removeEdge", "sourceLabel": "Product API", "targetLabel": "Postgres" }
+  ]
+}

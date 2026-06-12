@@ -1,0 +1,101 @@
+{
+  "id": "spof-replica",
+  "title": "The replica that didn't exist",
+  "kbRef": "§9/§20",
+  "topicKey": "reference.20-how-to-scale-a-system",
+  "difficulty": "intro",
+  "tagline": "One checkout box at 85% CPU. The push notification fires at t=25s.",
+  "brief": "Checkout runs on a single API instance behind the edge load balancer — instanceCount: 1, and nobody remembers why. At 10 ms per request that one box tops out at 100 RPS, and the morning steady state of 85 RPS keeps its CPU pinned at 85%. Product is about to send a push notification that lifts traffic to 140 RPS for twenty seconds. There is no second instance.",
+  "symptom": "Watch the Checkout API node card: CPU holds at 85% through the baseline — zero errors, looks survivable. At t=25s the push lands: 140 RPS against 100 RPS of capacity, CPU pegs at 100%, and the node starts shedding ~29% of requests. Within a few seconds it crashes outright and stays down — the Edge LB logs 'no healthy backends' and every request fails for the rest of the run, even after traffic falls back to 85 RPS.",
+  "graph": {
+    "nodes": [
+      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+      { "type": "server", "label": "Checkout API", "config": { "instanceCount": 1, "processingTimeMs": 10, "maxConcurrent": 1000 } },
+      { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 5000, "writeThroughputRps": 3000, "connectionPoolSize": 200 } }
+    ],
+    "edges": [
+      { "source": "load_balancer-0", "target": "server-1" },
+      { "source": "server-1", "target": "database-2" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Push notification",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 25, "rps": 85, "shape": "steady", "description": "Morning steady state — 85 RPS against 100 RPS of capacity" },
+        { "startS": 25, "endS": 45, "rps": 140, "shape": "spike", "description": "Push notification lands — 140 RPS for twenty seconds" },
+        { "startS": 45, "endS": 60, "rps": 85, "shape": "steady", "description": "Push fades — back to 85 RPS" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "orders",
+          "name": "orders",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "user_id", "type": "uuid", "cardinality": "high" },
+            { "name": "total_cents", "type": "integer", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [{ "operation": "write", "frequency": "high", "pattern": "insert order on checkout" }],
+          "assignedDbId": "database-2"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Write-heavy order store; trivially within Postgres capacity — the database is not the constraint in this design."
+    },
+    "apiContracts": [
+      { "id": "checkout", "method": "POST", "path": "/checkout", "description": "Place an order", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "CPU sat at a steady 85% for twenty-five seconds with zero errors — then one 65% traffic bump killed the service for the rest of the run. What's the root cause?",
+    "options": [
+      {
+        "id": "spof-no-headroom",
+        "text": "Checkout is a single instance with almost no headroom — 85 RPS against 100 RPS of capacity — so the push saturates it, and when the one box crashes there is nothing left to serve.",
+        "correct": true,
+        "explain": "Right. Capacity = instanceCount × (1000 ÷ processingTimeMs) = 1 × 100 = 100 RPS, so the 85 RPS baseline is ρ = 0.85 — any spike taller than 15% saturates the box. And because instanceCount is 1, the crash that follows isn't a degradation, it's a total outage: the LB has no second backend to fail over to, which is why errors stay at 100% even after the push ends."
+      },
+      {
+        "id": "lb-bottleneck",
+        "text": "The Edge LB is the bottleneck — it choked on the spike, first starving and then flooding the backend it was supposed to protect.",
+        "correct": false,
+        "explain": "The LB card shows sub-millisecond processing and 0% errors right up until the backend dies — it forwarded the full 140 RPS faithfully. Its 'no healthy backends' errors START at the crash, which makes them a symptom, not a cause: a load balancer can't balance across a pool of one."
+      },
+      {
+        "id": "db-backpressure",
+        "text": "Postgres couldn't absorb the extra checkout writes and backpressured the API until it fell over.",
+        "correct": false,
+        "explain": "Check the Postgres card: 140 RPS against 3 000 write / 5 000 read RPS of throughput is under 5% load, and its error rate never leaves zero before the crash. The API died of its own CPU saturation, one hop upstream of a database that was barely awake."
+      },
+      {
+        "id": "transient-spike",
+        "text": "Nothing is really misconfigured — the push only lasts 20 seconds, so once traffic falls back at t=45s the service recovers on its own.",
+        "correct": false,
+        "explain": "Run it and watch t=45s: traffic drops back to 85 RPS but errors stay at 100%, because the crash at 100% CPU is terminal — the box never comes back. A spike you can't absorb isn't survivable just because it's short; the defect is running a revenue path on one instance with 15% headroom."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Survive the push: keep Checkout serving through the 140 RPS spike — no crash, effectively zero dropped requests, and real headroom (peak utilization at or below ~70%).",
+    "criteria": [
+      { "kind": "noCrash", "label": "Nothing crashes — checkout survives the push" },
+      { "kind": "metric", "metric": "errorRate", "selector": { "type": "server" }, "agg": "max", "op": "<", "value": 0.02, "label": "Checkout API drops fewer than 2% of requests" }
+    ],
+    "hints": [
+      "Capacity = instanceCount × (1000 ÷ processingTimeMs). One instance at 10 ms/request is 100 RPS — what's your utilization when the push peaks at 140 RPS?",
+      "Click the Checkout API node: instanceCount is the lever. Aim for peak utilization at or below ~0.70 — the headroom rule — not just below 1.0. That means 140 ÷ 0.7 = 200 RPS of capacity.",
+      "instanceCount: 2 gives 200 RPS — ρ = 0.70 at the peak of the push, 0.43 at baseline, and a second box so one crash is no longer an outage."
+    ]
+  },
+  "knownFix": [
+    { "op": "updateConfig", "label": "Checkout API", "patch": { "instanceCount": 2 } }
+  ]
+}

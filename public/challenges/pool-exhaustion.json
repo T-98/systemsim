@@ -1,0 +1,100 @@
+{
+  "id": "pool-exhaustion",
+  "title": "Fifty connections against the flood",
+  "kbRef": "§11",
+  "topicKey": "reference.11-data-storage",
+  "difficulty": "intermediate",
+  "tagline": "Reads doubled and 90% of queries are dying — the connection backlog is burying a 50-connection pool at 400 connections a second.",
+  "brief": "You run an order-status service: an edge LB fronts an API tier that reads order rows from Postgres. At 09:00 a fulfillment partner switched on order-status polling — every active order, polled continuously. Traffic stepped from 1 200 to 2 400 reads/s. The API tier barely noticed. Postgres went from quiet to 90% errors in about a second.",
+  "symptom": "Watch Postgres's node card the second the surge lands at t=10s: the backlog blows through the 50-connection pool instantly, the log fires 'using 800% of connection pool' and 'Connection pool exhaustion. 90% of queries failing', and p99 explodes past 15 seconds. Within a tick or two the node goes dark — the card freezes at 90% errors and 100% CPU. Arrivals only doubled from a 60% baseline.",
+  "graph": {
+    "nodes": [
+      { "type": "load_balancer", "label": "Edge LB", "config": { "isEntry": true } },
+      { "type": "server", "label": "Order API", "config": { "instanceCount": 16, "processingTimeMs": 4, "maxConcurrent": 1000 } },
+      { "type": "database", "label": "Postgres", "config": { "engine": "postgres", "readThroughputRps": 1900, "writeThroughputRps": 100, "connectionPoolSize": 50, "readReplicas": 0 } }
+    ],
+    "edges": [
+      { "source": "load_balancer-0", "target": "server-1" },
+      { "source": "server-1", "target": "database-2" }
+    ]
+  },
+  "starter": {
+    "trafficProfile": {
+      "profileName": "Partner polling launch",
+      "durationSeconds": 60,
+      "phases": [
+        { "startS": 0, "endS": 10, "rps": 1200, "shape": "steady", "description": "Normal weekday — 1 200 order-status reads/s" },
+        { "startS": 10, "endS": 60, "rps": 2400, "shape": "steady", "description": "Partner polling goes live — reads double to 2 400/s and stay there" }
+      ],
+      "requestMix": { "default": 1.0 },
+      "userDistribution": "uniform",
+      "jitterPercent": 5
+    },
+    "schemaMemory": {
+      "version": 1,
+      "entities": [
+        {
+          "id": "orders",
+          "name": "orders",
+          "fields": [
+            { "name": "id", "type": "uuid", "cardinality": "high" },
+            { "name": "status", "type": "text", "cardinality": "low" },
+            { "name": "updated_at", "type": "timestamp", "cardinality": "high" }
+          ],
+          "indexes": [{ "field": "id", "type": "btree" }],
+          "accessPatterns": [{ "operation": "read", "frequency": "very_high", "pattern": "order status poll by id" }],
+          "assignedDbId": "database-2"
+        }
+      ],
+      "relationships": [],
+      "aiNotes": "Read-mostly order-status store; writes land via a separate low-volume ingest path."
+    },
+    "apiContracts": [
+      { "id": "get-order-status", "method": "GET", "path": "/orders/:id/status", "description": "Poll one order's fulfillment status", "authMode": "jwt", "ownerServiceId": "server-1" }
+    ]
+  },
+  "diagnosis": {
+    "question": "Within a second of the surge, Postgres's error rate jumps from 0% to ~90% and the log prints 'Connection pool exhaustion' — yet arrivals only doubled. What's the root cause?",
+    "options": [
+      {
+        "id": "pool-littles-law",
+        "text": "Arrivals (2 400/s) now exceed Postgres's ~2 000/s service rate, and every query that can't be served immediately camps on a connection — the backlog grows ~400 connections each second and buries the 50-connection pool almost instantly.",
+        "correct": true,
+        "explain": "Right. Little's Law: in-flight queries = arrival rate × time in system, and once service saturates, time-in-system — and with it the connection backlog — grows without bound, at λ−μ ≈ 400 connections/s here. The pool's drop rate scales with how far that backlog overshoots the pool, which is why a 20% capacity gap surfaces as ~90% of queries failing within the first second."
+      },
+      {
+        "id": "read-throughput-10x",
+        "text": "A 90% failure rate means demand is roughly 10× read capacity — readThroughputRps is drastically undersized. Raise it toward 20 000.",
+        "correct": false,
+        "explain": "The arithmetic disagrees: traffic doubled from a 60%-utilization baseline, so Postgres sits at ~120% of capacity, not 1 000%. Pure read-side saturation at 126% sheds about 13% of queries — the log instead prints 'Connection pool exhaustion' at 90%, which is the backlog of waiting queries overrunning a 50-connection pool, not a 10× throughput shortfall."
+      },
+      {
+        "id": "api-tier",
+        "text": "The API tier is saturated and queueing requests upstream — add Order API instances and the database errors clear.",
+        "correct": false,
+        "explain": "The Order API's card shows ~60% CPU and a 0% error rate: 16 instances at 4 ms/request is 4 000 rps of capacity against 2 400 arriving. The failures are on Postgres's card, downstream of a healthy tier — more API instances would only deliver the same doomed queries faster."
+      },
+      {
+        "id": "retry-storm",
+        "text": "Client retries are amplifying the surge — each failed read is retried, multiplying load on Postgres until it collapses.",
+        "correct": false,
+        "explain": "No wire in this design carries a retryPolicy, and Postgres's inbound rate matches what the LB receives (2 400/s) — there is no amplification anywhere in the run. Retry storms are a real way to turn 'slightly over capacity' into 'dead', but the pool exhaustion here lands in the very first second of the surge, before any retry loop could even form."
+      }
+    ]
+  },
+  "fix": {
+    "objective": "Survive the partner launch at 2 400 reads/s: restore service-rate headroom and size the connection pool for peak concurrency, so Postgres stops shedding queries — errors back under 10% and p99 under 400 ms for the whole run.",
+    "criteria": [
+      { "kind": "metric", "metric": "errorRate", "selector": { "type": "database" }, "agg": "max", "op": "<", "value": 0.1, "label": "Postgres errors stay under 10%" },
+      { "kind": "metric", "metric": "p99", "selector": { "type": "database" }, "agg": "max", "op": "<", "value": 400, "label": "Postgres p99 stays under 400 ms" }
+    ],
+    "hints": [
+      "Little's Law: in-flight queries = arrival rate × time in system. Postgres serves ~2 000/s (1 900 read + 100 write) against 2 400/s arriving — the 400/s excess parks on connections, and activeConnections blows through the 50-connection pool inside the first second of the surge.",
+      "A bigger pool alone only buys seconds: while arrivals exceed the service rate the backlog keeps growing. Get the drain above 2 400/s first — readReplicas on Postgres's card multiplies read throughput (1 900 → 3 800 with one replica).",
+      "Click Postgres: set readReplicas to 1 and connectionPoolSize to 500. Capacity becomes 3 900/s against 2 400/s arriving (~62% utilization), and the pool now covers peak in-flight queries (2 400/s × ~0.2 s under load ≈ 480) instead of dropping them."
+    ]
+  },
+  "knownFix": [
+    { "op": "updateConfig", "label": "Postgres", "patch": { "connectionPoolSize": 500, "readReplicas": 1 } }
+  ]
+}

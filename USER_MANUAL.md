@@ -137,6 +137,29 @@ On the landing page, the "Describe your system" input accepts **text, image uplo
 - Live log shows warnings and critical events
 - Debrief panel opens with scores (Pass/Warn/Fail) and Socratic questions
 
+## Flow 4pre: Learn drills (diagnose and fix a broken system)
+
+The learning wedge. Landing page → "Learn — fix a production fire" → pick a card.
+
+1. Click a drill (e.g. **The backlog that ate the broker**). The broken design
+   loads AND auto-runs — you are watching the failure within seconds
+2. **Observe**: read the story + "Watch for" in the drill banner; open the
+   Live Log and the node cards to see the symptoms
+3. Click **I have seen enough — diagnose it** and pick the root cause.
+   Wrong picks explain why they are wrong; the right pick unlocks the fix
+4. **Fix**: edit configs (click nodes) or structure (add/rewire components),
+   then **Run again**. Every completed run is scored against the drill
+   criteria shown in the banner — observed values included
+5. All green → **DRILL PASSED**, with a pointer back to the Reference section
+   ("Study §13") for the theory
+
+**What to verify:**
+- The drill auto-runs on load (no Run click needed)
+- A wrong diagnosis shows an explanation and does NOT unlock the fix step
+- A wrong fix (e.g. just raising maxDepth on the backlog drill) shows failing
+   criteria with measured values — the simulator is the referee
+- Exit leaves the canvas usable; Study opens the docs
+
 ## Flow 4a: Chaos Drill (kill a component mid-run)
 
 The fastest way to feel what the simulator actually does.
